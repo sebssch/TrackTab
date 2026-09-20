@@ -1,0 +1,33 @@
+# Persoenliche Daten (Bibliotheksinhalte, Pfade, Backups) - nicht committen
+data/
+backup/
+logs/
+config.local.yaml
+
+# Beispieldateien fuer Screenshots (siehe CLAUDE.md) - nicht committen
+test-files/
+
+# Python / venv
+.venv/
+__pycache__/
+*.pyc
+
+# Build-Artefakte
+build/
+dist/
+vendor/
+build_assets/appicon.iconset/
+build_assets/icon-1024.png
+build_assets/favicon-32.png
+build_assets/favicon-128.png
+desktop_main.spec
+
+# macOS
+.DS_Store
+
+# Serena MCP (lokaler Code-Analyse-Cache)
+.serena/
+
+# Claude Code (lokale Einstellungen, z.B. Dev-Server-Konfig fuer Browser-Preview)
+.claude/
+CLAUDE.md

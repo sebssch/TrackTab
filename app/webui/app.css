@@ -1,0 +1,1773 @@
+  :root {
+    --bg:#f6f7f9; --card:#fff; --fg:#1a1d21; --dim:#6b7280; --line:#e3e6ea;
+    --ok:#1a7f4b; --ok-bg:#e6f5ec; --susp:#9a6700; --susp-bg:#fff5da;
+    --fake:#b42318; --fake-bg:#fdeceb; --unk:#5b6470; --unk-bg:#eef0f3;
+    --accent:#2563eb; --accent-bg:#e8f0fe;
+    --stickyline:#c3cad3;
+    /* Eigener Pfeil statt des nativen <select>-Chrome (siehe .setfield select
+       weiter unten) -- Browser rendern ein natives Select sonst mit eigener,
+       von Input-Feldern abweichender Hoehe/Optik, selbst bei identischem
+       Padding/Border. currentColor greift in einer per url() eingebundenen
+       SVG-Ressource nicht, deshalb als eigenes Token je Theme statt fest
+       verdrahteter Farbe im Chevron. */
+    --select-arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    /* 12 Vorgabefarben, gemeinsam genutzt von Designfarbe (accent_color),
+       Merklisten und Playlisten -- ein Satz statt getrennter Paletten, damit
+       alle drei Stellen dieselben Toene zeigen. Ueberschneidet sich bewusst
+       mit Rot/Orange/Gruen/Blau der Verdikt-Farben (--fake/--susp/--ok/
+       --accent) -- fruehere Version dieser Datei vermied das absichtlich,
+       das wurde aufgegeben, um genau diese 12 Farben (Nutzervorgabe) an
+       allen drei Stellen zu erlauben. --fl1..--fl12 sind reine Aliase auf
+       --dc-* (ein Wertepaar je Farbe, nicht doppelt pflegen). */
+    --dc-red:#dc2626;       --dc-red-bg:#fee2e2;
+    --dc-orange:#ea580c;    --dc-orange-bg:#ffedd5;
+    --dc-yellow:#ca8a04;    --dc-yellow-bg:#fef9c3;
+    --dc-green:#16a34a;     --dc-green-bg:#dcfce7;
+    --dc-skyblue:#0284c7;   --dc-skyblue-bg:#e0f2fe;
+    --dc-blue:#2563eb;      --dc-blue-bg:#e8f0fe;
+    --dc-indigo:#4f46e5;    --dc-indigo-bg:#e0e7ff;
+    --dc-crimson:#e11d48;   --dc-crimson-bg:#ffe4e6;
+    --dc-purple:#9333ea;    --dc-purple-bg:#f3e8ff;
+    --dc-brown:#92664d;     --dc-brown-bg:#f3e9e0;
+    --dc-slate:#475569;     --dc-slate-bg:#f1f5f9;
+    --dc-dustyrose:#b0677a; --dc-dustyrose-bg:#f7e8ec;
+    --fl1:var(--dc-red);       --fl1-bg:var(--dc-red-bg);
+    --fl2:var(--dc-orange);    --fl2-bg:var(--dc-orange-bg);
+    --fl3:var(--dc-yellow);    --fl3-bg:var(--dc-yellow-bg);
+    --fl4:var(--dc-green);     --fl4-bg:var(--dc-green-bg);
+    --fl5:var(--dc-skyblue);   --fl5-bg:var(--dc-skyblue-bg);
+    --fl6:var(--dc-blue);      --fl6-bg:var(--dc-blue-bg);
+    --fl7:var(--dc-indigo);    --fl7-bg:var(--dc-indigo-bg);
+    --fl8:var(--dc-crimson);   --fl8-bg:var(--dc-crimson-bg);
+    --fl9:var(--dc-purple);    --fl9-bg:var(--dc-purple-bg);
+    --fl10:var(--dc-brown);    --fl10-bg:var(--dc-brown-bg);
+    --fl11:var(--dc-slate);    --fl11-bg:var(--dc-slate-bg);
+    --fl12:var(--dc-dustyrose);--fl12-bg:var(--dc-dustyrose-bg);
+  }
+  /* prefers-color-scheme greift nur "automatisch" (kein data-theme gesetzt);
+     :root[data-theme] setzt die Wahl aus den Einstellungen (applyTheme() in
+     app.js) unabhaengig vom Systemschema durch. */
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg:#15181c; --card:#1c2027; --fg:#e6e9ee; --dim:#98a2b3; --line:#2b313a;
+      --ok:#5ed39a; --ok-bg:#12301f; --susp:#f3c05a; --susp-bg:#332810;
+      --fake:#ff8a7d; --fake-bg:#3a1613; --unk:#9aa4b2; --unk-bg:#252a31;
+      --accent:#7aa2ff; --accent-bg:#1c2b4d;
+      --select-arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2398a2b3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+      --stickyline:#414a57;
+      --dc-red:#f87171;       --dc-red-bg:#7f1d1d;
+      --dc-orange:#fb923c;    --dc-orange-bg:#7c2d12;
+      --dc-yellow:#facc15;    --dc-yellow-bg:#713f12;
+      --dc-green:#4ade80;     --dc-green-bg:#14532d;
+      --dc-skyblue:#38bdf8;   --dc-skyblue-bg:#0c4a6e;
+      --dc-blue:#7aa2ff;      --dc-blue-bg:#1c2b4d;
+      --dc-indigo:#818cf8;    --dc-indigo-bg:#312e81;
+      --dc-crimson:#fb7185;   --dc-crimson-bg:#881337;
+      --dc-purple:#c084fc;    --dc-purple-bg:#581c87;
+      --dc-brown:#c9a184;     --dc-brown-bg:#4a3222;
+      --dc-slate:#94a3b8;     --dc-slate-bg:#1e293b;
+      --dc-dustyrose:#d99cae; --dc-dustyrose-bg:#5c2c37;
+      --fl1:var(--dc-red);       --fl1-bg:var(--dc-red-bg);
+      --fl2:var(--dc-orange);    --fl2-bg:var(--dc-orange-bg);
+      --fl3:var(--dc-yellow);    --fl3-bg:var(--dc-yellow-bg);
+      --fl4:var(--dc-green);     --fl4-bg:var(--dc-green-bg);
+      --fl5:var(--dc-skyblue);   --fl5-bg:var(--dc-skyblue-bg);
+      --fl6:var(--dc-blue);      --fl6-bg:var(--dc-blue-bg);
+      --fl7:var(--dc-indigo);    --fl7-bg:var(--dc-indigo-bg);
+      --fl8:var(--dc-crimson);   --fl8-bg:var(--dc-crimson-bg);
+      --fl9:var(--dc-purple);    --fl9-bg:var(--dc-purple-bg);
+      --fl10:var(--dc-brown);    --fl10-bg:var(--dc-brown-bg);
+      --fl11:var(--dc-slate);    --fl11-bg:var(--dc-slate-bg);
+      --fl12:var(--dc-dustyrose);--fl12-bg:var(--dc-dustyrose-bg);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg:#15181c; --card:#1c2027; --fg:#e6e9ee; --dim:#98a2b3; --line:#2b313a;
+    --ok:#5ed39a; --ok-bg:#12301f; --susp:#f3c05a; --susp-bg:#332810;
+    --fake:#ff8a7d; --fake-bg:#3a1613; --unk:#9aa4b2; --unk-bg:#252a31;
+    --accent:#7aa2ff; --accent-bg:#1c2b4d;
+    --select-arrow:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2398a2b3' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    --stickyline:#414a57;
+    --dc-red:#f87171;       --dc-red-bg:#7f1d1d;
+    --dc-orange:#fb923c;    --dc-orange-bg:#7c2d12;
+    --dc-yellow:#facc15;    --dc-yellow-bg:#713f12;
+    --dc-green:#4ade80;     --dc-green-bg:#14532d;
+    --dc-skyblue:#38bdf8;   --dc-skyblue-bg:#0c4a6e;
+    --dc-blue:#7aa2ff;      --dc-blue-bg:#1c2b4d;
+    --dc-indigo:#818cf8;    --dc-indigo-bg:#312e81;
+    --dc-crimson:#fb7185;   --dc-crimson-bg:#881337;
+    --dc-purple:#c084fc;    --dc-purple-bg:#581c87;
+    --dc-brown:#c9a184;     --dc-brown-bg:#4a3222;
+    --dc-slate:#94a3b8;     --dc-slate-bg:#1e293b;
+    --dc-dustyrose:#d99cae; --dc-dustyrose-bg:#5c2c37;
+    --fl1:var(--dc-red);       --fl1-bg:var(--dc-red-bg);
+    --fl2:var(--dc-orange);    --fl2-bg:var(--dc-orange-bg);
+    --fl3:var(--dc-yellow);    --fl3-bg:var(--dc-yellow-bg);
+    --fl4:var(--dc-green);     --fl4-bg:var(--dc-green-bg);
+    --fl5:var(--dc-skyblue);   --fl5-bg:var(--dc-skyblue-bg);
+    --fl6:var(--dc-blue);      --fl6-bg:var(--dc-blue-bg);
+    --fl7:var(--dc-indigo);    --fl7-bg:var(--dc-indigo-bg);
+    --fl8:var(--dc-crimson);   --fl8-bg:var(--dc-crimson-bg);
+    --fl9:var(--dc-purple);    --fl9-bg:var(--dc-purple-bg);
+    --fl10:var(--dc-brown);    --fl10-bg:var(--dc-brown-bg);
+    --fl11:var(--dc-slate);    --fl11-bg:var(--dc-slate-bg);
+    --fl12:var(--dc-dustyrose);--fl12-bg:var(--dc-dustyrose-bg);
+  }
+  /* Ausgewaehlte Designfarbe (Einstellungen) legt sich ueber --accent/
+     --accent-bg -- wirkt dadurch ueberall, wo diese beiden schon verwendet
+     werden (aktive Knoepfe, Player-Fortschritt, Chips, ...), ohne dass jede
+     Stelle einzeln auf --dc-* umgestellt werden muesste. Kein Eintrag fuer
+     "blue": das ist bereits die Vorgabe von --accent/--accent-bg oben, ohne
+     data-accent-Attribut (siehe applyAccentColor() in app.js). */
+  :root[data-accent="red"]       { --accent:var(--dc-red);       --accent-bg:var(--dc-red-bg); }
+  :root[data-accent="orange"]    { --accent:var(--dc-orange);    --accent-bg:var(--dc-orange-bg); }
+  :root[data-accent="yellow"]    { --accent:var(--dc-yellow);    --accent-bg:var(--dc-yellow-bg); }
+  :root[data-accent="green"]     { --accent:var(--dc-green);     --accent-bg:var(--dc-green-bg); }
+  :root[data-accent="skyblue"]   { --accent:var(--dc-skyblue);   --accent-bg:var(--dc-skyblue-bg); }
+  :root[data-accent="indigo"]    { --accent:var(--dc-indigo);    --accent-bg:var(--dc-indigo-bg); }
+  :root[data-accent="crimson"]   { --accent:var(--dc-crimson);   --accent-bg:var(--dc-crimson-bg); }
+  :root[data-accent="purple"]    { --accent:var(--dc-purple);    --accent-bg:var(--dc-purple-bg); }
+  :root[data-accent="brown"]     { --accent:var(--dc-brown);     --accent-bg:var(--dc-brown-bg); }
+  :root[data-accent="slate"]     { --accent:var(--dc-slate);     --accent-bg:var(--dc-slate-bg); }
+  :root[data-accent="dustyrose"] { --accent:var(--dc-dustyrose); --accent-bg:var(--dc-dustyrose-bg); }
+  * { box-sizing:border-box; }
+  /* [hidden] hat in der UA-Vorgabe dieselbe Spezifitaet wie eine einzelne
+     Klasse -- ohne !important gewinnt trotzdem jede eigene Regel mit
+     display:... (z.B. .chipsrow, button.act), weil Autoren-Regeln UA-Regeln
+     unabhaengig von der Spezifitaet schlagen. Betraf konkret #plHeadBubblesRow/
+     #plHeadMergeToggle/#plHeadBubblesExpand: das hidden-Attribut wurde beim
+     Listenwechsel korrekt gesetzt, blieb aber wegen .chipsrow/button.act
+     sichtbar. Eine Regel hier fuer alle [hidden]-Elemente statt einzelner
+     Ausnahmen je Klasse.
+  */
+  [hidden] { display:none !important; }
+  body { margin:0; padding:24px; background:var(--bg); color:var(--fg);
+         font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  h1 { font-size:34px; margin:0 0 4px; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px;
+           padding:16px; margin-bottom:18px; }
+  .controls { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  input[type=search], select { background:var(--bg); color:var(--fg); border:1px solid var(--line);
+          border-radius:7px; padding:7px 10px; font-size:14px; }
+  input[type=search] { min-width:260px; flex:1; }
+  .searchwrap { position:relative; min-width:260px; flex:1; }
+  .searchwrap input[type=search] { width:100%; }
+  .chip { border:1px solid var(--line); background:var(--bg); color:var(--fg);
+          border-radius:999px; padding:6px 13px; cursor:pointer; font-size:13px;
+          user-select:none; }
+  .chip.on { border-color:transparent; font-weight:600; }
+  .chip.on[data-v=FAKE]{background:var(--fake-bg);color:var(--fake);}
+  .chip.on[data-v=VERDAECHTIG]{background:var(--susp-bg);color:var(--susp);}
+  .chip.on[data-v=OK]{background:var(--ok-bg);color:var(--ok);}
+  .chip.on[data-v=UNKLAR]{background:var(--unk-bg);color:var(--unk);}
+  .chip.mc.on{background:var(--accent-bg);color:var(--accent);}
+  .chipsrow { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
+  .chipsrow:empty { display:none; margin:0; }
+  .chip.searchchip { background:var(--accent-bg); color:var(--accent);
+                      border-color:transparent; font-weight:600; cursor:default; }
+  .chip.searchchip .rm { margin-left:8px; cursor:pointer; opacity:.7; }
+  .chip.searchchip .rm:hover { opacity:1; }
+  /* Standard-Suchfilter (aus den Einstellungen) -- eigene Farbe, damit sie
+     sich von den getippten Suchfiltern (accent-Blau) unterscheiden. */
+  .chip.searchchip.defaultchip { background:var(--susp-bg); color:var(--susp); }
+  button.act { display:inline-flex; align-items:center; gap:6px;
+          border:1px solid var(--line); background:var(--card); color:var(--fg);
+          border-radius:7px; padding:7px 12px; cursor:pointer; font-size:13px; }
+  button.act:hover { border-color:var(--accent); color:var(--accent); }
+  button.act:disabled { opacity:.4; cursor:not-allowed; color:var(--dim); }
+  button.act:disabled:hover { border-color:var(--line); color:var(--dim); }
+  .btnicon { display:inline-flex; }
+  .btnicon-lg { display:inline-flex; }
+  .btnicon-lg svg { width:19px; height:19px; }
+  table { width:auto; min-width:100%; table-layout:fixed; border-collapse:collapse; background:var(--card); }
+  th, td { padding:9px 10px; text-align:left; border-bottom:1px solid var(--line);
+           vertical-align:top; overflow:hidden; }
+  th { position:sticky; top:0; background:var(--card); cursor:pointer;
+       font-size:12px; text-transform:uppercase; letter-spacing:.04em;
+       color:var(--dim); white-space:nowrap; z-index:2;
+       border-right:1px solid var(--line); }
+  th:last-child { border-right:none; }
+  th:hover { color:var(--accent); }
+  .sortarrow { margin-left:4px; font-size:9px; color:var(--accent); }
+  /* Griff liegt komplett innerhalb der Kopfzelle -- th hat overflow:hidden,
+     ein Ueberstand nach rechts wuerde abgeschnitten und die Trefferflaeche
+     halbieren. */
+  .colresize { position:absolute; top:0; right:0; width:9px; height:100%;
+               cursor:col-resize; z-index:3; }
+  .colresize:hover, .colresize.active { background:var(--accent); opacity:.4; }
+  /* Fuellzelle zwischen der letzten anpassbaren und der fixierten Spalte:
+     nimmt den freien Platz auf, damit alle uebrigen Spalten exakt ihre
+     eingestellte Breite behalten. Reicht der Platz nicht mehr, faellt sie auf
+     0 und die Tabelle scrollt horizontal (.tablewrap). */
+  th.filler, td.filler { padding:0; cursor:default; }
+  th.filler:hover { color:var(--dim); }
+  td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.row:hover td { background:rgba(127,127,127,.06); }
+  tr.albumgroup td { background:rgba(127,127,127,.09); font-weight:600;
+       font-size:12.5px; padding:6px 10px; cursor:default; }
+  tr.albumgroup td .path { display:inline; font-weight:400; margin-left:4px; }
+  tr.albumgroup td .albumgroup-artist { font-weight:400; color:var(--dim); }
+  tr.albumgroup.dupwarn td { background:var(--susp-bg); }
+  tr.albumgroup.dupok td { background:var(--ok-bg); }
+  .dupdismissbtn { margin-left:10px; padding:1px 9px; border-radius:999px;
+       background:transparent; font-size:11px; font-weight:600; cursor:pointer; }
+  tr.albumgroup.dupwarn .dupdismissbtn { color:var(--susp); border:1px solid var(--susp); }
+  tr.albumgroup.dupok .dupdismissbtn { color:var(--ok); border:1px solid var(--ok); }
+  .dupdismissbtn:hover { filter:brightness(0.92); }
+  .badge { display:inline-flex; align-items:center; gap:4px; padding:2px 9px;
+           border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
+  .badge svg { width:12px; height:12px; flex:none; }
+  .badge.FAKE{background:var(--fake-bg);color:var(--fake);}
+  .badge.VERDAECHTIG{background:var(--susp-bg);color:var(--susp);}
+  .badge.OK{background:var(--ok-bg);color:var(--ok);}
+  .badge.UNKLAR{background:var(--unk-bg);color:var(--unk);}
+  .name { font-weight:500; }
+  .path { color:var(--dim); font-size:12px; word-break:break-all; }
+  .path.copyable { cursor:pointer; }
+  .path.copyable:hover { color:var(--accent); text-decoration:underline; }
+  .path.copyable.copied { color:var(--ok); text-decoration:none; }
+  a { color:var(--accent); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  .links { white-space:nowrap; }
+  /* Die beiden aeusseren Spalten bleiben beim horizontalen Scrollen stehen:
+     links die Auswahl-Checkbox, rechts die Aktionen. */
+  th.links, td.links { position:sticky; right:0; background:var(--card);
+       box-shadow:-6px 0 6px -6px rgba(0,0,0,.2); }
+  th.sel, td.sel { position:sticky; left:0; background:var(--card);
+       box-shadow:6px 0 6px -6px rgba(0,0,0,.2); }
+  /* Senkrechte Trennlinie zum durchscrollenden Rest -- als eigenes Kaestchen
+     INNERHALB der Zelle. Weder border noch box-shadow taugen dafuer: bei
+     border-collapse:collapse malt die Nachbarzelle die gemeinsame Kante, und
+     die scrollt weg; ein aeusserer box-shadow wird an der rechts fixierten
+     Spalte gar nicht erst gezeichnet (an echtem Material geprueft -- links
+     sichtbar, rechts nicht, auch mit 40px Breite). Die Zellen sind durch
+     position:sticky selbst der Bezugsrahmen; overflow:hidden schneidet
+     nichts ab, weil das Kaestchen innerhalb der Polsterbox liegt. */
+  th.sel::after, td.sel::after,
+  th.links::before, td.links::before {
+       content:""; position:absolute; top:0; bottom:0; width:1px;
+       background:var(--stickyline); }
+  th.sel::after, td.sel::after { right:0; }
+  th.links::before, td.links::before { left:0; }
+  th.links, th.sel { z-index:3; }
+  td.links, td.sel { z-index:1; }
+  .iconbtn { background:none; border:none; cursor:pointer; padding:3px; margin:0;
+             color:var(--accent); line-height:0; border-radius:6px;
+             vertical-align:middle; display:inline-flex; align-items:center; }
+  .iconbtn:hover { background:rgba(127,127,127,.14); }
+  .iconbtn svg { display:block; }
+  .iconbtn.plain { color:inherit; }
+  .iconbtn.done { color:var(--ok); background:var(--ok-bg); }
+  .iconbtn.failed { color:var(--fake); background:var(--fake-bg); }
+  .iconbtn.busy { opacity:.5; }
+  .iconbtn:disabled { opacity:.35; cursor:not-allowed; }
+  .iconbtn:disabled:hover { background:none; }
+  .appicon { width:16px; height:16px; display:block; border-radius:3px; }
+  /* overflow MUSS hier visible sein: die allgemeine Regel th,td{overflow:hidden}
+     macht die Zelle sonst selbst zum Scrollbereich, und das darin klebende
+     .grid haette keinen Scrollweg mehr -- es wuerde einfach mitwandern. */
+  .detail td { background:var(--bg); padding:0; overflow:visible; }
+  /* Der aufgeklappte Bereich klebt wie die fixierten Spalten und ist auf den
+     Platz zwischen ihnen begrenzt -- sonst waere die Waveform so breit wie
+     die ganze Tabelle und scrollte beim horizontalen Scrollen mit weg. Die
+     beiden Masse setzt syncDetailWidth() in app.js auf die .tablewrap; der
+     Rueckfallwert greift, solange noch nicht gemessen wurde. */
+  .detail .grid { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;
+       position:sticky; left:var(--detailleft, 36px);
+       width:var(--detailw, auto); padding:9px 10px; }
+  /* Fuehrt die beiden Trennlinien der fixierten Spalten (th.sel/.links,
+     Zeile 120-125) durch die aufgeklappte Zeile weiter. .grid ist bereits
+     per position:sticky + left/width exakt auf die Luecke zwischen den
+     beiden fixierten Spalten begrenzt -- die Linien liegen deshalb einfach
+     an seinem linken/rechten Rand und wachsen automatisch auf die Hoehe
+     des tatsaechlichen Inhalts (Spektrum/Waveform), ohne feste Hoehe.
+     -1px statt 0: td.sel::after zieht sich VON der Grenze aus nach links
+     (right:0), td.links::before VON der Grenze aus nach rechts (left:0) --
+     beide Linien liegen also je zur Haelfte ausserhalb ihrer eigenen Zelle,
+     auf der jeweils anderen Seite der Grenze. left:0/right:0 haette hier
+     stattdessen auf der eigenen Seite gelegen -- 1px Versatz zur
+     Original-Linie derselben Grenze. */
+  .detail .grid::before, .detail .grid::after {
+       content:""; position:absolute; top:0; bottom:0; width:1px;
+       background:var(--stickyline); }
+  .detail .grid::before { left:-1px; }
+  .detail .grid::after { right:-1px; }
+  /* Feste Spalte fuer das Spektrum -- auch dann, wenn keine Spektraldaten
+     gespeichert sind und nur der Hinweistext dasteht. Sonst rutscht der
+     Bereich daneben nach links und die Waveform waere je Zeile
+     unterschiedlich breit. 180px = die Breite des SVG in spectrumSVG();
+     max-width laesst sie in einem schmalen Fenster trotzdem schrumpfen. */
+  .detail .spectrum { flex:0 0 180px; max-width:100%; }
+  .reasons { margin:0; padding-left:18px; color:var(--dim); }
+  .confcell { white-space:nowrap; }
+  .conf { display:inline-block; width:44px; height:6px; border-radius:3px;
+          background:var(--line); overflow:hidden; vertical-align:middle;
+          margin-right:6px; }
+  .conf i { display:block; height:100%; background:var(--accent); }
+  .foot { color:var(--dim); font-size:13px; margin-top:18px; text-align:center; }
+  .morecount { margin-bottom:10px; }
+  .loadmore-btn { display:inline-block; border:1px solid var(--line); background:var(--card);
+       color:var(--fg); border-radius:8px; padding:10px 24px; font-size:15px;
+       font-weight:600; text-decoration:none; }
+  .loadmore-btn:hover { border-color:var(--accent); color:var(--accent); text-decoration:none; }
+  .loadall-link { display:block; margin-top:10px; font-size:12.5px; }
+  /* Neu nachgeladene Zeilen (weitere/alle laden, Endlos-Scrollen) sollen weich
+     einfaden statt abrupt zu erscheinen -- render() setzt die Klasse nur auf
+     die tatsaechlich neuen Zeilen (siehe freshFrom in app.js), nicht auf
+     bereits sichtbare. */
+  @keyframes rowFadeIn { from { opacity:0; transform:translateY(4px); } to { opacity:1; transform:none; } }
+  tr.row.fresh { animation:rowFadeIn .2s ease-out; }
+  @media (prefers-reduced-motion: reduce) {
+    tr.row.fresh { animation:none; }
+  }
+  /* Stand vor diesem Umbau: .sub sass unter der H1 (Kennzahlen-Zeile). Jetzt
+     Teil des Footers, direkt ueber .appfoot, in dessen Schriftgroesse --
+     .sub traegt deshalb den Abstand zum Rest der Seite (frueher an .appfoot),
+     .appfoot ruecht nur noch knapp darunter. */
+  .sub { color:var(--dim); font-size:12px; margin-top:26px; text-align:center; }
+  .appfoot { color:var(--dim); font-size:12px; margin-top:4px; text-align:center; }
+  tr.ign td { opacity:.45; }
+  .iconbtn.ig { color:var(--dim); }
+  .iconbtn.ig:hover { color:var(--fake); }
+  tr.ign .iconbtn.ig { color:var(--accent); }
+  /* ── Toast (alle Meldungen -- vorher teils in #syncnote, jetzt einheitlich
+     hier, siehe note()/toast() in app.js) ──────────────────────────────── */
+  :root { --toast-ok:#1a7f4b; --toast-info:#2563eb; --toast-warn:#a15c00; --toast-error:#b42318; }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --toast-ok:#1f9d5c; --toast-info:#3b6fe0; --toast-warn:#c9791a; --toast-error:#d1453a; }
+  }
+  :root[data-theme="dark"] { --toast-ok:#1f9d5c; --toast-info:#3b6fe0; --toast-warn:#c9791a; --toast-error:#d1453a; }
+  #toasts { position:fixed; left:26px; bottom:26px;
+            z-index:90; display:flex; flex-direction:column; gap:10px;
+            align-items:flex-start; pointer-events:none; }
+  /* Erscheint erst, wenn syncToTopButton() (app.js, im rAF-gedrosselten
+     Scroll-Handler) mindestens 5 Zeilen oberhalb des Sichtfensters zaehlt --
+     display:none statt nur opacity, sonst bliebe der Knopf trotz
+     Unsichtbarkeit klickbar/im Tab-Fokus. */
+  .totop { display:none; position:fixed; right:24px; bottom:26px; z-index:40;
+           width:42px; height:42px; border-radius:50%; border:1px solid var(--line);
+           background:var(--card); color:var(--accent); cursor:pointer;
+           align-items:center; justify-content:center;
+           box-shadow:0 6px 18px rgba(0,0,0,.18); }
+  .totop:hover { background:var(--accent-bg); }
+  .totop.show { display:flex; }
+  .toast { color:#fff; padding:13px 22px; border-radius:9px; font-size:14.5px;
+           font-weight:500; line-height:1.45; box-shadow:0 10px 28px rgba(0,0,0,.28);
+           opacity:0; transform:translateY(8px); transition:opacity .2s ease, transform .2s ease;
+           max-width:min(620px,85vw); text-align:center; }
+  .toast.ok    { background:var(--toast-ok); }
+  .toast.info  { background:var(--toast-info); }
+  .toast.warn  { background:var(--toast-warn); }
+  .toast.error { background:var(--toast-error); }
+  .toast.show { opacity:1; transform:translateY(0); }
+  @media (prefers-reduced-motion: reduce) {
+    .toast { transition:opacity .01s linear; }
+  }
+  /* Jeder normale Toast (nicht der Fortschritts-Toast, der ohne Schliessen-
+     Knopf auskommt) traegt jetzt IMMER den Schliessen-Knopf, nicht nur
+     sticky -- deshalb eigenes pointer-events:auto (die Gruppe #toasts hat
+     none, damit Toasts nichts unter sich anklickbar blockieren). sticky
+     aendert nur noch, ob der Auto-Dismiss-Timer laeuft. */
+  .toast:not(.progress) { pointer-events:auto; padding-right:40px; text-align:left; position:relative; }
+  .toast-close { position:absolute; top:8px; right:10px; width:22px; height:22px;
+                 border:none; border-radius:6px; background:transparent; color:#fff;
+                 font-size:18px; line-height:1; cursor:pointer; opacity:.75; }
+  .toast-close:hover { opacity:1; background:rgba(255,255,255,.18); }
+  /* Fortschritts-Toast (progressToast()) -- Balken am unteren Rand statt der
+     frueheren Statuszeile ueber der Einzelprüfungen-Tabelle. */
+  .toast.progress { padding-bottom:10px; }
+  .toast-bar { margin-top:9px; height:4px; border-radius:2px;
+               background:rgba(255,255,255,.3); overflow:hidden; }
+  .toast-bar i { display:block; height:100%; width:0%; background:#3ecf6e;
+                 border-radius:2px; transition:width .25s ease; }
+  /* Ein Fehlschlag ist kein Erfolg -- kein Gruen bei fail(), auch wenn der
+     Balken dabei auf volle Breite gesetzt wird ("Vorgang zu Ende, nicht
+     "auf halbem Weg stehengeblieben"). */
+  .toast.error .toast-bar i { background:rgba(255,255,255,.65); }
+  /* Kein echter Fortschritt bekannt (Rekordbox-/Music-Abgleich liefern erst
+     am Ende ein Ergebnis) -- wandernder Streifen statt Fuellstand. */
+  .toast-bar.indeterminate i { width:35%; transition:none;
+                                animation:toastIndeterminate 1.1s ease-in-out infinite; }
+  @keyframes toastIndeterminate {
+    0%   { transform:translateX(-100%); }
+    100% { transform:translateX(285%); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .toast-bar.indeterminate i { animation:none; width:100%; opacity:.5; }
+  }
+  .note { background:var(--susp-bg); color:var(--susp); border-radius:8px;
+          padding:12px 14px; margin-bottom:18px; font-size:13px; }
+  /* Angeheftete Filterleiste ("Leiste anheften"): haelt Ansichten, Status,
+     Suche und die Sammelaktionen beim Scrollen am oberen Rand. Bewusst
+     abschaltbar -- die Leiste bricht je nach Fensterbreite auf mehrere
+     Zeilen um und frisst dann viel Hoehe.
+     Freischwebend: 1rem Abstand zur Fensterkante, Rahmen wie bei jedem
+     anderen Block, bewusst ohne Schatten -- auch geklebt (body.pinstuck,
+     gesetzt von syncPinStuck() in app.js) bleibt sie flach wie die
+     uebrigen Bloecke. Der Rest der Seite scrollt bewusst sichtbar darum
+     herum. */
+  /* z-index ueber #stickyHead (21, siehe unten): 'position:sticky' mit
+     eigenem z-index eroeffnet einen neuen Stacking-Context -- ohne das hier
+     wuerde JEDES Kind-Element (z.B. das Dropdown des Suchfelds, .ac-list)
+     immer HINTER #stickyHead liegen, egal wie hoch sein eigenes z-index
+     ist: der Vergleich mit #stickyHead findet auf Ebene des Panels statt,
+     nicht des einzelnen Kinds. */
+  body.pinned #filterPanel { position:sticky; top:1rem; z-index:22;
+       transition:border-radius .18s ease; }
+  /* Kopfzeile klebt ohne Abstand direkt unter der Filterleiste (siehe
+     stickyHeadTargetTop() in app.js) -- die untere Kante der Leiste wird
+     dann zur gemeinsamen Trennlinie mit #stickyHead. Eckig nur, solange
+     beide wirklich verbunden sind (body.headconnected), sonst bliebe an den
+     Ecken ein kleiner Rundungs-Spalt zwischen zwei sich beruehrenden Kanten. */
+  body.pinned.headconnected #filterPanel { border-radius:10px 10px 0 0; }
+  /* Die Leiste klebt erst ab top:1rem (16px) -- der schmale Streifen
+     zwischen echtem Fensterrand (0) und dieser Klebekante bleibt sonst
+     unbedeckt: Tabellenzeilen, die beim Scrollen genau durch dieses
+     16px-Fenster wandern, blitzen dort kurz oberhalb der Leiste auf, statt
+     bereits vorher hinter ihr zu verschwinden. Nur bei body.pinstuck (Leiste
+     klebt gerade wirklich, siehe syncPinStuck() in app.js) einen deckenden
+     Streifen in Seiten-Hintergrundfarbe einblenden -- im Ruhezustand bleibt
+     dort unveraendert die normale Seite sichtbar. */
+  body.pinned.pinstuck::before {
+       content:""; position:fixed; top:0; left:0; right:0; height:1rem;
+       background:var(--bg); z-index:23; pointer-events:none; }
+  /* Die abgerundeten Ecken der Leiste (border-radius) schneiden an genau
+     diesen Ecken ein kleines Stueck ihrer eigenen Border-Box weg -- durch
+     diesen Rundungs-Ausschnitt scheinen darunter liegende Tabellenzeilen
+     durch, obiger Deck-Streifen (der nur bis zur geraden Oberkante bei
+     top:1rem reicht) faengt das nicht ab. Ein box-shadow OHNE Weichzeichnung/
+     Ausbreitung ist eine exakte Kopie von #filterPanels eigener Form (inkl.
+     eigener Rundung), nur um top:1rem (16px) nach oben verschoben -- er
+     liegt hinter dem Panel und wird darum ueberall dort, wo das Panel
+     selbst deckend ist, unsichtbar (verdeckt also nie dessen Hintergrund,
+     anders als der vorherige ::after-Versuch, der die gesamte Flaeche
+     uebermalt hat). Sichtbar wird er nur in genau dem Rundungs-Ausschnitt,
+     wo er die Luecke schliesst. Eine erste Variante mit einem formfuellenden
+     ::after (z-index:-1) verdeckte stattdessen die komplette Panel-Flaeche
+     inkl. der eigenen Hintergrundfarbe -- deshalb bewusst kein Pseudo-Element
+     mehr, sondern box-shadow. */
+  body.pinned.pinstuck #filterPanel {
+       box-shadow: 0 -1rem 0 0 var(--bg); }
+  @media (prefers-reduced-motion: reduce) {
+    body.pinned #filterPanel { transition:none; }
+  }
+  /* ── Seitenleiste mit Listen-Baum ────────────────────────────────────
+     Loest die fruehere Tab-Zeile ueber der Tabelle (#viewsRow) ab: dieselbe
+     Auswahl (state.view), nur als Baum statt als Reihe. Zwei Flex-Spalten
+     statt Grid, weil die Breite per Ziehgriff frei einstellbar ist
+     (--sidebar-w, gesetzt von setSidebarWidth() in app.js).
+     .mainpane braucht zwingend min-width:0 -- ohne das bestimmt der
+     Tabelleninhalt die Breite des Flex-Kindes und das overflow-x:auto von
+     .tablewrap greift nie, die Seite bekaeme stattdessen einen waagerechten
+     Scrollbalken. */
+  .applayout { display:flex; align-items:flex-start; gap:16px; }
+  .mainpane { flex:1 1 auto; min-width:0; }
+  /* min-width:0 ist hier zwingend: ein Flex-Element hat von Haus aus
+     min-width:auto und wird damit mindestens so breit wie sein laengster
+     Inhalt -- eine Playlist mit langem Namen wuerde die Leiste ueber die
+     eingestellte Breite hinaus aufblaehen, statt dass der Name gekuerzt wird
+     (dasselbe Muster wie bei .mainpane und der Tabelle). */
+  .sidebar { flex:0 0 var(--sidebar-w, 260px); min-width:0; display:flex;
+       position:sticky; top:1rem; max-height:calc(100vh - 120px); }
+  .sidebar-body { flex:1 1 auto; min-width:0; overflow:auto;
+       background:var(--card); border:1px solid var(--line);
+       border-radius:10px; padding:12px; }
+  /* Ziehgriff: eigene Spalte statt eines Rahmens auf .sidebar-body, damit die
+     Trefferflaeche breiter ist als die sichtbare Linie. */
+  .sidebar-grip { flex:0 0 9px; margin:0 -6px 0 -3px; cursor:col-resize;
+       position:relative; z-index:1; }
+  .sidebar-grip::after { content:""; position:absolute; inset:8px auto 8px 4px;
+       width:1px; background:transparent; transition:background .12s ease; }
+  .sidebar-grip:hover::after, body.sidebar-dragging .sidebar-grip::after {
+       background:var(--accent); }
+  /* Waehrend des Ziehens keine Textauswahl im Rest der Seite. */
+  body.sidebar-dragging { user-select:none; cursor:col-resize; }
+
+  .treehead { display:flex; align-items:center; justify-content:space-between;
+       gap:8px; font-size:11px; font-weight:600; letter-spacing:.05em;
+       text-transform:uppercase; color:var(--dim); margin:0 0 8px 2px; }
+  .treehead-actions { display:flex; gap:2px; }
+  .treeadd { border:0; background:none; color:var(--dim); cursor:pointer;
+       width:22px; height:22px; border-radius:6px; font-size:14px; line-height:1;
+       padding:0; }
+  .treeadd:hover { background:var(--accent-bg); color:var(--accent); }
+  .tree { display:flex; flex-direction:column; gap:1px; }
+  /* Einrueckung ueber --depth statt verschachtelter Container: der Baum wird
+     als flache Liste gerendert (siehe renderTree() in app.js), damit das
+     spaetere Verschieben per Drag & Drop keine DOM-Umhaengung zwischen
+     Ebenen braucht. */
+  .treenode { display:flex; align-items:center; gap:6px; width:100%; min-width:0;
+       overflow:hidden;
+       border:0; background:none; color:var(--fg); font:inherit; cursor:pointer;
+       text-align:left; border-radius:7px; padding:5px 8px;
+       padding-left:calc(8px + var(--depth, 0) * 14px); }
+  .treenode:hover { background:var(--accent-bg); }
+  .treenode.on { background:var(--accent-bg); color:var(--accent); font-weight:600; }
+  .treenode.root { color:var(--dim); font-weight:600; }
+  .treenode.root:hover { background:none; }
+  .twist { flex:0 0 12px; text-align:center; color:var(--dim); font-size:10px;
+       line-height:1; transition:transform .12s ease; }
+  .twist.open { transform:rotate(90deg); }
+  .twist.leaf { visibility:hidden; }
+  .ticon { flex:0 0 16px; text-align:center; }
+  /* Wird es eng, gibt der NAME nach und endet mit "…" -- die Trackzahl bleibt
+     immer vollstaendig. Eine halb abgeschnittene Zahl waere irrefuehrend
+     ("10.4" statt "10.470"), ein gekuerzter Name dagegen ist als solcher
+     erkennbar. min-width haelt vom Namen einen lesbaren Rest stehen; ohne
+     eine der beiden Angaben draengt die Zahl ihn auf Breite 0. */
+  .tlabel { flex:1 1 auto; min-width:2.5em; overflow:hidden;
+       text-overflow:ellipsis; white-space:nowrap; }
+  .tcount { flex:0 0 auto; color:var(--dim);
+       font-size:12px; font-variant-numeric:tabular-nums; }
+  .treenode.on .tcount { color:var(--accent); }
+  /* Merklisten-Knoten tragen ihre Listenfarbe als abgerundetes Quadrat
+     (wie ihr .flbtn in der Tabellenzeile), eigene Playlisten/Smart Playlists
+     als farbiger Kreis mit Icon in der Mitte -- siehe renderTree(). */
+  /* flex:none (statt flex:0 0 18px) macht width/height ueberall massgeblich:
+     steht das Badge selbst in einem Flex-Container (.plhead-icon,
+     .pickitem, ...), wuerde eine feste flex-basis eine abweichende
+     width-Ueberschreibung sonst ignorieren -- aus dem runden Kreis wuerde ein
+     Oval (Breite blieb bei der Basis, nur die Hoehe folgte der neuen Groesse). */
+  .tbadge { flex:none; width:18px; height:18px; margin:0 1px 0 0;
+       display:flex; align-items:center; justify-content:center;
+       color:#fff; overflow:hidden; }
+  .tbadge.tsquare { border-radius:6px; }
+  .tbadge.tcircle { border-radius:50%; }
+  .tsym { display:flex; align-items:center; justify-content:center; line-height:1; }
+  .tsym.ttext { font-size:10px; }
+  .tsym.temoji { font-size:11px; }
+  /* display:block ist hier Pflicht: ein inline <svg> haengt sonst per Default
+     an der Text-Baseline statt an der Zeilenmitte (Descender-Gap unten), auch
+     wenn der umgebende Flex-Container (.tsym/.tbadge) korrekt zentriert. */
+  .tsym.tsvg svg { display:block; width:11px; height:11px; }
+  .ticon svg { display:block; width:14px; height:14px; margin:0 auto; }
+  /* Knopf fuer das Knotenmenue: erst beim Ueberfahren sichtbar, damit die
+     Leiste im Ruhezustand ruhig bleibt. Bewusst nicht data-more wie in der
+     Tabelle -- den blendet die Player-Ansicht per CSS aus, der Baum soll dort
+     aber vollstaendig bedienbar bleiben. */
+  .tmenu { flex:0 0 18px; height:18px; border:0; background:none; padding:0;
+       border-radius:5px; color:var(--dim); cursor:pointer; font-size:13px;
+       line-height:1; visibility:hidden;
+       display:flex; align-items:center; justify-content:center; }
+  .treenode:hover .tmenu, .tmenu.open { visibility:visible; }
+  .tmenu:hover, .tmenu.open { background:var(--card); color:var(--fg); }
+  /* Zielmarkierung beim Ziehen. "into" umrandet den ganzen Knoten (die Ablage
+     landet DARIN), "before"/"after" zeigen nur eine Kante -- dieselbe Sprache
+     wie beim Umsortieren der Warteschlange (.queueitem.dragover). */
+  /* Hinweiszeile eines noch nicht geladenen Fremd-Astes -- kein Ziel, kein
+     Klickverhalten, nur Text. */
+  .treenode.hint { color:var(--dim); font-style:italic; cursor:default; }
+  .treenode.hint:hover { background:none; }
+  /* Schreibgeschuetzte Fremdliste: Schloss statt Menue. */
+  .tlock { flex:0 0 auto; font-size:10px; opacity:.5; }
+  .extbadge { display:inline-block; margin-left:6px; padding:1px 7px;
+       border-radius:999px; font-size:11px; background:var(--accent-bg);
+       color:var(--accent); }
+
+  .treenode.dropinto { outline:2px solid var(--accent); outline-offset:-2px; }
+  .treenode.dropbefore { box-shadow:inset 0 2px 0 0 var(--accent); }
+  .treenode.dropafter { box-shadow:inset 0 -2px 0 0 var(--accent); }
+  /* Waehrend Tracks gezogen werden, heben sich die moeglichen Ziele ab --
+     ohne das ist im Baum nicht zu sehen, wo eine Ablage ueberhaupt wirkt. */
+  body.dragging-tracks .treenode[data-pl] { background:var(--accent-bg); }
+  /* Einfuegemarke beim Umsortieren innerhalb einer Playlist. Der Schatten
+     sitzt auf den Zellen, nicht auf dem <tr> -- unter border-collapse hat ein
+     Zeilen-Schatten in mehreren Browsern keine verlaessliche Wirkung. */
+  /* Symbol- und Farbwahl im Listen-Dialog. Farben sind Token (--fl1..--fl12),
+     nie freie Hex-Werte -- so bleibt der Kontrast in Hell und Dunkel
+     garantiert, ohne dass der Dialog etwas ueber das Theme wissen muss
+     (gleiche Regel wie bei den Merklisten). */
+  /* Regel-Editor der Smart Playlists. Breiter als die uebrigen Dialoge, weil
+     eine Regelzeile aus drei Bedienelementen nebeneinander besteht. Hoehe
+     ebenfalls auf 720px gedeckelt (mit Scrollbereich) -- sonst waechst der
+     Dialog bei vielen Regelzeilen ueber den Bildschirmrand hinaus. */
+  .rulesbox { width:min(720px, 92vw); max-height:min(720px, 85vh);
+       overflow-y:auto; }
+  .rulesmatch { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+       margin:14px 0 10px; }
+  .rulerow { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+  .rulerow select, .rulerow input { min-width:0; }
+  .rulerow .rulefield { flex:0 0 30%; }
+  .rulerow .ruleop { flex:0 0 24%; }
+  /* Eigene Positionierungsgrundlage fuer das Autovorschlaege-Dropdown beim
+     Genre-Feld (.ac-list, absolut positioniert) -- ohne das haengt es sich
+     an den naechsten positionierten Vorfahren (.overlay, deckt den ganzen
+     Bildschirm ab) statt an dieses eine Eingabefeld. */
+  .rulerow .ruleval-wrap { position:relative; flex:1 1 auto; min-width:0; }
+  .rulerow .ruleval { width:100%; }
+  /* Text-/Zahleneingaben bekommen sonst keine Optik: nur input[type=search]
+     und select sind weiter oben pauschal gestylt, ein rohes <input type=text>
+     faellt sonst auf die unformatierte Browser-Vorgabe zurueck. */
+  .ruleval { background:var(--bg); color:var(--fg); border:1px solid var(--line);
+       border-radius:7px; padding:7px 9px; font-size:14px; font-family:inherit; }
+  .rulerow .ruleunit { color:var(--dim); font-size:12px; flex:0 0 auto; }
+  .rulebtn { flex:0 0 26px; height:26px; border:1px solid var(--line);
+       background:var(--bg); color:var(--fg); border-radius:6px; cursor:pointer;
+       font-size:15px; line-height:1; padding:0; }
+  .rulebtn:hover { border-color:var(--accent); color:var(--accent); }
+  .ruleslimit { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+       margin:14px 0 4px; padding-top:12px; border-top:1px solid var(--line); }
+
+  /* Kopfzeile der geoeffneten Playlist. Steht ueber der Filterleiste und
+     scrollt bewusst mit weg -- Rueckgaengig/Wiederherstellen gehoeren zum
+     Bearbeiten der Liste, nicht zum Durchsehen. Block statt Flex, weil in
+     den drei "Aufraeumen"-Listen zwei weitere Zeilen darunter haengen
+     (Bubble-Reihe/Zusammenfuehrungs-Vorschlaege, siehe .plhead-row/
+     .genrebox-bubbles/.genrebox-merge) -- die eigentliche Kopfzeile steckt
+     dafuer in .plhead-row. */
+  .plhead { display:block; margin:0 0 12px;
+       padding:10px 14px; background:var(--card); border:1px solid var(--line);
+       border-radius:10px; }
+  .plhead-icon { font-size:16px; display:flex; align-items:center; }
+  .plhead-icon .tbadge { width:22px; height:22px; }
+  .plhead-icon .tsym.tsvg svg { width:13px; height:13px; }
+  .plhead-name { font-weight:600; overflow:hidden; text-overflow:ellipsis;
+       white-space:nowrap; }
+  .plhead-count { color:var(--dim); font-size:13px;
+       font-variant-numeric:tabular-nums; }
+  .plhead-actions { margin-left:auto; display:flex; gap:6px; }
+  .plhead-actions .act { min-width:34px; }
+  .plhead-actions .act:disabled { opacity:.4; cursor:default; }
+
+  /* Zielauswahl im "Zur Playlist hinzufuegen"-Dialog. Eigene Hoehenbegrenzung
+     mit Scrollbereich, weil die Zahl der Listen nach oben offen ist. */
+  .picklist { max-height:min(46vh, 320px); overflow:auto; margin:10px 0 4px;
+       border:1px solid var(--line); border-radius:8px; }
+  .pickitem { display:flex; align-items:center; gap:8px; width:100%; border:0;
+       background:none; color:var(--fg); font:inherit; text-align:left;
+       padding:8px 10px; cursor:pointer; }
+  .pickitem:hover { background:var(--accent-bg); }
+  .pickitem + .pickitem { border-top:1px solid var(--line); }
+  .pickitem .pickpath { color:var(--dim); font-size:12px; }
+  .pickitem .pickcount { margin-left:auto; color:var(--dim); font-size:12px;
+       font-variant-numeric:tabular-nums; }
+  .pickempty { padding:14px; color:var(--dim); text-align:center; }
+
+  /* Vorschau-Popup des Rekordbox-Abgleichs -- breiter als der uebliche
+     Bestaetigungsdialog, damit alte/neue Pfade nebeneinander lesbar bleiben. */
+  .confirmbox.rbfixbox { max-width:800px; width:92vw; }
+
+  /* Vorschau-Zeilen im Rekordbox-Abgleich-Popup (#rbFixOverlay, .picklist als
+     Scroll-Rahmen wiederverwendet) -- eine Zeile je verschobenem/mehrdeutigem
+     Rekordbox-Eintrag. Nicht wiedergefundene ("gelöschte") Eintraege tauchen
+     hier bewusst gar nicht auf -- die raeumt der Nutzer in Rekordbox selbst
+     auf, siehe server._post_rekordbox_scan(). */
+  .rbfixrow { padding:8px 10px; }
+  .rbfixrow + .rbfixrow { border-top:1px solid var(--line); }
+  .rbfixrow label { display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .rbfixrow .path { color:var(--dim); font-size:12px; margin:2px 0 0 22px;
+       word-break:break-all; }
+  /* Kurzbeschreibung (describePathChange() in app.js) ueber der eigentlichen
+     Pfad-Gegenueberstellung -- in Textfarbe, damit sie sich klar von den
+     rot/gruenen Pfadzeilen darunter abhebt. */
+  .rbfixrow .pathchange { font-size:12px; margin:4px 0 0 22px; }
+  /* Alter/neuer Pfad je eine eigene Zeile, farblich wie Fake/Korrekt-Verdikte
+     (--fake/--ok) -- auf einen Blick sichtbar, was sich aendert. */
+  .rbfixrow .pathold { color:var(--fake); font-size:12px; margin:2px 0 0 22px;
+       word-break:break-all; }
+  .rbfixrow .pathnew { color:var(--ok); font-size:12px; margin:1px 0 0 22px;
+       word-break:break-all; }
+  /* Abweichendes Pfadsegment (renderPathDiff() in app.js) -- eigener
+     Hintergrund statt reiner Textfarbe, damit es innerhalb der ohnehin schon
+     roten/gruenen Pfadzeile erkennbar bleibt. */
+  .rbfixrow .pathold mark.diffseg, .rbfixrow .pathnew mark.diffseg {
+       background:color-mix(in srgb, currentColor 25%, transparent);
+       color:inherit; border-radius:3px; padding:0 1px; }
+  .rbfixrow select.rbfixcand { margin:6px 0 0 22px; max-width:calc(100% - 22px); }
+
+  .stylerow { display:flex; flex-wrap:wrap; gap:6px; margin:2px 0 12px; }
+  .styleopt { width:30px; height:30px; border:1px solid var(--line);
+       background:var(--bg); color:var(--fg); border-radius:7px; cursor:pointer;
+       font-size:15px; line-height:1; padding:0; }
+  .styleopt:hover { border-color:var(--accent); }
+  .styleopt.on { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
+  .styleopt.swatch { border-radius:50%; }
+  .styleopt.swatch.none { background:var(--bg); color:var(--dim); }
+  .styleopt.symopt { display:flex; align-items:center; justify-content:center; }
+
+  /* Symbol/Emoji-Auswahl im Listen-Dialog: Vorschau-Kreis links (dieselbe
+     Badge-Optik wie im Baum, siehe .tbadge), Umschalter rechts. */
+  .iconpickhead { display:flex; align-items:center; gap:10px; margin:2px 0 8px; }
+  .iconpreview .tbadge { width:30px; height:30px; }
+  .iconpreview .tsym.ttext { font-size:16px; }
+  .iconpreview .tsym.temoji { font-size:18px; }
+  .iconpreview .tsym.tsvg svg { display:block; width:17px; height:17px; }
+  .icontabs { display:flex; gap:4px; }
+  .iconmode { border:1px solid var(--line); background:var(--bg); color:var(--fg);
+       border-radius:7px; padding:5px 12px; font:inherit; font-size:13px; cursor:pointer; }
+  .iconmode:hover { border-color:var(--accent); }
+  .iconmode.on { border-color:var(--accent); background:var(--accent-bg); color:var(--accent); }
+  .emojiinput { width:100%; box-sizing:border-box; margin:2px 0 4px; padding:8px 10px;
+       border:1px solid var(--line); border-radius:7px; background:var(--bg);
+       color:var(--fg); font-size:20px; text-align:center; }
+  .emojihint { margin:0 0 12px; color:var(--dim); font-size:12px; }
+  .symnamerow { display:flex; gap:8px; align-items:center; margin:6px 0 4px; }
+  .syminput { flex:1 1 auto; box-sizing:border-box; padding:7px 10px;
+       border:1px solid var(--line); border-radius:7px; background:var(--bg);
+       color:var(--fg); font:inherit; font-size:13px; }
+  .symlink { flex:0 0 auto; color:var(--accent); font-size:12px; text-decoration:none;
+       white-space:nowrap; }
+  .symlink:hover { text-decoration:underline; }
+
+  tr.row.dropbefore > td { box-shadow:inset 0 2px 0 0 var(--accent); }
+  tr.row.dropafter > td { box-shadow:inset 0 -2px 0 0 var(--accent); }
+
+  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+  /* ── Angeheftete Tabellen-Kopfzeile ─────────────────────────────────────
+     th{position:sticky;top:0} (oben) greift innerhalb von .tablewrap nie,
+     weil dessen overflow-x:auto es zu einem eigenen Scrollbereich macht, der
+     senkrecht nie scrollt (siehe Kommentar bei syncPinStuck() in app.js) --
+     deshalb hier ein von syncStickyHead() gepflegter, echter position:fixed
+     Nachbau der Kopfzeile, der nur bei Bedarf eingeblendet wird. Eigenes
+     overflow-x:auto statt transform, damit die eingeklebten Spalten (sel/
+     links) ihr normales position:sticky behalten -- ein transform wuerde
+     das nicht auslösen. Die Scrollleiste selbst ist unsichtbar, aber
+     bedienbar; synchronisiert wird sie 2-seitig mit .tablewrap in app.js. */
+  #stickyHead { position:fixed; z-index:21; display:none; overflow:hidden;
+       border:1px solid var(--line); border-top:none; border-radius:0 0 8px 8px;
+       background:var(--card); }
+  #stickyHead.show { display:block; }
+  #stickyHeadScroll { overflow-x:auto; overflow-y:hidden; scrollbar-width:none; }
+  #stickyHeadScroll::-webkit-scrollbar { display:none; }
+  #stickyHead table { border-collapse:collapse; background:var(--card); }
+  #stickyHead th { position:sticky; top:0; }
+  #stickyHead .colresize { display:none; }
+  .tablehead { display:flex; justify-content:flex-end; margin-bottom:8px; }
+  #colsMenu { margin-bottom:8px; }
+  .colsrow { display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+  .colsrow label { display:flex; align-items:center; gap:6px; cursor:pointer;
+                   font-size:13px; user-select:none; }
+  /* Spalten-Menue von oben nach unten: welche gespeicherte Spaltenansicht
+     die gerade offene Liste verwendet, darunter die Knoepfe, darunter die
+     Auswahl der Spalten. Beide oberen Zeilen mit Trennlinie -- sie wirken
+     auf die Auswahl darunter. */
+  .colsviewrow { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+                 padding-bottom:10px; border-bottom:1px solid var(--line); }
+  .colsviewrow > label { font-size:13px; font-weight:600; margin-right:2px; }
+  .colsviewrow select { min-width:190px; }
+  .colsviewrow .sethelp { margin:0; }
+  .colsbtnrow { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+                padding:10px 0; margin-bottom:10px;
+                border-bottom:1px solid var(--line); }
+  /* Zeile im Einstellungs-Dialog: Name der Spaltenansicht + Loeschen. */
+  .cvrow { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  .cvrow input { flex:1 1 auto; min-width:0; background:var(--bg); color:var(--fg);
+    border:1px solid var(--line); border-radius:7px; padding:6px 9px; font-size:13px; }
+  /* Luft unter dem Namensfeld im Listen-Dialog -- ohne sie klebten die
+     Knoepfe direkt darunter, sobald Symbol/Farbe ausgeblendet sind. */
+  #nameField { margin-top:14px; margin-bottom:20px; }
+  /* Mehr Luft zwischen Symbol- und Farbwahl (zweites Label in
+     #nameStyleRows ist "Farbe") sowie danach vor der naechsten Einstellung
+     (Spaltenansicht/Merkliste-Schalter) -- ohne das klebten die drei
+     Bloecke Name/Symbol/Farbe zu eng aneinander. */
+  #nameStyleRows label:nth-of-type(2) { margin-top:18px; }
+  #nameStyleRows { margin-bottom:20px; }
+/* ── Player ─────────────────────────────────────────────────────────── */
+/* --wave-band-*: feste Rekordbox-eigene 3-Band-Farbsprache (tief/mitten/hoch),
+   nicht das App-Theme -- deshalb in Hell/Dunkel bewusst unterschiedliche
+   Werte statt derselben Konstante: "hoch" braucht in Hell einen dunkleren Ton
+   als in Dunkel, sonst verschwindet der Balken vor dem hellen --bg. */
+:root { --wave:#9aa4b3; --cue-memory:#8b95a6;
+        --wave-band-bass:#1e3a8a; --wave-band-mid:#d97706; --wave-band-high:#8291a6; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --wave:#565f6e; --cue-memory:#7b8494;
+        --wave-band-bass:#3a5bc7; --wave-band-mid:#e8a24d; --wave-band-high:#f1f3f6; }
+}
+:root[data-theme="dark"] { --wave:#565f6e; --cue-memory:#7b8494;
+        --wave-band-bass:#3a5bc7; --wave-band-mid:#e8a24d; --wave-band-high:#f1f3f6; }
+.player { display:flex; align-items:center; gap:10px; margin-top:12px; }
+.pbtn { flex:0 0 auto; width:32px; height:32px; border-radius:50%;
+        border:1px solid var(--line); background:var(--card); color:var(--accent);
+        cursor:pointer; font-size:12px; line-height:1; }
+.pbtn:hover { border-color:var(--accent); }
+canvas.wave { flex:1; min-width:120px; height:80px; cursor:pointer;
+              border-radius:6px; background:var(--bg); }
+.ptime { flex:0 0 auto; font-size:12px; color:var(--dim);
+         font-variant-numeric:tabular-nums; min-width:82px; text-align:right; }
+
+/* ── Ablagefläche ───────────────────────────────────────────────────── */
+#dropOverlay { display:none; position:fixed; inset:0; z-index:50;
+               background:rgba(37,99,235,.14); backdrop-filter:blur(2px);
+               align-items:center; justify-content:center; text-align:center;
+               color:var(--accent); pointer-events:none;
+               border:3px dashed var(--accent); border-radius:12px; }
+.drophead-main { display:flex; justify-content:space-between; align-items:flex-start;
+                 gap:12px; flex-wrap:wrap; margin-bottom:10px; }
+#dropStatus { color:var(--dim); font-size:13px; margin-top:2px; }
+#dropStatus.warn { color:var(--susp); }
+.droptablewrap { margin-top:10px; }
+.droptablewrap th { cursor:default; }
+.droptablewrap th:hover { color:var(--dim); }
+
+/* ── Gelöschte Dateien ──────────────────────────────────────────────── */
+tr.gone .name { color:var(--dim); }
+.missing { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
+           background:var(--unk-bg); color:var(--unk); font-size:11px; font-weight:600; }
+.cliptag { display:inline-block; margin-left:4px; padding:0 5px; border-radius:999px;
+           background:var(--fake-bg); color:var(--fake); font-size:10px; font-weight:700; }
+#toolbarGoneActions { display:inline-flex; align-items:center; gap:8px; }
+button.act.warn-orange { border-color:var(--dc-orange); color:var(--dc-orange); font-weight:600; }
+button.act.warn-orange:hover { background:var(--dc-orange-bg); }
+
+/* ── Kopfzeile: Titel links, Einstellungen/Beenden oben rechts ───────── */
+/* Eigene Ecke statt Teil der Werkzeugleiste -- Einstellungen und Beenden
+   wirken auf die Anwendung selbst, nicht auf die Bibliothek, und bleiben so
+   unabhaengig vom Umbruch der uebrigen Aktionen immer oben rechts sichtbar. */
+.pageheader { display:flex; justify-content:space-between; align-items:flex-start;
+              gap:16px; flex-wrap:wrap; margin-bottom:20px; }
+.topcorner { display:flex; align-items:center; gap:10px; flex:0 0 auto; }
+.topcorner button.act { padding:10px 18px; font-size:15px; }
+
+/* Layout-Umschalter (Ansicht Bearbeiten/Player, siehe Issue #14) -- selbe
+   Mechanik wie .views/button.view weiter unten (aktive Option per
+   .on-Klasse), nur auf die Groesse der Kopfzeilen-Knoepfe skaliert, weil er
+   direkt neben "Einstellungen" steht. */
+.layoutswitch { display:inline-flex; background:var(--bg); border:1px solid var(--line);
+                border-radius:9px; padding:3px; gap:2px; }
+.lsbtn { border:none; background:none; color:var(--fg); cursor:pointer;
+         border-radius:7px; padding:10px 16px; font-size:15px;
+         display:inline-flex; align-items:center; gap:7px; }
+.lsbtn:hover:not(:disabled) { background:rgba(127,127,127,.12); }
+.lsbtn.on { background:var(--card); color:var(--accent); font-weight:600;
+            box-shadow:0 1px 3px rgba(0,0,0,.12); }
+.lsbtn:disabled { opacity:.4; cursor:not-allowed; }
+
+/* ── Werkzeugleiste, Einstellungen, Scan ────────────────────────────── */
+.toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
+#scanLine { color:var(--dim); font-size:13px; display:flex; align-items:center; gap:10px; }
+/* Ganzflaechiger Hinweis nach dem Beenden: die Seite dahinter ist tot, ihre
+   Knoepfe wuerden ins Leere laufen. */
+#quitveil { position:fixed; inset:0; z-index:9999; display:flex;
+            align-items:center; justify-content:center; text-align:center;
+            background:var(--bg); color:var(--dim); font-size:15px;
+            line-height:1.6; padding:24px; }
+#scanLine.warn { color:var(--susp); }
+.bar { display:inline-block; width:140px; height:7px; border-radius:4px;
+       background:var(--line); overflow:hidden; }
+.bar i { display:block; height:100%; background:var(--accent); transition:width .3s; }
+button.act.small { padding:3px 9px; font-size:12px; }
+/* Einstellungs-Popup: dieselbe Overlay/Confirmbox-Optik wie Tags & Co,
+   nur breiter (bis zu 3 Spalten Inhalt) und mit eigenem Scroll-Bereich,
+   damit Kopf-/Fusszeile beim Scrollen sichtbar bleiben. */
+/* ".confirmbox.settingsbox" statt nur ".settingsbox" -- .confirmbox selbst
+   setzt max-width/width weiter unten in der Kaskade (gleiche Spezifitaet,
+   spaeter deklariert) und wuerde eine einfache ".settingsbox"-Regel sonst
+   ueberschreiben (max-width:520px statt der gewuenschten 800px). */
+.confirmbox.settingsbox { max-width:800px; width:92vw; display:flex; flex-direction:column; max-height:85vh; }
+.settingsbox #settingsFile { margin-bottom:14px; }
+/* Eigenes rechtes Padding statt des allgemeinen .confirmbox-Innenabstands --
+   sonst liegt der Scrollbalken der langen Einstellungsliste direkt auf dem
+   Text und verdeckt dessen letzte Zeichen. */
+.settingsbox #settingsBody { overflow-y:auto; flex:1; min-height:0; padding-right:16px; }
+.settingsfoot { color:var(--dim); font-size:12px; text-align:center; margin-top:22px; flex:none; }
+.settingsfoot div + div { margin-top:4px; }
+.settingsfoot a { color:var(--accent); text-decoration:none; }
+.settingsfoot a:hover { text-decoration:underline; }
+
+/* Statistik-Overlay: gleiche Optik wie Einstellungen (.confirmbox.settingsbox
+   oben), eigener Inhalt (Diagramme/Ranglisten statt Formularfelder). */
+.confirmbox.statsbox { max-width:900px; width:92vw; display:flex; flex-direction:column; max-height:85vh; }
+.statshead { display:flex; align-items:center; gap:12px; margin-bottom:14px; }
+.statshead h3 { margin:0; flex:none; }
+.statshead select { margin-left:auto; }
+#statsStatus { color:var(--dim); font-size:13px; min-height:18px; margin-bottom:8px; }
+#statsBody { overflow-y:auto; flex:1; min-height:0; padding-right:16px; }
+
+.stats-empty { color:var(--dim); padding:20px 0; text-align:center; }
+
+.stats-kpis { display:flex; gap:16px; margin-bottom:20px; }
+.stats-kpi { flex:1; background:var(--bg); border:1px solid var(--line); border-radius:10px; padding:14px 16px; }
+.stats-kpi-value { font-size:24px; font-weight:600; }
+.stats-kpi-label { color:var(--dim); font-size:12px; margin-top:2px; }
+
+.stats-charts { display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:22px; }
+.stats-chartbox h4 { margin:0 0 8px; font-size:14px; }
+/* preserveAspectRatio="none" im SVG selbst fuellt die Box exakt -- keine
+   devicePixelRatio-Behandlung noetig wie bei der Canvas-Wellenform, siehe
+   technische_funktionen.md. */
+.statschart-svg { width:100%; height:150px; display:block; }
+.statschart-bar { fill:var(--accent); }
+.statschart-label { fill:var(--dim); font-size:9px; }
+
+.stats-section { margin-bottom:22px; }
+.stats-section h4 { margin:0 0 10px; font-size:14px; }
+.stats-sectionhead { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+.stats-sectionhead h4 { margin:0; }
+
+.stats-actiontable { width:100%; border-collapse:collapse; }
+.stats-actiontable td { padding:5px 0; border-bottom:1px solid var(--line); font-size:13px; }
+.stats-actioncount { text-align:right; font-variant-numeric:tabular-nums; color:var(--dim); }
+
+.stats-toptracks { display:grid; grid-template-columns:repeat(auto-fill, minmax(160px, 1fr)); gap:12px; }
+.stats-trackcard { position:relative; background:var(--bg); border:1px solid var(--line); border-radius:10px;
+                    padding:10px; display:flex; flex-direction:column; gap:6px; }
+.stats-trackrank { position:absolute; top:8px; left:8px; background:var(--accent); color:#fff;
+                    border-radius:999px; min-width:20px; height:20px; padding:0 5px; font-size:11px;
+                    font-weight:600; display:flex; align-items:center; justify-content:center; }
+.stats-trackcover { width:100%; aspect-ratio:1; object-fit:cover; border-radius:6px; background:var(--line); }
+.stats-trackcover-empty { display:flex; align-items:center; justify-content:center; color:var(--dim); }
+.stats-trackcover-empty svg { width:32px; height:32px; }
+.stats-tracktitle { font-weight:600; font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.stats-trackartist { color:var(--dim); font-size:12px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.stats-tracktime { font-size:11px; color:var(--dim); }
+
+.stats-columns { display:grid; grid-template-columns:1fr 1fr; gap:24px; }
+.stats-rankedlist { display:flex; flex-direction:column; gap:6px; }
+.stats-rankrow { display:flex; align-items:center; gap:10px; }
+.stats-ranknum { width:18px; flex:none; color:var(--dim); font-size:12px; text-align:right; }
+.stats-rankbar-wrap { flex:1; min-width:0; }
+.stats-rankname { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.stats-rankbar { height:4px; background:var(--line); border-radius:2px; margin-top:3px; overflow:hidden; }
+.stats-rankbar-fill { height:100%; background:var(--accent); border-radius:2px; }
+.stats-rankvalue { flex:none; font-size:12px; color:var(--dim); font-variant-numeric:tabular-nums; }
+
+@media (max-width:640px) {
+  .stats-charts, .stats-columns { grid-template-columns:1fr; }
+}
+
+/* Wert-Box (Genre/Album/Interpret) -- sitzt IM Kopf der geoeffneten Liste
+   (#playlistHeader/.plhead) statt in einem eigenen Block darunter. Je Feld
+   nur in der zugehoerigen "Aufraeumen"-Liste befuellt (siehe
+   renderPlaylistHeaderValueBox() in app.js) -- .plhead selbst bleibt fuer
+   alle anderen Listen unveraendert einzeilig. Zwei unabhaengige Bedienteile:
+   #plHeadBubblesExpand (zentrierter Link UNTER der Bubble-Reihe, wie ein
+   "mehr anzeigen" bei einer gekuerzten Liste) vergroessert/verkleinert NUR
+   die Bubble-Reihe (200px Standard- / 550px Maximalhoehe), #plHeadMergeToggle
+   (Knopf im Kopf) blendet die Zusammenfuehrungs-Vorschlaege separat ein/aus
+   -- kein gemeinsamer "Ganze Box zuklappen"-Schalter mehr. */
+.plhead-row { display:flex; align-items:center; gap:10px; }
+#plHeadMergeToggle.active { border-color:var(--accent); color:var(--accent); }
+.genrebox-bubbles { max-height:200px; overflow-y:auto; padding:0; margin:10px 0 0;
+                    transition:max-height .15s ease; }
+.genrebox-bubbles.expanded { max-height:550px; }
+.genrebox-expandlink { display:flex; flex-direction:column; align-items:center; gap:0;
+             width:100%; background:none; border:none; cursor:pointer;
+             color:var(--dim); font-size:12px; padding:4px 0 0; margin:0; }
+.genrebox-expandlink:hover { color:var(--fg); }
+.genrebox-expandlink .btnicon svg { width:16px; height:16px; transition:transform .15s ease; }
+.genrebox-expandlink.expanded .btnicon svg { transform:rotate(180deg); }
+/* Abstand zur Bubble-Reihe darueber, eigenes Scrollen bei vielen
+   Vorschlaegen -- sonst wuerde die Liste beliebig lang mitwachsen. */
+.genrebox-merge { margin-top:12px; padding:0 10px 0 0; max-height:240px; overflow-y:auto; }
+
+/* Bubbles selbst -- neutrale Farbe wie .chip -- anders als .fltag sind
+   Genre/Album/Interpret keine benutzerfarbigen Entitaeten. Dieselbe Optik
+   traegt auch der Bearbeiten-Knopf im Gruppenkopf der drei
+   "Aufraeumen"-Listen (.genrerename, siehe render()/albumgroup in app.js). */
+.genrebubble { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line);
+               background:var(--bg); color:var(--fg); border-radius:999px;
+               padding:6px 8px 6px 13px; font-size:13px; cursor:pointer; }
+.genrebubble:hover { border-color:var(--dim); }
+.genrebubble.active { border-color:var(--accent); background:var(--accent); color:#fff; }
+.genrebubble.active .genrecount { color:inherit; opacity:.8; }
+.genrebubble .genrecount { color:var(--dim); }
+.genrebubble.active .albumbubbleartist { color:inherit; opacity:.8; }
+.genrebubble .albumbubbleartist { color:var(--dim); }
+.genrerename { background:none; border:none; padding:3px; cursor:pointer;
+               color:inherit; opacity:.7; display:inline-flex; align-items:center;
+               vertical-align:middle; border-radius:6px; }
+.genrerename:hover { opacity:1; background:var(--card); }
+.genrerename svg { width:13px; height:13px; }
+/* Im Gruppenkopf (Tabellenzeile, kein Flex-Container wie .genrebubble) sitzt
+   der Knopf zwischen Fliesstext und einem .path-Span -- vertical-align allein
+   reicht dort fuer eine optisch mittige Ausrichtung zum Text. */
+tr.albumgroup .genrerename { margin-left:6px; }
+
+/* Zusammenfuehrungs-Vorschlaege, gemeinsam fuer alle drei Wert-Boxen
+   (.genrebox-merge, siehe oben). */
+.mergehint { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+             border:1px solid var(--line); border-radius:8px; background:var(--card);
+             padding:8px 12px; margin-bottom:8px; font-size:13px; }
+.mergehint:last-child { margin-bottom:0; }
+.mergehint.previewing { border-color:var(--accent); background:var(--accent-bg); }
+.mergehint-text { flex:1; display:inline-flex; align-items:center; gap:6px; cursor:pointer; }
+.mergehint-eye { display:inline-flex; opacity:.6; }
+.mergehint-eye svg { width:14px; height:14px; }
+.mergehint.previewing .mergehint-eye { opacity:1; color:var(--accent); }
+.mergehint .mergebtn { flex:none; }
+.mergehint .mergedismiss { flex:none; background:none; border:none; cursor:pointer;
+             color:var(--dim); padding:3px; display:inline-flex; border-radius:6px; }
+.mergehint .mergedismiss:hover { color:var(--fg); background:var(--bg); }
+.mergehint-empty { color:var(--dim); font-size:13px; padding:8px 12px; }
+.mergehint-heading { position:sticky; top:0; z-index:1; background:var(--card);
+             font-size:12px; font-weight:600; color:var(--dim);
+             letter-spacing:.02em; padding:0 12px 6px 0; }
+
+.app-icon { width:34px; height:34px; vertical-align:middle; margin-right:10px; border-radius:8px; }
+.setgroup { border-top:1px solid var(--line); padding-top:22px; margin-top:22px; }
+.setgroup:first-child { border-top:none; margin-top:0; padding-top:0; }
+.sethead { margin-bottom:16px; }
+.sethead-top { display:flex; align-items:center; gap:12px; flex-wrap:wrap; cursor:pointer; user-select:none; }
+.sethead-top b { font-size:17px; }
+.sethead-top button { margin-left:auto; }
+.sethead-top .setchevron { transition:transform .15s; flex:none; }
+.setgroup.collapsed .setchevron { transform:rotate(-90deg); }
+.setsubgroup.collapsed .setchevron { transform:rotate(-90deg); }
+/* .setbody buendelt Hinweis, Felder und (bei "Analyse") die Unter-Accordions
+   in einem Container -- beim Einklappen verschwindet er komplett, so bleibt
+   auch der Gruppenhinweis nicht faelschlich sichtbar. */
+.setgroup.collapsed .setbody, .setsubgroup.collapsed .setbody { display:none; }
+/* Verschachtelte Klassifikations-Accordions unter "Analyse" -- eine Ebene
+   eingerueckt, sonst dieselbe Klapp-Mechanik wie die Top-Level-Gruppen. */
+.setsubgroups { display:flex; flex-direction:column; gap:16px; margin-top:16px; }
+.setsubgroup { border-top:1px solid var(--line); padding-top:16px; padding-left:14px; }
+.setsubgroup .sethead-top b { font-size:15px; }
+/* Gruppenhinweis als eigene Zeile statt inline neben dem Titel -- deutlich
+   als Hinweis abgesetzt (wie .note), nicht als beilaeufiger grauer Text. */
+.sethint { display:block; margin:10px 0 16px; font-size:13.5px; line-height:1.5;
+           color:var(--susp); background:var(--susp-bg); border-radius:7px;
+           padding:9px 13px; }
+/* .setfields bleibt ein Raster -- wird nur noch von .tagsmain (Metadaten-
+   Dialog, feste 4-Spalten-Aufteilung weiter unten) gebraucht. Der
+   Einstellungs-Dialog selbst nutzt seit dem "volle Breite"-Fix .setrows/
+   .setrow (Flexbox statt Grid): ein Grid-Spacer fuer Zeilenumbrueche
+   (frueher .setbreak, grid-column:1/-1) belegt zwangslaeufig alle Spalten
+   der GESAMTEN Gruppe -- CSS Grid liess darum keine Spalte mehr kollabieren,
+   und Zeilen mit nur 1-2 Feldern blieben schmal mit Leerraum rechts statt
+   die volle Breite zu nutzen. Echte Flex-Zeilen je Feld-Gruppe umgehen das. */
+.setfields { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:16px; }
+.setrows { display:flex; flex-direction:column; gap:16px; }
+.setrow { display:flex; flex-wrap:wrap; gap:16px; }
+.setrow > .setfield { flex:1 1 230px; min-width:0; }
+.setfield { position:relative; }
+/* Breitenklassen fuer die Einstellungen: halb/drittel/volle Zeile. Auf
+   .settingsbox begrenzt -- .tagsmain (Metadaten-Dialog) hat mit
+   ".setfield.half" eine eigene, andere Bedeutung (spannt 2 von 4
+   Rasterspalten, siehe unten) und darf hier nicht mit hinein geraten. */
+.settingsbox .setrow > .setfield.half { flex:0 0 calc(50% - 8px); max-width:calc(50% - 8px); }
+.settingsbox .setrow > .setfield.third { flex:0 0 calc(33.333% - 11px); max-width:calc(33.333% - 11px); }
+.settingsbox .setrow > .setfield.full { flex:1 1 100%; max-width:100%; }
+.setfield label { display:block; font-size:13px; margin-bottom:4px; }
+/* .toggle setzt display:inline-flex/align-items:center fuer sich selbst,
+   verliert das aber gegen die obige Regel (gleiche Spezifitaet, .setfield
+   label steht zuerst im Stylesheet) -- ohne diese Zeile faellt ein Schalter
+   innerhalb eines .setfield auf display:block zurueck und Text/Thumb
+   verlieren ihre gemeinsame Basislinie. */
+.setfield label.toggle { display:inline-flex; align-items:center; margin-bottom:0; }
+.setfield input, .setfield textarea, .setfield select {
+  width:100%; background:var(--bg); color:var(--fg); border:1px solid var(--line);
+  border-radius:7px; padding:7px 9px; font-size:14px; font-family:inherit; }
+/* Ohne diese Regel sizt sich ein natives <select> auf die Breite seiner
+   laengsten Option -- bei vielen installierten Programmen (appPicker())
+   leicht 300px+ und damit breiter als die Rasterspalte: es haengt dann ueber
+   den Rand hinaus ins Nachbarfeld hinein. */
+/* -webkit-appearance:none entzieht macOS/iOS-WebKit die eigene Select-Chrome
+   (sonst weicht die Hoehe selbst bei identischem Padding/Border vom Rest der
+   Formularfelder ab) -- der Pfeil kommt stattdessen aus --select-arrow. */
+.setfield select { min-width:0; appearance:none; -webkit-appearance:none;
+  background-image:var(--select-arrow); background-repeat:no-repeat;
+  background-position:right 10px center; background-size:13px; padding-right:30px; }
+/* Ein Ja/Nein-Feld (type "bool") ist nur das Kaestchen -- die Regel darueber
+   wuerde es sonst auf die volle Feldbreite aufblasen. */
+.setfield input[type=checkbox] {
+  width:18px; height:18px; padding:0; accent-color:var(--accent); cursor:pointer; }
+
+/* ── Toggle-Schalter (statt nacktem Checkbox-Kaestchen, z.B. "nach Album
+   gruppieren") ────────────────────────────────────────────────────────── */
+.toggle { display:inline-flex; align-items:center; gap:7px; cursor:pointer; }
+.toggle input[type=checkbox] { position:absolute; opacity:0; width:1px; height:1px; }
+.toggle-track { display:inline-block; width:32px; height:18px; border-radius:999px;
+  background:var(--line); position:relative; flex:none; transition:background .15s; }
+.toggle-thumb { position:absolute; top:2px; left:2px; width:14px; height:14px; border-radius:50%;
+  background:var(--card); box-shadow:0 1px 2px rgba(0,0,0,.3); transition:left .15s; }
+.toggle input[type=checkbox]:checked + .toggle-track { background:var(--accent); }
+.toggle input[type=checkbox]:checked + .toggle-track .toggle-thumb { left:16px; }
+.toggle input[type=checkbox]:focus-visible + .toggle-track { outline:2px solid var(--accent); outline-offset:2px; }
+/* Gesperrt, z.B. "nach Album gruppieren" in der Duplikate-Ansicht (dort
+   wirkungslos, weil die Gruppierung dort immer aktiv ist). */
+.toggle.disabled, .toggle.disabled * { cursor:not-allowed; }
+.toggle.disabled .toggle-track { opacity:.5; }
+
+/* ── Ordnerliste (Bibliothek) ─────────────────────────────────────────── */
+.folderlist { display:flex; flex-direction:column; gap:6px; margin-bottom:8px; }
+.folderrow { display:flex; align-items:center; gap:8px; background:var(--bg);
+  border:1px solid var(--line); border-radius:7px; padding:6px 9px; }
+.folderrow span { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:13.5px; }
+.folderrow button { flex:none; }
+
+/* ── Dateiauswahl-Feld (z.B. Ableton-Vorlage) ─────────────────────────── */
+.filepick { display:flex; align-items:center; gap:8px; }
+.filepick input { flex:1; min-width:0; }
+.filepick button { flex:none; }
+
+/* ── Autovorschlaege (Tag-Felder, Suchfeld) ───────────────────────────── */
+.ac-list { position:absolute; left:0; right:0; top:100%; z-index:5; margin:2px 0 0;
+           padding:4px; list-style:none; max-height:180px; overflow-y:auto;
+           background:var(--card); border:1px solid var(--line); border-radius:8px;
+           box-shadow:0 10px 24px rgba(0,0,0,.18); }
+.ac-list li { padding:5px 8px; border-radius:5px; font-size:13px; cursor:pointer; }
+.ac-list li:hover, .ac-list li.on { background:var(--accent-bg); }
+.sethelp { color:var(--dim); font-size:12px; margin-top:4px; }
+.sethelp.warn { color:var(--fake); }
+.chg { color:var(--accent); font-size:11px; font-weight:600; }
+#settingsStatus { margin-top:14px; font-size:13px; color:var(--dim); }
+#settingsStatus.warn { color:var(--fake); }
+
+/* ── RX- und Papierkorb-Knopf ─────────────────────────────────────────── */
+.iconbtn.rx, .iconbtn.bp { font-size:11px; font-weight:700; letter-spacing:.03em;
+              border:1px solid var(--line); border-radius:5px; padding:1px 4px;
+              text-decoration:none; display:inline-block; }
+.iconbtn.rx:hover, .iconbtn.bp:hover { border-color:var(--accent);
+              text-decoration:none; }
+.iconbtn.del:hover { color:var(--fake); }
+
+/* ── Rekordbox-Praesenz-Haken in der Tabelle ─────────────────────────── */
+.rbyes { color:var(--ok); font-weight:700; }
+
+/* ── Rückfrage-Overlays (Papierkorb, Bitrate korrigieren) ───────────── */
+.overlay { display:none; position:fixed; inset:0; z-index:60;
+                  background:rgba(0,0,0,.45); align-items:center;
+                  justify-content:center; padding:20px; }
+.confirmbox { background:var(--card); border:1px solid var(--line);
+              border-radius:12px; padding:22px; max-width:520px; width:100%;
+              box-shadow:0 18px 50px rgba(0,0,0,.3); }
+.confirmbox h3 { margin:0 0 12px; font-size:20px; }
+/* Icon der jeweiligen Liste (Genre/Album/Kuenstler) vor dem Umbenennen-Titel
+   -- nur gesetzt, wenn askPlaylistProps() eins mitbekommt (renameGroupValue()
+   in app.js), sonst bleibt der Titel wie gehabt reiner Text. */
+.nametitlerow { display:flex; align-items:center; gap:8px; }
+.nametitleicon { display:inline-flex; color:var(--dim); }
+/* Der App-weite Strichstaerke-Standard (stroke-width:2, siehe SVG() in
+   app.js) wirkt neben fettem Ueberschriften-Text duenn -- hier bewusst
+   dicker statt global zu aendern (ueberall sonst neben normalem Fliesstext
+   passt der Standard). */
+.nametitleicon svg { width:18px; height:18px; stroke-width:2.75; }
+.confirmfile { font-weight:600; margin-bottom:2px; }
+.confirmfacts { display:flex; gap:14px; flex-wrap:wrap; align-items:center;
+                margin-top:12px; font-size:13px; color:var(--dim); }
+.confirmfacts b { color:var(--fg); font-variant-numeric:tabular-nums; }
+.rbqlist { max-height:200px; overflow-y:auto; display:flex; flex-direction:column;
+           gap:4px; width:100%; }
+.rbqlist div { display:flex; justify-content:space-between; gap:12px; }
+.rbqlist b { color:var(--fg); font-variant-numeric:tabular-nums; flex:0 0 auto; }
+.searchhelplist { max-height:60vh; overflow-y:auto; margin-top:14px;
+                   display:flex; flex-direction:column; gap:10px; }
+.searchhelprow b { color:var(--fg); }
+.confirmnote { color:var(--dim); font-size:13px; line-height:1.5;
+               margin:16px 0 18px; }
+.confirmnote-music { color:var(--fake); margin:16px 0 0; }
+.confirmnote-music:empty { display:none; margin:0; }
+
+/* Zwei gleichrangige Wahlmoeglichkeiten im Zusammenfuehren-Dialog
+   (#mergeChooseOverlay) -- welcher der beiden Werte bleibt erhalten. */
+.mergechoose-options { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+.mergechoose-opt { display:flex; align-items:center; justify-content:space-between;
+                   gap:12px; width:100%; text-align:left; padding:10px 14px; }
+.mergechoose-opt .path { color:var(--dim); font-size:13px; flex:none; }
+
+/* Rekordbox-Playlist-Auswahl in den Einstellungen (#rbPlaylistOverlay) --
+   echter Baum wie der Rekordbox-Ast im Seitenbaum (.treenode/--depth, siehe
+   openRekordboxPlaylistPicker() in app.js), nur mit eigenem Gap statt .tree's
+   1px (der Dialog hat mehr Platz als die schmale Seitenleiste). */
+.rbplaylistlist { max-height:55vh; overflow-y:auto; display:flex; flex-direction:column;
+                   gap:2px; margin-top:14px; }
+/* Smart Playlists lassen sich nicht als Ziel setzen (Rekordbox fuellt sie
+   ueber Regeln, nicht per Track-Zuweisung) -- bleiben nur zur Orientierung
+   im Baum sichtbar, gedimmt und ohne Klick-Wirkung (siehe renderPicker()). */
+.rbtreenode.smart { opacity:.55; cursor:default; }
+.rbtreenode.smart:hover { background:none; }
+/* Macht sonst unsichtbaren Leerraum (fuehrend/folgend/doppelt) sichtbar --
+   siehe visualizeMergeValue() in app.js. */
+.ws-marker { background:var(--susp-bg); color:var(--susp); border-radius:3px;
+             outline:1px solid var(--susp); outline-offset:-1px; }
+
+/* Liste von Toggle-Zeilen in einem Rueckfrage-Overlay (Scan-Optionen,
+   Rekordbox-Abgleich) -- ein Label+Hinweistext links, ein Schalter rechts,
+   durch eine Trennlinie von der naechsten Zeile abgesetzt. Ersetzt dort das
+   engere .setfield-Muster (Einstellungs-Dialog), das fuer Formularfelder
+   gedacht ist, nicht fuer eine Liste gleichrangiger Ja/Nein-Optionen. */
+.optlist { margin-top:4px; }
+.optrow { display:flex; align-items:center; justify-content:space-between;
+          gap:16px; padding:14px 2px; border-top:1px solid var(--line); }
+.optlist .optrow:first-child { border-top:none; padding-top:2px; }
+.optrow .opttext { flex:1; min-width:0; }
+.optrow .optlabel { font-size:14px; }
+.optrow .opthelp { color:var(--dim); font-size:12px; line-height:1.45; margin-top:3px; }
+.optrow .toggle { flex:0 0 auto; }
+
+.confirmbtns { display:flex; gap:10px; justify-content:flex-end; margin-top:18px; }
+
+/* Zwei-Optionen-Umschalter im Konverter-Popup (Ziel MP3 320/AIFF) -- gleiche
+   Optik wie .layoutswitch (Ansicht Bearbeiten/Player), nur volle Breite im
+   Popup statt neben "Einstellungen"; es gibt sonst keine Radio-/Segmented-
+   Choice-Optik im Projekt. */
+.convertswitch { display:flex; background:var(--bg); border:1px solid var(--line);
+                 border-radius:9px; padding:3px; gap:2px; margin:14px 0; }
+.csbtn { flex:1; border:none; background:none; color:var(--fg); cursor:pointer;
+         border-radius:7px; padding:12px 14px; font-size:14px; font-weight:500;
+         text-align:center; }
+.csbtn:hover:not(.on) { background:rgba(127,127,127,.12); }
+.csbtn.on { background:var(--card); color:var(--accent); font-weight:600;
+            box-shadow:0 1px 3px rgba(0,0,0,.12); }
+
+/* Gruppierte Ergebnisliste im Konverter-Abschluss-Popup (konvertiert /
+   uebersprungen aus zwei verschiedenen Gruenden / fehlgeschlagen /
+   Rekordbox ausstehend) -- es gibt sonst keine aggregierte Bericht-Ansicht
+   am Ende einer Sammelaktion, nur einzelne Toasts waehrend des Laufs. */
+.convertresultgroup { margin-top:14px; }
+.convertresultgroup h4 { font-size:13.5px; margin:0 0 6px; color:var(--dim); }
+.convertresultgroup ul { list-style:none; margin:0; padding:0; max-height:140px;
+                          overflow-y:auto; display:flex; flex-direction:column; gap:2px; }
+.convertresultgroup li { font-size:13px; }
+.convertresultgroup li .err { color:var(--dim); font-size:12px; }
+button.act.danger { border-color:var(--fake); color:var(--fake); font-weight:600; }
+button.act.danger:hover { background:var(--fake-bg); }
+button.act.busy { opacity:.6; }
+/* Sichtbares Feedback waehrend eines laufenden Speicherns (z.B. Tags-Dialog,
+   inkl. des ggf. langsameren Music.app-Abgleichs) -- dreht das vorhandene
+   Icon statt eines eigenen Spinner-Elements, kein JS-Zusatzaufwand noetig,
+   da .busy schon bei jedem async Save-Vorgang gesetzt/entfernt wird. */
+button.act.busy .btnicon svg { animation:actBtnSpin .8s linear infinite; }
+@keyframes actBtnSpin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  button.act.busy .btnicon svg { animation:none; }
+}
+button.act.done { border-color:var(--ok); color:var(--ok); background:var(--ok-bg); }
+button.act.failed { border-color:var(--fake); color:var(--fake); background:var(--fake-bg); }
+#fixStatus { margin-top:10px; font-size:13px; color:var(--dim); }
+#fixStatus.warn { color:var(--fake); }
+
+/* ── Cover-Thumbnail in der Tabelle ───────────────────────────────────── */
+/* Fuellt die Zelle (width:100% bezieht sich auf die td, skaliert also mit
+   der Spaltenbreite mit), aspect-ratio haelt es quadratisch ohne Hoehe
+   separat zu berechnen -- gedeckelt auf 200px, auch fuer die leere
+   Platzhalter-Variante (kein Cover hinterlegt). */
+.covercell, .covercell-empty { width:100%; max-width:200px; aspect-ratio:1/1;
+             border-radius:5px; border:1px solid var(--line); display:block; }
+.covercell { object-fit:cover; }
+.covercell-empty { background:var(--line); }
+/* Browser ohne AIFF-Wiedergabe (siehe canPlayAiff() in app.js): Cover
+   graustufig zeigt optisch an, dass die Datei sich nicht abspielen laesst,
+   ohne die Zeile selbst zu sperren -- Tags bearbeiten, Umbenennen etc.
+   funktionieren unabhaengig vom Player weiter. */
+.covercell-unplayable, .covercell-empty.covercell-unplayable { filter:grayscale(1); opacity:.6; }
+.covercell-btn { background:none; border:none; padding:0; margin:0; cursor:zoom-in;
+                  display:block; width:100%; max-width:200px; line-height:0; }
+
+/* ── Cover-Großansicht ─────────────────────────────────────────────────── */
+.coverbox { background:var(--card); border:1px solid var(--line); border-radius:12px;
+            padding:22px; max-width:min(90vw,520px); width:auto;
+            box-shadow:0 18px 50px rgba(0,0,0,.3); text-align:center; }
+.coverbox img { max-width:100%; max-height:70vh; border-radius:8px; display:block;
+                margin:0 auto 16px; }
+
+/* ── Tags-bearbeiten-Dialog ────────────────────────────────────────────── */
+.tagsbox { max-width:760px; }
+/* Waehrend saveBtn.onclick laeuft (setTagsPopupLocked() in app.js) --
+   pointer-events:none sperrt pauschal auch die nicht-nativen Klick-Ziele
+   (Lookup-Kandidatenzeilen, Cover-Drop-Zone). */
+.tagsbox.locked { pointer-events:none; }
+.tagsmain { display:flex; gap:20px; align-items:flex-start; margin:12px 0 16px; }
+.tagscover { display:flex; flex-direction:column; align-items:center; gap:10px;
+             flex:none; width:140px; }
+.tagscover img { width:140px; height:140px; object-fit:cover; border-radius:10px;
+                  border:1px solid var(--line); box-shadow:0 6px 16px rgba(0,0,0,.25); }
+.tagscover-empty { width:140px; height:140px; border-radius:10px; border:1px dashed var(--line);
+                    display:flex; align-items:center; justify-content:center;
+                    color:var(--dim); font-size:12px; text-align:center; line-height:1.4; }
+.tagscover.dragover .tagscover-empty { border-color:var(--accent); color:var(--accent);
+                    background:var(--accent-bg); }
+.tagscover.dragover img { outline:2px dashed var(--accent); outline-offset:2px; }
+.tagscover-actions { display:flex; flex-direction:column; gap:6px; width:100%; }
+.tagscover-actions button { width:100%; }
+/* Feste 4-Spalten-Aufteilung statt des auto-fit-Rasters von .setfields
+   (Einstellungen-Dialog) -- braucht definierte Spaltenbreiten fuer die
+   Viertelfelder Jahr/BPM. Ohne eigene Klasse ist ein Feld eine Spalte breit
+   (Viertel); .half spannt zwei, .full alle vier. */
+.tagsmain .setfields { flex:1; min-width:0; grid-template-columns:repeat(4, 1fr); }
+.tagsmain .setfield.full { grid-column:1/-1; }
+.tagsmain .setfield.half { grid-column:span 2; }
+.tagslookup { margin-top:16px; border-top:1px solid var(--line); padding-top:14px; }
+/* Bewusst KEINE farbige Box wie #tagsStatus: zeigt nur einen Suchstatus/
+   die Trefferzahl an, keinen laufenden oder abgeschlossenen Schreibvorgang
+   (ein Klick auf einen Treffer uebernimmt nur Felder/Cover-Vormerkung,
+   geschrieben wird erst bei "Speichern") -- braucht darum kein Gewicht. */
+#tagsLookupStatus { font-size:13px; color:var(--dim); margin-top:8px; }
+.tagslookup-manual { display:flex; gap:8px; margin-top:8px; }
+.tagslookup-manual input { flex:1; background:var(--bg); color:var(--fg);
+                            border:1px solid var(--line); border-radius:7px;
+                            padding:7px 9px; font-size:14px; font-family:inherit; }
+.trackfield { display:flex; align-items:center; gap:6px; }
+.trackfield input { width:0; flex:1; }
+.trackfield span { color:var(--dim); font-size:13px; }
+#tagsLookupResults { display:flex; flex-direction:column; gap:6px; margin-top:8px;
+                      max-height:220px; overflow-y:auto; }
+.lookupcand { display:flex; gap:10px; align-items:center; padding:6px 8px;
+              border:1px solid var(--line); border-radius:8px; cursor:pointer; }
+.lookupcand:hover { border-color:var(--accent); background:var(--accent-bg); }
+.lookupcand img { width:40px; height:40px; object-fit:cover; border-radius:5px; flex:none; }
+.lookupcand-nocover { width:40px; height:40px; border-radius:5px; background:var(--bg);
+                       border:1px dashed var(--line); flex:none; }
+.lookupcand-info { min-width:0; flex:1; }
+.lookupcand-info .path { white-space:normal; }
+.lookupcand-onlycover { flex:none; white-space:nowrap; }
+/* Farbige Hinweisbox statt beilaeufigem grauem Text -- "Wird gespeichert…",
+   "Cover wird uebernommen…" etc. sollen auffallen (siehe #tagsLookupStatus).
+   Default (kein .warn/.ok, z.B. waehrend eines laufenden Vorgangs) nutzt
+   denselben Akzentton wie #tagsLookupStatus statt eines dritten Farbtons. */
+#tagsStatus { margin:12px 0 10px; font-size:14.5px; line-height:1.5;
+              color:var(--accent); background:var(--accent-bg);
+              border-radius:7px; padding:9px 13px; }
+#tagsStatus:empty { display:none; margin:0; padding:0; }
+#tagsStatus.warn { color:var(--fake); background:var(--fake-bg); }
+#tagsStatus.ok { color:var(--ok); background:var(--ok-bg); }
+/* .busy: waehrend ein echter Schreibvorgang laeuft (Speichern, Cover-
+   Uebernahme) -- sanftes Pulsieren statt eines statischen Textes, damit
+   sichtbar ist, dass gerade etwas passiert. Nicht auf dem Default-Zustand
+   selbst (der traegt auch rein vorgemerkte, nicht laufende Meldungen wie
+   "Cover ausgewaehlt"). */
+#tagsStatus.busy { animation:tagsStatusPulse 1.2s ease-in-out infinite; }
+@keyframes tagsStatusPulse { 0%, 100% { opacity:1; } 50% { opacity:.55; } }
+@media (prefers-reduced-motion: reduce) {
+  #tagsStatus.busy { animation:none; }
+}
+.tagsbtns { align-items:center; }
+.tagsbtns button:disabled { opacity:.4; cursor:default; }
+
+/* ── Merken (Favoriten-Listen) ─────────────────────────────────────────
+   Bewusst KEINE Deckkraft-Reduktion der Zeile -- Merken ist unabhaengig von
+   Ignoriert/Korrigiert und zeigt sich nur ueber die farbigen Badges/Buttons,
+   je Liste ein eigener Farbton (--fl1..--fl12, siehe :root oben). */
+.fltag { display:inline-flex; align-items:center; gap:4px; white-space:nowrap;
+         margin-left:6px; padding:1px 7px; border-radius:999px;
+         font-size:11px; font-weight:600; }
+.flbtn { background:var(--dim); border-radius:6px; width:19px; height:19px;
+         display:inline-flex; align-items:center; justify-content:center;
+         opacity:.4; position:relative; }
+.flbtn svg { stroke:#fff; }
+.flbtn:hover { filter:brightness(1.1); }
+/* Aktiver Zustand (Track steckt in der Merkliste): voll deckend statt
+   gedaempft, plus ein kleiner Haken-Kreis in der Ecke -- Icon UND
+   Mitgliedschaft sollen auf einen Blick beide erkennbar sein, keins darf
+   das andere verdraengen. */
+.flbtn.on { opacity:1; }
+.flbtn.on::after {
+  content:""; position:absolute; right:-3px; bottom:-3px; width:9px; height:9px;
+  border-radius:50%; background:var(--ok); border:1.5px solid var(--card);
+}
+/* Sammelleiste: Merken ist hier keine Zeileneigenschaft, sondern eine
+   Aktion ueber die ganze Auswahl -- die Deckkraft-Daempfung des einzelnen
+   Zeilen-Knopfs (Mitgliedschaft ja/nein) ergibt hier keinen Sinn, der
+   Haken-Kreis bleibt trotzdem an .on gebunden (volle Auswahl bereits drin). */
+#bulkbar .flbtn { opacity:1; }
+/* Eigene, groessere Luecke zwischen den Merken-Quadraten in der Zeile --
+   die uebrigen Icon-Gruppen bleiben bei .actiongroup .groupicons { gap:1px }
+   eng gepackt. Drei Klassen statt zwei, damit die Regel unabhaengig von der
+   Reihenfolge im Stylesheet gewinnt (gleiche Spezifitaet wie
+   .actiongroup .groupicons). In der Sammelleiste (#bulkbar) sitzen die
+   Knoepfe direkt im Leisten-Flex mit dessen eigenem gap:10px, brauchen also
+   keine eigene Klasse. */
+.actiongroup .groupicons.flgroup { gap:6px; }
+
+/* ── Manuell korrigiert ────────────────────────────────────────────── */
+/* Bewusst KEINE Deckkraft-Reduktion wie bei .ign -- ein manuell korrigierter
+   Track gilt als korrekt, nicht als "erledigt/weg", er soll in der Liste
+   genauso lesbar bleiben wie ein normaler Treffer. */
+.correctedtag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
+                background:var(--accent-bg); color:var(--accent);
+                font-size:11px; font-weight:600; }
+.iconbtn.corr:hover { color:var(--accent); }
+.miktag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
+          background:var(--accent-bg); color:var(--accent);
+          font-size:11px; font-weight:600; }
+tr.corr .iconbtn.corr { color:var(--accent); }
+
+/* ── Auffaelligkeiten (Metadaten-Probleme) ────────────────────────────── */
+/* Gelbe Verdaechtig-Farbe wiederverwendet -- eigenstaendige, aber verwandte
+   Signalfarbe, klar unterscheidbar von Blau (.correctedtag/.miktag) und Rot
+   (Fake). Klickbar wie .fltag, oeffnet openTagIssuesPopup(). */
+.probtag { display:inline-flex; align-items:center; gap:3px; margin-left:6px;
+           padding:1px 7px; border-radius:999px; cursor:pointer;
+           background:var(--susp-bg); color:var(--susp);
+           font-size:11px; font-weight:600; border:none; }
+.probtag svg { width:11px; height:11px; }
+
+/* ── Auffaelligkeiten-Spalte (Text + Aktionsknoepfe direkt in der Zelle) ── */
+.ticell { display:flex; flex-direction:column; gap:4px; }
+.tiline { font-size:12px; line-height:1.3; }
+.tiactions { display:flex; gap:6px; margin-top:2px; }
+.tiactions .act.small { padding:2px 8px; font-size:11px; }
+
+/* ── Farben der Aktionen ────────────────────────────────────────────── */
+/* Papierkorb rot, Ausblenden neutral, manuell korrigiert blau — damit die
+   Wirkung einer Aktion schon vor dem Klick ablesbar ist. Merken-Buttons
+   tragen ihre Farbe inline (siehe .flbtn), keine feste Aktionsfarbe. */
+.iconbtn.del { color:var(--fake); }
+.iconbtn.del:hover { background:var(--fake-bg); }
+.iconbtn.ig { color:var(--dim); }
+.iconbtn.ig:hover { color:var(--fg); }
+.iconbtn.corr:hover { background:var(--accent-bg); }
+tr.ign .iconbtn.ig, tr.corr .iconbtn.corr { color:var(--accent); }
+.links { white-space:nowrap; }
+/* width:max-content: die Icon-Gruppen behalten ihre natuerliche Breite auch in
+   einer schmaleren Zelle -- nur so laesst sich in der Tabelle mit fester
+   Breite die noetige Breite der Aktionsspalte messen (syncLinksWidth). Bei
+   flex-direction:column ergibt sich die Breite aus der breitesten Gruppe. */
+.links .actions { display:flex; flex-direction:column; gap:6px; width:max-content; }
+.actiongroup.top { display:flex; align-items:center; gap:1px; }
+/* Beschriftete Gruppen: Label und Icons in EINER Zeile, nicht gestapelt. */
+.actiongroup:not(.top) { display:flex; align-items:center; gap:8px; }
+.actiongroup .groupicons { display:flex; align-items:center; gap:1px; }
+.grouplabel { color:var(--dim); font-size:11px; text-transform:uppercase;
+              letter-spacing:.04em; white-space:nowrap; }
+.pbtn svg { margin:0 auto; }
+
+/* ── Statistik ein-/ausblenden ──────────────────────────────────────── */
+/* ── Hervorhebung: angeklickt/aufgeklappt vs. per Checkbox ausgewählt ── */
+/* Gleiche Farbfamilie wie :hover (neutrales Grau), nur zwei Intensitäten
+   statt eigener Akzentfarben — bleibt dezent, aber unterscheidbar. */
+tr.row.expanded td { background: rgba(127,127,127,.16); }
+tr.detail.expanded td { background: rgba(127,127,127,.16); }
+tr.row.picked td { background: rgba(127,127,127,.10); }
+tr.row.picked.expanded td { background: rgba(127,127,127,.20); }
+
+/* Tastatur-Cursor (Pfeil hoch/runter, siehe moveCursor() in app.js) --
+   rein visuelle Navigationsmarkierung, unabhaengig von .picked (Checkbox-
+   Mehrfachauswahl, neutrales Grau oben) und .expanded. Akzentfarbener
+   Streifen an der ersten Zelle + getoenter Hintergrund, damit sich beide
+   Konzepte klar unterscheiden, auch wenn eine Zeile zufaellig beides ist. */
+tr.row.kbcursor td { background: var(--accent-bg); }
+tr.row.kbcursor td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+/* Die aufgeklappte Wellenform-Zeile (tr.detail, direkt nach tr.row per
+   tr.after() eingefuegt -- siehe render()) traegt selbst keine .kbcursor-
+   Klasse, nur die zugehoerige tr.row. Deshalb hier zusaetzlich ueber den
+   Nachbar-Selektor getoent, sonst bliebe der Block beim Aufklappen in der
+   Bearbeiten-Ansicht neutral grau (tr.detail.expanded td oben) statt in der
+   Akzentfarbe der Markierung zu erscheinen. */
+tr.row.kbcursor + tr.detail td { background: var(--accent-bg); }
+
+/* ── Mehrfachauswahl ─────────────────────────────────────────────────── */
+/* table hat table-layout:fixed (siehe oben) -- Spaltenbreiten kommen NUR aus
+   den hier gesetzten Werten, ein Inhalt, der nicht hineinpasst, wird vom
+   geerbten overflow:hidden abgeschnitten statt die Spalte zu verbreitern.
+   Deshalb feste px statt 1%, seit die Checkbox-Spalte auch den Laeuft-
+   Indikator (.nowplayingicon) tragen kann -- reine 1% liess ihn hinter dem
+   rechten Rand verschwinden. */
+th:has(#selAll), td:has(.selchk) { width:54px; }
+
+/* ── Laeuft-Indikator in der Checkbox-Spalte (siehe updateNowPlayingIndicator()
+   in app.js) ─────────────────────────────────────────────────────────────
+   Ergaenzt die Checkbox nur, ersetzt sie nicht -- einfaches Inline-Element
+   daneben statt einer Ueberlagerung, die aktuell abgespielte Zeile bleibt so
+   ohne jeden Sonderfall einzeln auswaehlbar. */
+td.sel { white-space:nowrap; }
+.nowplayingicon { display:inline-flex; vertical-align:middle; margin-left:5px;
+  color:var(--accent); }
+.nowplayingicon svg { width:14px; height:14px; }
+#bulkbar, #dropBulkbar { display:flex; align-items:center; gap:10px; margin-top:10px;
+           padding-top:10px; border-top:1px solid var(--line); }
+#bulkbar span, #dropBulkbar span { font-size:13px; color:var(--dim); }
+#bulkbar .act.small, #dropBulkbar .act.small { margin-left:auto; }
+/* Die Leiste hat schon gap:10px — der Trenner braucht keinen eigenen Rand. */
+#bulkbar .sep, #dropBulkbar .sep { margin:0; }
+/* In den Einzelprüfungen sitzt die Leiste zwischen Kopf und Liste, nicht
+   am Panelende — der Abstand nach unten fehlt dort sonst. */
+#dropBulkbar { margin-bottom:10px; }
+
+/* ── Shops verwalten ─────────────────────────────────────────────────── */
+.shoprow { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.shoprow input[type=text] { flex:1; background:var(--bg); color:var(--fg);
+  border:1px solid var(--line); border-radius:7px; padding:6px 9px; font-size:13px; }
+.shoprow input[type=color] { width:28px; height:28px; padding:0; border:1px solid var(--line);
+  border-radius:6px; background:none; flex:0 0 auto; }
+.shoprow input[type=checkbox] { flex:0 0 auto; }
+
+/* Designfarbe (Einstellungen -> Darstellung), gleiche Optik wie die
+   Icon/Farbwahl in askPlaylistProps() (.stylerow/.swatch). */
+.colorswatches { display:flex; gap:6px; flex-wrap:wrap; margin-top:4px; }
+.colorswatch { width:26px; height:26px; padding:0; border-radius:7px; border:2px solid transparent;
+  cursor:pointer; display:inline-flex; align-items:center; justify-content:center; }
+.colorswatch svg { stroke:#fff; }
+.colorswatch.on { border-color:var(--fg); }
+
+/* ── Listenauswahl ──────────────────────────────────────────────────── */
+.viewsrow { display:flex; align-items:center; gap:10px; flex-wrap:wrap;
+            margin-bottom:12px; }
+.rowlabel { color:var(--dim); font-size:12px; text-transform:uppercase;
+            letter-spacing:.05em; min-width:56px; }
+.views { display:inline-flex; background:var(--bg); border:1px solid var(--line);
+         border-radius:9px; padding:3px; gap:2px; flex-wrap:wrap; }
+button.view { border:none; background:none; color:var(--fg); cursor:pointer;
+              border-radius:7px; padding:6px 12px; font-size:13px;
+              display:inline-flex; align-items:center; gap:7px; }
+button.view span { color:var(--dim); font-variant-numeric:tabular-nums;
+                   font-size:12px; }
+button.view:hover { background:rgba(127,127,127,.12); }
+button.view.on { background:var(--card); color:var(--accent); font-weight:600;
+                 box-shadow:0 1px 3px rgba(0,0,0,.12); }
+button.view.on span { color:var(--accent); }
+
+/* ── Trenner zwischen den Aktionsgruppen ────────────────────────────── */
+.sep { display:inline-block; width:1px; height:16px; margin:0 5px;
+       background:var(--line); flex:0 0 auto; }
+
+/* ── "Weitere Optionen"-Menue je Zeile (data-more, siehe openRowMoreMenu()
+   in app.js) ─────────────────────────────────────────────────────────
+   EIN wiederverwendetes Element statt eines je Zeile: position:fixed +
+   Positionierung per getBoundingClientRect() beim Oeffnen, damit td.links
+   (sticky + overflow:hidden geerbt von th,td) das Menue nicht abschneidet. */
+.iconbtn.plain.open { background:rgba(127,127,127,.14); }
+.rowmore-menu { position:fixed; z-index:60; display:none; flex-direction:column;
+                min-width:200px; background:var(--card); border:1px solid var(--line);
+                border-radius:9px; padding:5px; gap:1px;
+                box-shadow:0 10px 28px rgba(0,0,0,.22); }
+.rowmore-menu.show { display:flex; }
+.rowmore-menu button { display:flex; align-items:center; gap:9px; width:100%;
+                        background:none; border:none; text-align:left; padding:7px 9px;
+                        border-radius:6px; cursor:pointer; color:var(--fg);
+                        font-size:13.5px; font-family:inherit; }
+.rowmore-menu button:hover { background:rgba(127,127,127,.14); }
+.rowmore-menu button svg { flex:none; }
+.rowmore-menu button.ig { color:var(--dim); }
+.rowmore-menu button.corr:hover { background:var(--accent-bg); }
+.rowmore-menu button.del { color:var(--fake); }
+.rowmore-menu button.del:hover { background:var(--fake-bg); }
+/* Trennlinie zwischen den Gruppen des Listen-Menues (siehe nodeMenuItems()):
+   was die Liste selbst betrifft / was mit ihrem Inhalt geschieht / Loeschen. */
+.rowmore-menu .menusep { height:1px; background:var(--line); margin:4px 6px; }
+
+/* ── Fixierte Spalten deckend halten ──────────────────────────────────────
+   Unter der Auswahl- und der Aktionsspalte scrollt der Rest der Zeile durch,
+   beide muessen deshalb undurchsichtig bleiben und im Vordergrund liegen.
+   Die Zeilen-Hervorhebungen (hover/ausgewaehlt/aufgeklappt) sind aber
+   halbtransparent und die Zustands-Abblendungen arbeiten mit opacity --
+   beides macht die Zellen sonst durchscheinend. Also: die Toenung als eigene
+   Farbebene UEBER --card (--stickytint) statt als Hintergrundfarbe, und die
+   Abblendung auf den Zellinhalt statt auf die Zelle.
+   Der Block steht bewusst am Dateiende und wiederholt die Zeilen-Selektoren:
+   die Regeln weiter oben (tr.row.expanded td & Co.) sind spezifischer als ein
+   blosses td.links und wuerden die Deckung sonst wieder aushebeln. */
+tr.row:hover td.sel, tr.row:hover td.links { --stickytint:rgba(127,127,127,.06); }
+tr.row.picked td.sel, tr.row.picked td.links { --stickytint:rgba(127,127,127,.10); }
+tr.row.expanded td.sel, tr.row.expanded td.links { --stickytint:rgba(127,127,127,.16); }
+tr.row.picked.expanded td.sel, tr.row.picked.expanded td.links { --stickytint:rgba(127,127,127,.20); }
+/* Wie oben (tr.row.kbcursor td), aber als durchscheinende Toenung ueber
+   --card statt als deckende Hintergrundfarbe -- color-mix() statt eines
+   festen Farbwerts, weil --accent von der Designfarbe (Einstellungen)
+   abhaengt und sich nicht als fixes rgba() vorschreiben laesst. */
+tr.row.kbcursor td.sel, tr.row.kbcursor td.links { --stickytint:color-mix(in srgb, var(--accent) 14%, transparent); }
+
+tr.row td.sel, tr.row td.links,
+tr.row.picked td.sel, tr.row.picked td.links,
+tr.row.expanded td.sel, tr.row.expanded td.links,
+tr.row.picked.expanded td.sel, tr.row.picked.expanded td.links,
+tr.row.kbcursor td.sel, tr.row.kbcursor td.links {
+  background-color:var(--card);
+  background-image:linear-gradient(var(--stickytint, transparent), var(--stickytint, transparent)); }
+
+/* Ausgeblendet blendet die Zeile per opacity ab -- bei den fixierten Zellen
+   stattdessen nur deren Inhalt, damit sie deckend bleiben. Manuell
+   korrigiert und Merken bleiben bewusst voll deckend (siehe oben), brauchen
+   also keine dieser Ausnahme. */
+tr.ign td.sel, tr.ign td.links { opacity:1; }
+tr.ign td.sel > *, tr.ign td.links > * { opacity:.45; }
+
+/* ── Ansicht "Player" (Issue #14) ──────────────────────────────────────
+   Rein visuelle Haelfte des Layout-Umschalters -- die dazugehoerige Logik
+   (Verdikt-Filter erzwingen, Drag&Drop abschalten, Sammelleiste sperren)
+   steckt in applyLayout()/renderBulkBar()/initDropzone() in app.js.
+   Gesteuert ueber body[data-layout], gesetzt von applyLayout() bzw. beim
+   Laden direkt nach loadFilters() -- gleiche Mechanik wie [data-theme].
+   Die Seitenleiste mit dem Listen-Baum bleibt sichtbar und in beiden
+   Ansichten identisch bedienbar; applyLayout() taste weder Auswahl noch
+   Filter an. */
+body[data-layout="player"] #dropsPanel,
+body[data-layout="player"] .toolbar,
+body[data-layout="player"] #csvsel,
+body[data-layout="player"] #m3usel {
+  display:none;
+}
+/* Öffnen-Spalte: nur Play/Warteschlange/Merken bleiben je Zeile sichtbar --
+   Tags/Rescan/"Weitere Optionen" (Fix/Ausblenden/Correct/Trash, siehe
+   .rowmore-menu) sowie die Gruppen "Öffnen" (Finder/Music/externe Programme)
+   und "Suche" verschwinden. */
+body[data-layout="player"] [data-relink],
+body[data-layout="player"] [data-tags],
+body[data-layout="player"] [data-rescan],
+body[data-layout="player"] [data-more],
+body[data-layout="player"] .reveal-link,
+body[data-layout="player"] [data-group="open"],
+body[data-layout="player"] [data-group="search"],
+body[data-layout="player"] [data-sep="1"] {
+  display:none;
+}
+/* Wert-Box (Genre/Album/Interpret): Bubbles bleiben als reiner Filter
+   nutzbar, Bearbeiten-Stift und Zusammenfuehrungs-Vorschlaege verschwinden --
+   in der Player-Ansicht ist Umbenennen/Zusammenfuehren kein Werkzeug. */
+body[data-layout="player"] .genrerename,
+body[data-layout="player"] #plHeadMergeToggle,
+body[data-layout="player"] .genrebox-merge {
+  display:none;
+}
+
+/* ── Fixer Player-Balken (Issue #13, seit Issue #16 global) ────────────
+   Ueber alle Ansichten hinweg sichtbar, auch ohne geladenen Track -- Bearbeiten
+   und Player teilen sich denselben globalen Player (queueAudio). Eigenes, von
+   den Pro-Zeile-Playern der Einzelpruefungen (.player/.pbtn/.ptime, siehe
+   mountDropPlayer() in app.js) unabhaengiges System. */
+#playerBar { display:flex; position:fixed; left:0; right:0; bottom:0; z-index:45;
+             height:72px; padding:0 20px; background:var(--card);
+             border-top:1px solid var(--line); box-shadow:0 -2px 10px rgba(0,0,0,.08);
+             align-items:center; gap:20px; }
+/* Platz fuer den Balken schaffen, sonst verschwinden appfoot/letzte Zeilen
+   dahinter. Ersetzt (nicht addiert zu) das normale body-padding von 24px. */
+body { padding-bottom:96px; }
+/* "Nach oben"/Toasts liegen sonst genau unter dem Balken. */
+.totop { bottom:100px; }
+#toasts { bottom:100px; }
+
+.pbartrack { flex:0 0 auto; display:flex; align-items:center; gap:10px;
+             min-width:0; width:240px; cursor:pointer; }
+.pbarcover, .pbarcover-empty { width:44px; height:44px; border-radius:6px;
+             flex:0 0 auto; object-fit:cover; background:var(--line); }
+.pbarmeta { min-width:0; }
+.pbartitle { font-weight:600; font-size:13px; white-space:nowrap;
+             overflow:hidden; text-overflow:ellipsis; position:relative; }
+/* Durchlaufender Titel bei Hover -- nur wenn er tatsaechlich abgeschnitten
+   ist (setupTitleMarquee() in app.js misst das und setzt die Klasse
+   .marqueeing samt --marquee-distance/--marquee-duration erst dann; ohne
+   Ueberlaenge passiert nichts, .pbartitle bleibt bei einfachem
+   text-overflow:ellipsis). */
+.pbartitle-inner { display:inline-block; }
+.pbartitle.marqueeing { text-overflow:clip; }
+.pbartitle.marqueeing .pbartitle-inner {
+  animation: pbarMarquee var(--marquee-duration, 6s) ease-in-out infinite alternate;
+}
+@keyframes pbarMarquee {
+  0%, 15% { transform:translateX(0); }
+  85%, 100% { transform:translateX(var(--marquee-distance, 0)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pbartitle.marqueeing .pbartitle-inner { animation:none; }
+}
+.pbarartist { color:var(--dim); font-size:12px; white-space:nowrap;
+              overflow:hidden; text-overflow:ellipsis; }
+
+/* Play-Knoepfe links, direkt neben dem Zeitstrahl -- eine Zeile statt
+   Knoepfe oben/Fortschritt darunter gestapelt. */
+.pbarcenter { flex:1 1 auto; display:flex; flex-direction:row; align-items:center;
+              gap:14px; min-width:0; max-width:700px; margin:0 auto; }
+.pbarbtns { flex:0 0 auto; display:flex; align-items:center; gap:6px; }
+.pbarbtns .iconbtn.on { color:var(--accent); background:var(--accent-bg); }
+.pbarbtns .pbtn { width:34px; height:34px; }
+.pbarbtns .pbtn:disabled { opacity:.35; cursor:not-allowed; }
+.pbarbtns .pbtn:disabled:hover { border-color:var(--line); }
+.pbarseek { flex:1; display:flex; align-items:center; gap:8px; min-width:0; }
+.pbartime { flex:0 0 auto; font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums; }
+.pbarprogress { flex:1; height:4px; border-radius:2px; background:var(--line);
+                cursor:pointer; position:relative; }
+/* transform:scaleX() statt width: renderPlayerProgress() laeuft pro Bild,
+   eine Breitenaenderung wuerde dabei jedes Mal Layout ausloesen -- eine
+   Transformation bleibt im Compositor. transform-origin haelt den Balken an
+   der linken Kante fest. */
+.pbarprogress-fill { position:absolute; left:0; top:0; bottom:0; width:100%;
+                      transform:scaleX(0); transform-origin:left center;
+                      border-radius:2px; background:var(--accent); pointer-events:none; }
+
+/* Sprechblase mit dem Zeit-/Lautstaerkewert beim Ziehen an Fortschritts-
+   oder Lautstaerkeregler (setupSeekDrag()/setupVolumeBubble() in app.js) --
+   per .show ein-/ausgeblendet statt display, damit die opacity-Transition
+   greift. left wird per JS auf den Anteil (0-100%) der Ziehposition gesetzt,
+   transform zentriert die Blase darueber statt an ihrer linken Kante. */
+.pbar-bubble { position:absolute; bottom:12px; left:0; transform:translateX(-50%);
+                background:var(--fg); color:var(--bg); font-size:11px; font-weight:600;
+                padding:3px 7px; border-radius:5px; white-space:nowrap; pointer-events:none;
+                opacity:0; transition:opacity .1s ease; z-index:5;
+                font-variant-numeric:tabular-nums; }
+.pbar-bubble::after { content:""; position:absolute; top:100%; left:50%;
+                       transform:translateX(-50%); border:4px solid transparent;
+                       border-top-color:var(--fg); }
+.pbar-bubble.show { opacity:1; }
+
+/* Lautstaerke -- rechts neben dem Zeitstrahl, eigene Gruppe innerhalb von
+   .pbarcenter (das ist bereits eine Flex-Reihe). */
+.pbarvolume { flex:0 0 auto; display:flex; align-items:center; gap:6px; }
+/* Eigener Bezugsrahmen fuer die Lautstaerke-Blase -- ein <input> kann keine
+   Kind-Elemente haben, die Blase braucht einen umschliessenden Container mit
+   genau der Breite des Reglers (nicht der ganzen .pbarvolume-Gruppe inkl.
+   Stumm-Knopf), sonst zeigt "left:<wert>%" auf die falsche Stelle. */
+.pbarvol-wrap { position:relative; display:inline-flex; }
+.pbarvolume input[type="range"] {
+  width:70px; height:4px; -webkit-appearance:none; appearance:none;
+  background:var(--line); border-radius:2px; cursor:pointer;
+}
+.pbarvolume input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance:none; appearance:none; width:12px; height:12px;
+  border-radius:50%; background:var(--accent); cursor:pointer;
+}
+.pbarvolume input[type="range"]::-moz-range-thumb {
+  width:12px; height:12px; border:none; border-radius:50%;
+  background:var(--accent); cursor:pointer;
+}
+
+/* Warteschlange-Knopf: groesser als ein normaler .act, mit dem gestapelte-
+   Linien-Icon (ICONS.queue) fuer Wiedererkennungswert (siehe ICONS.queueAdd
+   am Zeilen-Knopf). */
+.pbarqueue { flex:0 0 auto; }
+.pbarqueue .act { display:inline-flex; align-items:center; gap:8px;
+                   padding:10px 16px; font-size:14px; }
+#pbarQueueCount { display:inline-block; min-width:18px; padding:0 5px;
+                  border-radius:999px; background:var(--accent-bg); color:var(--accent);
+                  font-size:12px; font-weight:600; text-align:center; }
+
+/* Feste Hoehe statt max-height: die beiden Tabs (Warteschlange/Zuletzt
+   gehoert) haben meist unterschiedlich viel Inhalt -- mit max-height wuerde
+   das Popup beim Umschalten zwischen ihnen sichtbar in der Hoehe springen. */
+#queuePopup { display:none; position:fixed; right:20px; bottom:84px; z-index:46;
+              width:400px; height:min(420px, 60vh); overflow-y:auto;
+              /* Rechtes Polster reserviert den Scrollbalken einen eigenen
+                 Streifen -- Browser legen ihn zuerst ins Padding, bevor er den
+                 Inhalt verdraengt. Ohne das lag er direkt auf dem Schliessen-
+                 Knopf der Kopfzeile. */
+              padding-right:8px;
+              background:var(--card); border:1px solid var(--line); border-radius:10px;
+              box-shadow:0 4px 18px rgba(0,0,0,.16); }
+.queuepopup-head { position:sticky; top:0; display:flex; align-items:center;
+                    justify-content:space-between; padding:8px 12px;
+                    background:var(--card); border-bottom:1px solid var(--line); }
+.queuepopup-tabs { display:flex; gap:4px; }
+.qptab { border:none; background:none; color:var(--dim); cursor:pointer;
+         font-weight:600; font-size:13px; padding:6px 10px; border-radius:6px; }
+.qptab:hover { background:rgba(127,127,127,.12); }
+.qptab.on { color:var(--accent); background:var(--accent-bg); }
+.queuepopup-head-actions { display:flex; align-items:center; gap:8px; }
+.queuepopup-head-actions .act.small { font-weight:400; }
+/* Groessere Klickflaeche als der normale .iconbtn (padding:3px) -- der reine
+   Text-Glyph davor liess sich schlecht treffen. */
+.queuepopup-close { padding:6px; }
+.queueitem { display:flex; align-items:center; gap:8px; padding:7px 12px;
+             cursor:pointer; border-bottom:1px solid var(--line); }
+.queueitem:last-child { border-bottom:none; }
+.queueitem:hover { background:rgba(127,127,127,.08); }
+.queueitem.current { background:var(--accent-bg); }
+.queueitem.current .queueitem-title { color:var(--accent); }
+/* Die laufende Zeile hat keinen Ziehgriff (nur der Pool ist umsortierbar) --
+   ruecken sie um dessen Breite + Zeilen-Luecke ein, damit ihr Cover buendig
+   unter denen der Pool-Zeilen steht statt weiter links. */
+.queueitem.current { padding-left:35px; }
+.queueitem-grip { display:none; flex:0 0 auto; color:var(--dim); cursor:grab; }
+.queueitem-grip:active { cursor:grabbing; }
+[data-qidx] .queueitem-grip { display:flex; }
+.queueitem-cover { width:28px; height:28px; border-radius:4px; flex:0 0 auto;
+                    object-fit:cover; background:var(--line); }
+.queueitem-meta { min-width:0; flex:1; }
+.queueitem-title { font-size:12.5px; font-weight:600; white-space:nowrap;
+                    overflow:hidden; text-overflow:ellipsis; }
+.queueitem-artist { font-size:11.5px; color:var(--dim); white-space:nowrap;
+                     overflow:hidden; text-overflow:ellipsis; }
+.queueitem-remove { flex:0 0 auto; }
+.queueitem.dragover { border-top:2px solid var(--accent); }
+#queueEmpty { padding:16px 12px; color:var(--dim); font-size:12.5px; }
+
+/* Zug-Abbild fuer setDragImage() -- haengt kurz unsichtbar offscreen im DOM
+   (siehe buildDragBadge() in app.js), nie sichtbar am eigentlichen Platz. */
+.drag-badge { position:fixed; top:-9999px; left:-9999px; display:flex;
+              align-items:center; gap:6px; padding:6px 12px 6px 6px;
+              border-radius:999px; background:var(--accent); color:#fff;
+              max-width:220px; }
+.drag-badge-cover { width:24px; height:24px; border-radius:4px; flex:0 0 auto;
+                     object-fit:cover; background:rgba(255,255,255,.25); }
+.drag-badge-title { font-size:12.5px; font-weight:600; white-space:nowrap;
+                     overflow:hidden; text-overflow:ellipsis; min-width:0; }
+.drag-badge-count { flex:0 0 auto; font-size:11px; font-weight:600;
+                     opacity:.85; }

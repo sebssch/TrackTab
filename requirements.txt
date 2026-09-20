@@ -1,0 +1,27 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  MP3 Quality Check — Python-Abhaengigkeiten                  ║
+# ╚══════════════════════════════════════════════════════════════╝
+#
+# System-Anforderungen:
+#   - macOS 13+ (Apple Silicon oder Intel)
+#   - Python 3.12+
+#   - ffmpeg und ffprobe im PATH  (brew install ffmpeg)
+#
+# Installation:
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+
+numpy>=1.24        # FFT und Spektral-Statistik
+mutagen>=1.47      # MP3-Header: Bitraten-Modus, Encoder-Info
+rich>=13.0         # Terminal-Ausgabe, Fortschrittsbalken
+PyYAML>=6.0        # config.yaml
+pyrekordbox>=0.4.4 # Liest/schreibt Rekordbox' master.db (SQLCipher) fuer Playlist-Abgleich
+Pillow>=10.0        # Cover-Pruefung/-Verkleinerung bei Auffaelligkeiten (app/taganomaly.py)
+
+# Nur fuer die Doppelklick-App: NSApplication-Huelle um den Server (app/macapp.py).
+# Erst damit beantwortet die App den Quit-Apple-Event, also Cmd+Q, "Beenden"
+# im Dock-Menue und das Abmelden. Fehlt das Paket, laeuft alles weiter --
+# dann eben nur mit Strg+C bzw. dem Beenden-Knopf in der Oberflaeche.
+# Bewusst nur Cocoa statt des kompletten pyobjc-Metapakets (~40 Frameworks).
+pyobjc-framework-Cocoa>=10.0 ; sys_platform == "darwin"

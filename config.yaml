@@ -1,0 +1,187 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  TrackTab — Konfiguration                                     ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+version: "1.0"
+
+# --- Bibliothek ---
+library_paths:
+  - "~/Music/Music"
+
+extensions: [".mp3", ".aif", ".aiff", ".m4a", ".aac", ".flac", ".wav"]
+
+exclude_dirs:                  # Verzeichnisnamen, die uebersprungen werden
+  - ".git"
+  - "Ableton"
+  - "Logic"
+  - "Audio Music Apps"
+  - "Samples"
+
+min_duration_s: 30.0           # Kuerzere Dateien (Jingles, Effekte) ignorieren
+
+cover_auto_fill: true          # Beim Scan Cover aus Music.app uebernehmen (nur neue Dateien + DB-Cache-Abgleich, nie beim Import)
+
+external_browser: "/Applications/Safari.app"   # Browser fuer die Web-UI, leer = Systemstandard
+
+# Namensmuster fuer "Dateien automatisch umbenennen" in der Einzelpruefung.
+# Platzhalter: {artist} {title} {album} {albumartist} {composer} {genre}
+#              {bpm} {key} {bitrate} {year} {samplerate} {track}
+# "_" trennt die Kategorien, "-" Woerter innerhalb einer Kategorie. Ein
+# Platzhalter ohne Wert laesst seine Kategorie weg -- {bitrate} bleibt bei
+# FLAC/WAV/AIFF/ALAC leer. Nur Dateien ausserhalb der library_paths.
+rename_pattern: "{artist}_{title}_{bpm}_{key}_{bitrate}_{year}"
+
+# --- Dekodierung ---
+max_analysis_s: 420            # Nur die ersten N Sekunden analysieren (DJ-Sets kappen)
+skip_head_pct: 0.03            # Anfang aussparen (Intro/Stille)
+skip_tail_pct: 0.03            # Ende aussparen (Fade-Out)
+
+# --- Spektralanalyse ---
+fft_size: 8192                 # ~5.4 Hz Aufloesung bei 44.1 kHz
+block_percentile: 95           # Robustes Peak-Hold ueber alle Bloecke (statt Mittelwert)
+gate_rms_percentile: 55        # Nur die lauteren Bloecke auswerten ...
+gate_abs_dbfs: -45.0           # ... und nur solche ueber diesem Absolutpegel
+min_gated_blocks: 8            # Weniger gueltige Bloecke -> kein Urteil
+
+ref_band_hz: [1000, 6000]      # Referenzband fuer den Mittenpegel
+noise_band_rel: 0.97           # Rauschband = oberste 3 % bis Nyquist (nur Anzeige)
+smooth_hz: 200.0               # Glaettungsbreite des Spektrums
+search_floor_hz: 9000.0        # Unterhalb wird keine Kante mehr gesucht
+
+# --- Kantendetektion ---
+cliff_span_hz: 1000.0          # Vergleichsbreite ober- und unterhalb der Kante
+cliff_min_db: 15.0             # Darunter gilt: kein Tiefpass vorhanden
+steep_brickwall_db: 25.0       # Ab hier ist die Kante eindeutig ein Encoder-Tiefpass
+
+# --- Klassifikation: gemessener Cutoff (kHz) -> Bitrate-Klasse ---
+# Gelesen als "ab diesem Cutoff gilt die Klasse". Eine Leiter je Codec, weil
+# jeder Encoder bei gleicher Bitrate einen anderen Tiefpass setzt.
+#
+# mp3: Die Grenzen stammen aus einer Messung an dieser Bibliothek: vier
+# verlustfreie Tracks wurden mit LAME auf jede Stufe kodiert und der
+# Tiefpass gemessen. Ergebnis (Streuung ueber alle vier jeweils unter
+# 0,05 kHz):
+#     128 → 16.76 · 160 → 17.46 · 192 → 18.84
+#     224 → 19.52 · 256 → 19.53 · 320 → 20.21 kHz
+# Die Grenzen liegen mittig zwischen diesen Werten. 224 und 256 kbps benutzen
+# denselben Tiefpass und sind spektral nicht unterscheidbar.
+# Nachmessen jederzeit mit: ./run.command calibrate
+#
+# aac: PLATZHALTER, noch nicht an echtem Material kalibriert. Erst
+# verwenden, nachdem ./run.command calibrate mit AAC-Referenztracks lief
+# und diese Werte bei Bedarf angepasst wurden.
+cutoff_classes:
+  mp3:
+    - {min_khz: 19.85, kbps: 320}
+    - {min_khz: 19.20, kbps: 256}
+    - {min_khz: 17.80, kbps: 192}
+    - {min_khz: 15.50, kbps: 128}
+    - {min_khz: 0.0,   kbps: 64}
+  aac:
+    - {min_khz: 19.50, kbps: 256}
+    - {min_khz: 18.50, kbps: 192}
+    - {min_khz: 17.00, kbps: 128}
+    - {min_khz: 0.0,   kbps: 96}
+
+# Verdikt: Wie viele Klassen darf die Messung unter der Deklaration liegen?
+# Gilt fuer verlustbehaftete Formate (MP3, AAC).
+verdict_suspect_steps: 1       # 1 Klasse darunter -> VERDAECHTIG
+verdict_fake_steps: 2          # 2+ Klassen darunter -> FAKE
+
+# LAME-Header: Abweichung zwischen eingetragenem und gemessenem Lowpass
+lame_lowpass_tolerance_khz: 1.0
+
+# --- Verlustfreie Formate (ALAC/FLAC/WAV/AIFF) ---
+# Keine deklarierte Bitrate vorhanden, deshalb kein Bitratenvergleich:
+# Verdikt allein darueber, ob eine harte Encoder-Kante existiert und wie
+# tief sie liegt. Ein echtes bandbegrenztes Master rollt weich aus statt
+# hart abzuschneiden und faellt damit nicht unter diese Schwellen.
+lossless_suspect_khz: 19.0     # Kante darunter (mit ausreichender Flankenhoehe) -> VERDAECHTIG
+lossless_fake_khz: 17.5        # Kante darunter (mit ausreichender Flankenhoehe) -> FAKE
+
+# Eigene (niedrigere) Flankenhoehe statt steep_brickwall_db: 16-Bit-PCM
+# quantisiert nahezu stille Bloecke oberhalb des Cutoffs grob, was den
+# messbaren Rauschboden dort anhebt und die Flanke gegenueber einer direkt
+# dekodierten MP3 verflacht. An echtem Material (128kbps-MP3 nach FLAC/WAV
+# verpackt) gemessen: ~13-16 dB statt >50 dB bei MP3 selbst.
+lossless_min_steepness_db: 10.0
+
+# Encoder fuer AAC-Neukodierung (calibrate, Bitrate-Korrektur). "aac" ist
+# ffmpegs eingebauter Encoder und ueberall verfuegbar. "libfdk_aac" klingt
+# besser, ist aber nicht in jedem ffmpeg-Build enthalten -- bei fehlender
+# Verfuegbarkeit faellt das Tool automatisch auf "aac" zurueck.
+aac_encoder: "aac"
+
+# --- Lautheit (EBU R128 / ITU-R BS.1770 ueber ffmpeg 'loudnorm') ---
+# Reiner Hinweis, kein Verdikt: anders als der Encoder-Tiefpass hat Lautheit
+# keine "richtige" Zielgroesse, sie haengt von Genre und Erscheinungsjahr ab
+# (Loudness War, sich wandelnde Mastering-Konventionen). Die Referenzwerte
+# spannen ein DJ/Club-Band auf (typisch fuer heutige Club-Masters), keine
+# Qualitaetsgrenze -- ein leiser gemastertes altes Stueck ist nicht "falsch".
+loudness_ref_low_lufs: -9.0    # Integrated Loudness darunter -> "leiser als Club-Standard"
+loudness_ref_high_lufs: -6.0   # Integrated Loudness darueber -> "lauter als Club-Standard"
+
+# Einzige Ausnahme: Intersample-Clipping ist immer ein technischer Fehler,
+# unabhaengig von Genre oder Epoche.
+loudness_clip_dbtp: -1.0       # True Peak darueber -> Clip-Warnung
+
+# --- Rekordbox-Import ---
+rekordbox_quality_check: true  # Cutoff-Pruefung beim Hinzufuegen zu einer Rekordbox-Playlist
+rekordbox_min_cutoff_khz: 19.0 # Tracks darunter (oder ohne Messwert) loesen eine Warnung aus
+# Waveform-Stil aus Rekordbox-Analysedaten fuer den Player: rgb oder 3band.
+# Nur wirksam, wenn der Track in Rekordbox analysiert ist -- sonst grauer Fallback.
+rekordbox_waveform_style: "rgb"
+
+# --- Ausgabe ---
+# --- Darstellung (Web-UI) ---
+# Haelt die Filterleiste (Listen, Status, Suche, Sammelaktionen) beim
+# Scrollen am oberen Fensterrand fest. Aus, weil die Leiste je nach
+# Fensterbreite auf mehrere Zeilen umbricht und dann viel Hoehe kostet.
+pin_filter_bar: false
+
+# Laedt beim Erreichen des Listenendes automatisch weitere Treffer nach,
+# statt "weitere N laden" von Hand anzuklicken.
+infinite_scroll: false
+
+# Schriftgroesse der gesamten Oberflaeche: klein, mittel oder gross.
+font_size: "mittel"
+
+# Farbschema: auto (folgt dem System), light oder dark.
+theme: "auto"
+
+# Akzentfarbe der Oberflaeche (aktive Knoepfe, Player-Fortschritt, ...).
+# Eine von: blue, cyan, teal, indigo, violet, purple, fuchsia, pink.
+accent_color: "blue"
+
+# Toleranz fuer Tippfehler in der Suche (0 = aus, nur exakte Treffer;
+# 1 = sehr tolerant). Wirkt wortweise, auch auf /Parameter-Werte.
+search_typo_tolerance: 0.8
+
+# Mindestanzahl getippter Zeichen, bevor die Werte-Autovervollstaendigung eines
+# /Parameters Vorschlaege zeigt. Die Vorschlagsliste der Parameternamen selbst
+# ("/al" -> "/Album") greift davon unabhaengig immer ab dem ersten Zeichen,
+# ebenso die kurze feste Werteliste von "/Status".
+search_autocomplete_min_chars: 3
+
+# Immer zusaetzlich zur eingegebenen Suche angewendete /Parameter-Ausdruecke
+# (gleiche Syntax wie das Suchfeld), ein Eintrag pro Zeile. Leer = keine
+# Standardfilter.
+default_search_filters: []
+
+db_path: "data/quality.db"
+report_path: "data/report.html"
+csv_path: "data/report.csv"
+m3u_path: "data/verdaechtig.m3u8"
+stats_path: "data/stats.json"  # Jahres-/Monats-Statistik, lazy gebaut (app/stats.py)
+spectrum_points: 160           # Aufloesung der Miniatur-Spektren im HTML-Report
+
+# --- Backup ---
+# Hoechstens ein automatisches Backup pro Kalendertag (geprueft beim Start
+# jedes CLI-Befehls), die aeltesten fliegen ueber backup_keep hinaus raus.
+# Manuelle Backups (Export/Wiederherstellung ueber die Oberflaeche oder
+# ./run.command backup) zaehlen nicht mit.
+backup_path: "backup"
+backup_keep: 10
+
+# --- Performance ---
+workers: 0                     # 0 = alle CPU-Kerne minus 1

@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TrackTab</title>
+<link rel="icon" type="image/png" sizes="32x32" href="data:image/png;base64,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">
+<link rel="icon" type="image/png" sizes="128x128" href="data:image/png;base64,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">
+<style>
+<!--__CSS__-->
+</style>
+</head>
+<body>
+<div class="pageheader">
+  <div>
+    <h1><img class="app-icon" alt="" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAYAAADDPmHLAAAlPUlEQVR4nO19CbwdVZnn/5yqu7w9LxsJCXsSBO0MAyRBtpAGZBEiikFHWtHh5/TYOtCOTE+r7do6P3vQHqdt+XVDdwu0OqPBhkZw6VYhLBrD2jQ2A4QAsuVlecl77+Yt91adb37fqb1uVd2699373kPfl9/Nq+XUOafOt3/nO6cEOgtiy5Ytcs+ePcK7sG3bOQr4nOpwu69T+IzcuPFe6Z0tXbqUtm7dymNFnWpRdArh27Zts7M6ftppW7pMc6y3WrV7bWn2Sql6SaEHhG4lUJakipCiSCSKABVAogABk5QiCSooSFMIyjEw9bRm5yuWExRAxONoEUSNjyUMC1LV4JxXla2qELIqJSYJalwI85BUtUrNKFVk1aiUy32V7du3TmQ0IjZu3Gh0giBEu5C+9cQTCZ+Lcva6cy9bROOTxwopVhPRKhAdB+AIgBYDWAiFfgK6pBQmhIAQ3B0BfRxvJeGVKWsc9K36+5R0RpmV1N+OXMjCBcEhUQo1xcd8naAUWUIQI34UwLAC9gnCSwLiOQixE8J+tiAKux566Kf7o/V+Rm7Z8m+iHcQwHQLQVLlt2zbLu7Bu48XLhE2nKYVNIFoHgeMFxEIppUau//LKGQBngHw0EkPwQoKyBjwdZ+njQU0iPhvXjcY9QLp7rsfaoW2mdOdcH8IleH3Tu62glAKRGoYQTwN4yATukRLbH3po226v1o0bN5qNpG3bCWDLli3G1q1btSQ95bzzBgrj5iU2xLuI6CzDMBYwshUpkH4BDQGlEvHrMbvzBZHZjwTWy8YZ5UdnM1xPmZ2qf74hKvw2KHLonHkVCCGE5P+EcBmIAFtZBwXE/YD4jinMux555CcjcZx0kAA+Iz0Dbt26i5eJAv6AQB+QhlzJfVbKZqq1He4lp+cepccGJXOM2o740FnHEI9M6ROvI7loykUipbUGIKQUBktURp1S9ssQ+EZRihtCUkE2Y9H4FmcjYApj5PPfDW9+68dEkf5FGvJTAK20ajXbsmo2s7oQwhACJv/VyA8Jde8VM3FQN+jt4HqXqVIHnZKbTj5JqMJRbRkFIgTWBPL5siAIgw1gIWDwGFuWpccbwEopjE9VbfzLSaec/TFoHEHjCO2UAK6esTZsuPgEMnCTYRhnWHbNNWJg1NdTLwZzSsXfZHGPdAJMeTLjPf0iRDYb0YY0Ydn2gzbwwV89dt9THs6mTQBeRaduuGCzYRq3QogBy7JSEO92eJriPvOZOWHdozlx37ixulsNRiFah7alyZaGaRLRCAHv+9fH7rszDxFkEoBXwSmnveV9pmHerEgJ1vGOeE/tdbx7DfsfvvBbzfWUF/HRfnilHWkgDcEBEmW//4nHH7y1ERGk2gCsR/jBk9/8lksMw7zFVjYppVQ98sOGa8NXjDwSvuD8SyubrMCjV0OjkVfXU+pJSr8bIT+k6xOrS28jqDoPATqF47UxbjSSlE1CylveuPbMSxiHWTaByLL215150RoQPQxCL0fgoK36eGfqXzGr70kX2sL1c1rct4Pro++ZPSqk2IMERAU2nfrEEw88E/bgGhGAH849VC0/aBjmerY4o5w/L+5nyMgL6siF+HDdZBuGadjK3rFowDwjLYxcpwJ0WHfrVrtSK19jmsX1jsE3DeQniPtWdP20xX1dtW0U94nVZagU32vMw/XJ4r5RG4wzdhYN01y/f7R2DeOUcVtXLun8pDMvXGza9LQQYoBde+f6PNfPnJHXjLjPvMNxGeaEEQM4/vHHH9gXLxKhCI7t801T4RrTLAwqjue2gvx5I2+aRl7kT/39fMhnYK9NScMYtIBr+LaL46BA7JjWr7+wX0l6VkixhCOQoCiRzBt56DjX50ZvPryw5yYU0d6eYm31jh07Rj1c800fuR5lKBObjYK5VClbhZHf0ElK0IHZKroRfVNrFn6k2ka9ptwWfnqXG3E9Nc31yX1oCfkMUtlKmdJYOj5lbuYLYSngI/icczhTR/f6Suiph5wNzBt5GVMDnTPyGt+NU60+uJIvb/NwHVIBWiRs2PC7h9nC3CmE6HUn57NDxSlcn162kTmTh+pSuL7xg8H93xwjLx2iko1jOIKIKsK2Vz355C+HPJzLsEiwYZ5pGGavDiVlIX/eyJsrRl5ygZhaY1wyTg3D6CVpnBnGedTAE9jkJGqEsnEy+0ZzdLo2SC3z6VgXESk/uIf63fUvsUxK9wJxT9MQ90nvUfd0NsSMlNgzDk9LbAo/YvJ/bkoRw3pOQxI6iaN+hnfOi3s3Uk02z31kWlWJz1NiX7xhFBCGqVO2nASnzkby8t+t73hSec42434LhfVhnHvkTaeccsliFKo73eCP88aJtTUQdCmDkjDUzSG+7kL0Lk9T2NVDmgjM7gVw8lHS6o8+T6l9cS+yZFAWrPEDTF2QhV6XCPLr+plAfPIz/hXiPDylaMQqFlc988g2DgoJ0wv9kjG5SkpzQE/6ZCB/znE9AyN/qoLeozZg6frfQ2nhsQBnk7uc2xpQyF3mWFgVUweex9Avv4nRXQ/AKPVmuJAzbuRlt+H84ZAgSSkHSlVrFYB9wBZpeos2hJRrpDRg2coWrmpoH+LrOtMexHucP1XBwJpzcdTmLzq4apgH0xoU+heh96hT8eKdn8bwv90Ns9QPIntWxX3yM8mM5kwQSdOm2hoA2zdu3CMCRJM4TlNChGlaE/fRq+0X9wE4oplF/vJzPsaZ1FA1C0LmTolrCtQki38Th2+6DmO/fgj25CiENKPmVvsjedPh+oS7Ol+X12cg5gWoVXHXMdXy1DeS7wZXo4OS1p2625FqU3ugQaefV8fRvXwtiv0LoWrKRYjoyE9IU7dR7OtH74qToGoT0NPunY3khcY7q7bs8Q6n3CihWAVo4HQhNyokVmgWctO4Z9fIy8EPbpiK7VVZ7oOQDcNWbQLS2tToGnCXhc0ZIy+b613HmMdLACv4nHHP7OLN+C1xYn/Eaci5OjNjRl78+XgR32nJJUjbAIIXQYQZf+6K+zA40UBG8RJ3wJRWAWvXnt8N0CBPAbjRk9dpTt7MAs2AuMc0xX3shl5eRMDg2rVru/mSNgK7uuzeGow+ZxVHm7g+Qkax7ngnMWMzFTL6MVtAKVfTtFDdK6cWqh/ZqGxrkuvrOqyJo0+prl4AhzQBWBb1wqQun/Cmg3g2ijiUYAUcn9WZbIhxPI+EyavNwtfDHDdbRELammajtKYIPI8evTs9Xc+vbQj+CfAkTRrXp9cdKuWYSl1EFhPAkCYAZZZ6pFC87Mgl4haNPH6yUoMoGxD9pr4dEwSJtSV3PK6/AFQV1MEaUBAQJTlHpAJpmp+0CVWysahQQFnWrYibhpHnIHekZmG0ZmPANOrKpYj7pBNvRbJRE2YPH2oCkMLu49ApKc22olUjj6YUShcfjtL5yyAWcCSuvUA1BfuZUUz83+dhvzIOdJfSzJMZAPI5v2IrHF0u4SNHH471/T3o1os32wdspe+u1nDba/tw6ytDKPJy+5ziPuEW8ZJjEPr43AkEkejWS9KJ88mDDOBcXM/AUnncQtcHjkP5XUcB4xZIy6r2ghaF5y6H+TuDGP3041AvTzaxvLX9IAFMKsKxXWV889+twZKuEmA1vUI7FwwWC/jUCcdgVXcZn3zmBfSYRn0kOsObCp0pQBhSKG0EutNn6IkXjnJ9hr/jIt9cO4jyZStBw1OgSduxATrw4/rlkhK6rzrOsTVmGWpE+PixK7CkXEJ1qupseNGBn7JtWFNV/IcjDsOmRQMYsyzIsMOW4U3Vn2l3oMcnAKXsUn3hbFfDv6Fj74TCqQsdA5DL6kUpHQrIFSTokAXz+H7IZV3aLpiZAFAUeFq4qggrSkWs6+/VU9AFVzR34sfI9ryB8xcNwnICOgmudAB1pODuzuI8p0qBCpCi6CWCRKYBsxAftmEY3z3utMJMIIPpriAhuuWsSgGbRachUZQ82T4zpggPb79pQJNaBuKjEOmcGzKV2kjTWCOoYp01lYH8xFuzsfHb7GsAzEYXAuehkbhP8KaCMgEBGMTUEKw61RALCEa4Pn5ZS4E5gI3fKqCMM/dKmJ9dQnBcfY20gACcffgCce6WdP6GU+qSWsyeOuo4zJoXOKuQn+s9xEfLE5RAwScAm1SR91z0Cjv79blVB3tWJbSWPfSsp4K62g+GNGBICUMKbXdq27PDNgi57eh2DUP/wH5/pxrO2H8oUQF4+EpCvMax3rkNsO2QDaAgiKdTdZwwSHp0uNtDfFw9pCNfQmoqm6AqarxpWJ4NPVuAgyMHMXVgGHJsHIumgNrUDBCA0o4IRsbGcWD4AEZEGahUOtMw18kEVio5x7adyfVpSarOXoyeCvcJSnfYCQW7P+f5sDUXIDrYuzNEkQkvzcg/pCZgCANrSofjyOISdMlSR8T0xKUrYJ16AD3HnIzFawi8OWvHbRECZIEwfME6DB9v47DeAdBRy5K3n50OsNs3NQkxNATx0ks8YcOzdvWdCUnuyJ3QxI6DdPeUZ7Hd2exQJNAqEUkosiObgHhb8epUaNfMj4j02PQsi/wRexyn95+A9y8+FyeWj0SJ07M6NVX/X8MnblpDxy0C4bRxxqUA+AdM8YRap5qzFOQLu2Dc/QPg8ceAgYGITx9HfgTxYVvARTjn/EpJ7MIGcQBb413pJYGC1wX4SHb/Chf5ejo5sBP8prQOERhTE/i9RZtw7fJL9PUppTBhW51DSS2QRHW713QYiDNP3bHgWbqOgZRQq1ZBXXsNxG3/AOOffuhO62chPvyXkR+VBox+2HZYBTjId2cDHWdAh6Aipn7k3CcETsmCxBiN49L+Tbi27xJM2raeEjWEhOwkYjqT+5kPZpLgpli+CNTe+Q4UK6MwbrvdMTwj4j8d8b7+d41ApYTGOYPzFtoIID2B44gVvUmxu1lxOCYdLHkO/EmWUhb6J0v40MK3wtZbCjBu5G+rj9Y+8F1zdywtBbz9coz09ELVan4sqB5HLh614vZ2Jre1imecshrgv6G5AH9n6uDn6hePEFhCeH+9e47WZaNvCqfuX4kVog9TZDlhyqQXmSeIxpA2Thxu5t1hB/rw1DGrQJMTvP+Lg+II4p1zvVm3PmekO4j38MZMGjECPQLgh5wNywOf39nb2+F2EdL92k7gBqSErRTedMzx2fv3x1/Sg1mYyJlTQM2WJxx94gkBE3piPhzpc+0yTyq4j/nnWgG4FBAlAL0VICNXLyd396131gprA9BNw/b2/g+MQsLAYH/IVZzGAPymEwRN83khsHCB4wlEERw+DqRC+J5DBEpL6AgB1FXgJNw7hOCpIb281Ins+VtHaH+SdYubH98OSKrn9UoU1JlqHYO93kbzXL844nW2tysB2B/UWI1LAN6DXi8Nd61LP+yjXSzvfRyu95SEboCfs91GOgVpVc8VwqAZbk5/m8FTAU4IL2wHOGUcnDh04U8AuWah9L0AVwLYIOIUI12z/06a693nA43gqglvuZRrXIRTCGLOYwdHosnyeTtEmFMQOHrBFd849/Dlu/BRrg8QH0gJfS9qBLKnwZThxAk9Xe48H9L5mhCcT5fozxiwDyDdz8MkT0jOLWadY4httau+BPA9tagdQImID03J8CJa9zBkAwRxYi/g48V9vFiyVgfuMiyPKLRPmWOzhNkkBo+I5zpQEyU9ry0sAcJSIBwKDtsEDEJHdmM2AC+uDCx7tx1NAQ7ne8sFHNXAlTtEEFBi6y/aKdRoF0kABdPQx5Zt62ncuQLU6nNaAsSNQK/G0JfYYoj37vGwRCeDQj3yV5I6jkCooy4xeCrADTlqFeAulGwVOkEQ/KJdZSdWvG//KHp6utFdNjE5xRMf7SU55SKCget2PuqU0Kc2tRee1/c8sMALiJaLHntSInj/qBvoD75rUTqvFEOIRwjOPZ8C26hg0zxBJwqpGg40c3u5ZODpnS/iK3/xt9i560X09nTjyis2Y8s7LkK12j4iUIoJLcpHE7yRhLs6qDPgGHLOp/niiA+7gc65z9a+M8BGgBNBikkA10fUpn8w/+9rhJBUCO65+qSTbiD7KYzUMs8wBDNA4+5Ah1HJxFgwJfYPj+Ca6z6PXc//Gv39fdi//wA+8dkvo1Qq4bJLfhcTExak0bo6oJCU2fHIk/jZvb+AYUhccP7ZWPvG1ZjogKSJtB0yAvW11DSwYA4n7KOREEFKWCgdxPlfM1kg0sIVedeCGScHOZ1EP79Qd9nAcy+8in/+6f2o1mo456wN/kCHE1M4LM3c/7P7tuO5XS9i6eJFqNVq6CqXYVs2brv9h7j04k06tk7TFPusUv7PbT/AZ7/4Vd8vv/lb38P1X/w4Ln7LWRiftFKl1LTAjeiFPYB0xCcrWEkUJgC/3jr566WHham5rtFYYkg7gQe6q2Ti/l88imuv+zwOjIzqRRI33PRNfP5PPoor3n5B4kAfPDiqX7VmW5zzCLL5W85A5dA4qryVzDS4k4hQLBrYvecA/vfXb0axWES5XNLKcrRSwZ9/7W9x5umnolQqOwZ22yVBMueH+xfJAoo9q38u/buzgW7GSN0DUUT7bob/C4IOnZABXCMjdmKqij/7yl9jbOwQFi8cxOCCAW3Nf/mrN+G1oWEUC24QKwQ86CwNvDwHz3LOY2Eqd7o0aXB1v4hgSoEXX3oVI6OjKJgmqlM1vTSsXCxi795hvLZ7H4qFkEfVRgiPfeS6tg3cfmchPwQp8qm+oHfZi0P7iaOdBM1pEruH9uPlV3ejq6uEqakqqtUaioUiDo6M4rnnfw3TSM6QcSKbrq70pkM9/ye5OThGnaHFe6HA7mP2ezoJtp5FzlOtHic1iItQNpHlB48JoxHZeJm0+KyZXDipw9lSoZPgtcODq61rL2iVMXjeVKn3Ywgf15eHTi8vFiSeeuZF7Ns/jDWrjsFhSxZkGHQuEt2MKg+S46IB8HsUCyYKBh8DU9XmbYWwFMimobhOdxm5ngA8yq1P5giZhylNtEYBHgdkuXRB2SCJITohkt4nHSlzf7wxetreOcRpbawy7Bo+/oWv4Y67/hmWZWPBQB/++LoP4fLN5/seR6wRN1EmGm3Lyprn+z1lE/uGx/DCiy9h2bKlWLl8MSZ5kWtT4JBZOvKTJXiIj/XLZI66l/7VmMXzlInVqy17Ez1dBf23oSh0pzK9PDh/wiN1pMO2SiARkjSXUgqlosTf3fo93HTzd2GaBXR1lXFwtII//tT1ePL/7dKeRVwd+O6Y1yeVnqbttEPoKhn4zvd+iIsuuwrvvuoaXHTZ+/HVG27Vrmt+g8GL96ffTxyLoNduVmsKAUT9xuyO+PIkZ995cAxDaCv6vp8/ilu+/Y/Y/vCTeoDr4wxBO+F/AVaz9XkEOaGAVVyYSyl1ut1P730QA33OHsAsAbrLZYyPj+O++3c4K9/rOhejMo8rEwaDiYffcccjv8J1n/wShg+Mau9hqlrDF/7s67jjrp/o+2xPtA4JVBFfGOzHAaia4QbmQXyImPJ2zw0dW1YNH/2jL+H27/+TM6ksJa668h347Ceu4Y4lq6FwpCtEEtl9dGVzeGo0gcKEO6fBcYLArnESKfm5arWa0UqIMN0mEq0FrWaAH//kPliWpdVLrWZpD6JcKuLuH92Dyzef1+ICowbiPlLGbyCqAppCfgjxzWh/HtBSQeLb3/0+vv3dO7U7t2BBP/r7evHXf/Nt3PWje1EuMhckr7OJivRUfEZeOSo7somGEkrq/9OwktKXrDGZnOJlJCHPwVUr7Nm0Bkk2TTLXJ0GgArKVSoTdm0W8B54lvf2Xj+nJGXJFLQOLw+07Hmuh1ozeqiYJhporn9l4CoQX10SuizaJ+4i31rjzoVBwlj0YzfhJ7kx+COew1V9LfSiU9pSj/AwBRXLyHJjx1INUcZ8Cej7YOWzgfObh+tlHQiJkbbqU9gjSn5mz0IS498VidiDIK1n3J7nMPMwO1E3B5HCjA/e/QSSwWcTP08KMQmuIT4a6T8NwHkCWnVx3Oo/8WYQG4r5hDDdCAF7iZ86GQpc6Mxc4D9nQwJ1pyJvhdQFuNnA98hsh3gvLzMOcAJfrszESFdv+FjFGHnEfOZxH/JyChlyffCffdHCbkZ+WIfN6yN2fc5BL3NchMMMIDLsJHeL6pDQpncGTEgKehwSgJrk+VsiLBriBoISsjpiRl9fizAIvoDI4OKAnRAz+Fq8Qeq89y7awaOEgftNBpF1vSvgF1le6qx7y5evsNv/QIQAp9UZXKc/m8TPzSQZv1u09V2xGd1cXhocPaELYu28/li5ZjHe+/ULYNidUzM7qHTEDGogTVJOkX1qmUho0y/UBlpwjQQ7OZZJcaERfTqHmZ0p43n2ypnDKSSfg5huvx5s3nIxlhy3BueecjltuvB6rjj0CUzUn7Ws2QOkNMuqR085Q8DFHH4latQaTd/yWEoUCr1aawpFHHK7vt95WNtfHjzzw3ED97ZPADWxO3DfTZU694vSqs08/GWedfjJGRiewoN/ZADEx7WoGQHGyRtHEYUuX4NHHf4W+vl5XRbFqsnHEyuXTboORXbUU3vm2C3DH93+MX7gzopOTkzj6qJW4+qorYLUs/dK5vu5i7LazVSyh2kxYMVxDK/TKSOZcfuau7u4ujXiuqSOLKJrg/v989Xtw3wO/1CqpVCzqNPSNZ2/Aheed5Uqm1vvnGLmEvv5e3HLjl/GNv78Nv3rqWRx1xOF4/3vfiaOPXK6TT5tjgLhGjx+mY0dQKCOICDXRBNe3QyB6g8mWv/PSs+cCSjaCagrrT3kjvnPr1/B3t27F3n3DOGntifj9q9+Nrq4u1KzpL/XSn5XjL38N9OO/Xfsf/eus/r31hPkhecKmIZbcy0pQzScAIT0J0Kq4b50k8gxqo/TvdoBwVRPbJ6ec9GnfIead2dqB/HA7nARTrTrGoE4Vk7I11dcM1/uXXSNQiIgEqNZHgfMiPpkS2wWcMdXd0w3DdPSxoyN50HiLeIG+3sj3rqYF0lVNXu6it3dSGvJbJUzP9Z0WtIx853+lHBWg5TAFEsD94mEj5KdbnO0EHqhq1cLhhy3EhedvxO6hvVpl8OC+tnsvNqz/93jjicdhsmq3zX6Q+jsA0kdSFud3d3frz8drIvH2VHLXOHBauU4Q7aBmi7t26QUiJZ2F/UIGBCDZJ/RjQVF6SkZ+ZxEfBh5Q1s9/8t8/jA998Eq9zp8XYl7+tgvxv770Sf3RiLTVWx5Cwueu+JtWnyS7s1Ubbzj+aJx68loM7dnrY3poaC/OPmM9jlyxFJNTjqHbbogOfRbig/txdClFU8Fu4YIOGelRw/qrM4D4aJAEKJe78KXPfQx/+JGrtYvGq2k4l5+NqrD+9HYy/Z03neB0VSntczM37913AG9YswrlosShSWta28Vwn3hR6lf+x8f1vgOPPPavWj1dcflb8aef/qheMt/ZuY0Mro8eJDKxNHAo+GiUpcb1lym0MEitMUPFdHZS2PlYho1DFmHxogX63HMj44OsuXPKxhkbTsJ/uvrd+KubvgXJ/rxl400nrsZHP/IBWLaKfnSxBWCiq1kKK1Ychr//m+vx3POvaCI75shl+uOh7TQcc0EuxGuQes0DMB5IAIkx6SRLJuzy3AjxMyMOtE523SiGbJ0vdNDlM5/4Lzjr9PV4+NEnsHTpYmy++FwsXNiPqTbt3iG0jeL057hjVuiRYE/C2VNx9pCfGSZ29vyCCTUWeAGycIiUTtBnMRDNC0qUMjOoA2KQZ2C9Iozo887ZoH8MTDssHabL/Un94XoZZjSSGTHygkvJZf2C3EFbKQpUgJgSFRRoAhC8MC6zptdTBhAjh3W9XrHrSo12Ij8MM87xzXF99AphQtmiEhCAkHwyJgR609ZbZiJ+DtPEXNoXsP0UkIX8tEWbevv/sUO9osJmoB6doaEnxgk4kFZfIvIjfZghn3AeNIS+39Yk8t1lAUQHMDTkG4HSnQ/c6+5sEBIujSJLQTfYNZuHmQGOiCZHGtOXaru87X0cfK97ieXjRi0FBPCKGyhxUzzyBBi8nUMJL7zwotvEvCToFHhju2vX8zoQkfUJv8hzwf9uCfGKeyukIEnsdErkCTAE9zleXiyVcc+992m/eNox7nlIBTZief+In/z0ZzBLJf9bAWmJOQEjh2M5mmh2+nV6B0qq57yPCCTUEjqJ3uINjzg8+/DDj+If7/yB3gKl9bXu85AGPKa8lc737/4Rfv7gz9Hb2+tvYBGHVPPQOxXiOe8SkwOzrL10xarTBOQvyJEzsfSA7MkhPc9drWJwcAF+cPc/4PjVx6IyXk2M1M1Dc+CtTu7tLuqdT887/2IMDQ3pLW+TtrDLRLwzF8Sx9TePje3Zrr956X0LdfnyNYttQSwaBly54ewPn9hApIf6D8+gHTo0gRUrluOGv/xzbDrnzPRn5iEXhFln230P4oO//2G8+MIL6OnprUuhTw0FRW8IIhqBMlZVKq/tC+fBaiJYunz1DiHkOuKPzYEiyjyRFGIXWf9PTEzo40svvQiXve0SrF69GuVyOeG1XgdkQTnLJWwLlyM21xA4X/DZZ5/BHXfcidtvv1Mjnaegk5Gf2gHvgi2EMBTRQ5WRPeu9XrvY2GgC26yly1b/pTTkh5Vin06Y6XWlv5TzCRnSW6hy5ayreCOkekhRKyn2RtJoJ3scYWzUD0rwHbQGbTS71CpxzqyRG51W0hHAVq2GscqY3u2sv7/f/7BXc4j3L1pCSFOR+nplZM9H3BCAFdsljO4h0Ic9Nm0G8V4NPA3KMLhgga6AqZV3w0rrXX7Eh3qZWSTZKsq2YkIQ8pZyIT/5sIEnla8N3k9owcACfcbj6H8eJq2NhBBe6MhV6XRPuIRLANu0TBHKfoAEKjwn4H0dxn+8AV7icQPecs2D6ARJ8EEqfRZxT4P7qS24H65Kuh9vw++2/gRCwv04uHu8OSWTPoNZ506Fm8puwx9ND/HO/cQ2KLwPcUviPqlGg4gqZIkH3MsOzkPldERw8fJVP5RCXkDOrsq8DXddF+ONZTgM7eP6zGLT5HpMb51dsyI/s41GVTTH9R6w/pdE9OPKyJ6L/OhvdGWQExEkwrf8L0dlIj+WDUDZnam74mM0uw1f5FNn9smD+57UosgPUJoi8mPvmf4aeSJ5iY037o1zQZDCt9wrPt7jspkWLlzVL4v0rIBY4lJA3XRaXZi4JcSjw7q+oc7C9HV9Q3ZtA9c3GusGPfI+8g61t2iq1cPDw6NhSzmMXGJvYHh456gg3Ci14o5PDscygJrh+gg3ZIH3scP0+0mD0vzGSa2vrs1sI0EkpraRwvWpTyaOdSbX839KCCGIxI0u8s1w0bgNos+XLVu12AY9DYiB4FOS6Trw9cb12aWowWEexKPDXE85bgdsx165IOP4SmX3vvgjcfGuRf7u3Tv3EvAFKSV/TtLORn49H9Ec53p0lOuRLVnawvWJ3fTQHb5qC+dr4F+oVHbzFLCzqqaBP6Szp/jv4mXHPiiEXK8jg5SwjdC0ud595Sa5Plo+D+Ix+1xP2aTXLOIb9cO1/A2laMehsb1nuDfrNvZPypfySMiCpPeC1JizeDw8VdiI69N5IPxEtqORzvWp9+seb4R8SuT6DM2a0HROrk9tPUHcNI38uof05s9EGJOg92pcptScljCnYwD7Xn3+GSJ6DxsRbmuJ34idy+I+a+inL+5n28hLfEP/O3+C1HvGxvY94874JmZ7ZmVMcqTI3Df0/F02cJUmAqG3kfBDU1Gc5+f6DDmZeClD69U/PsM+PaW1kUk/jbiecnJ9HfBXNKX+Priiq8bG9t3lWv2pu2/lmazXkwaLlh69WUh5q4AYUGTzZJER7Dych+ung3j8tkfyHEgfRL7IK1JMnu5VpN43Mbb/Tg93yIC82Rq6ooXLjjpBQN4kIM/Q3w10PjzE4iX9kxoBblIgQaXUcUPW442QErvbsrh3IJ2GG5HedBGfekdLar2GktSDQqkPVirDT+VBPkMz6To6c4j/Llp6zB8C9EdCyqXu93U8EaO9B69v85G8PIhvmusp0OfCcJJy1R4i9T8Pje3/qoejLLEfhmbztXxvYMmSo5YpKf8ARB8QUq50bB7tZdhOWpk2HEME8foU92hZz7dN3HsIJy+Fz7PJFdHLIHyDbNwwPr53t/tkzGPLhlYT9nwKGxw8dkAW6BIBehcBZ0GIBV6/3YQN9wV8eRDeEEjPoAaLUhsh3q23caHOinu0LZLnDZB3IfzVZ5+BHIQ74Xul6CAE7gfEd4pG7a4DBw6MuM/m5vowTCdj00so9fWMlgoCpynCJgFaB4jjAbEw1P/gPd3v/gTg+wfBYERueahvlAswZxEvQoh1w+uhW5E3C2wnIhqGwNMCeAhC3KNqtD3E7QhZ+Y0s8URoR8quR6kh3eRA3+FvWFScqhwLw1hNoFVC4TgSOAKExQpYCKBfgLo8Iya1Sy2K/DwoBeUU9xnVNEZ+lKY1lTvvZPFCTQGMAjQMYB9ALwHyOQJ2GrCfJSrtGht7dX+sSU+1NvHJzmRod852WO9nUuXKlSu7DlpWr0HFXkmqFzB6hUU9SlC3ECgTqaIkUSShikSyQFIUQKRnsgRRwc1ZDH0GOQoNlaAbLoFz0PIgOtUofl9LkKg5xg9ZQoiaUlTTu3EpqgqhqiTlpCKMS4VDykTFVKJi26JSqZgV4GUnmzZb2obtgdcFeB03ncRTfy3iPCQDj403TvzLcLHbA/8fO7lwWsmqGgEAAAAASUVORK5CYII="><span>TrackTab</span></h1>
+  </div>
+  <div class="topcorner">
+    <div class="layoutswitch" id="layoutSwitch">
+      <button class="lsbtn on" data-layout="edit"><span data-i18n="layout.edit">Bearbeiten</span></button>
+      <button class="lsbtn" data-layout="player"><span data-i18n="layout.player">Player</span></button>
+    </div>
+    <button class="act" id="btnStats"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16" /><path d="M18 17V9" /><path d="M13 17V5" /><path d="M8 17v-3" /></svg></span> <span data-i18n="header.stats">Statistik</span></button>
+    <button class="act" id="btnSettings"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true"><path d="M11 10.27 7 3.34"/><path d="m11 13.73-4 6.93"/><path d="M12 22v-2"/><path d="M12 2v2"/><path d="M14 12h8"/><path d="m17 20.66-1-1.73"/><path d="m17 3.34-1 1.73"/><path d="M2 12h2"/><path d="m20.66 17-1.73-1"/><path d="m20.66 7-1.73 1"/><path d="m3.34 17 1.73-1"/><path d="m3.34 7 1.73 1"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="8"/></svg></span> <span data-i18n="header.settings">Einstellungen</span></button>
+    <button class="act" id="btnQuit" style="display:none">Beenden</button>
+  </div>
+</div>
+
+<div class="toolbar">
+  <button class="act" id="btnScan">Bibliothek scannen</button>
+  <button class="act" id="btnRekordboxSync">Rekordbox abgleichen</button>
+  <button class="act" id="btnMusicAddedSync">Music.app abgleichen</button>
+  <span id="toolbarGoneActions" style="display:none"></span>
+  <span id="scanLine"></span>
+</div>
+
+<div id="settingsOverlay" class="overlay">
+  <div class="confirmbox settingsbox">
+    <h3 class="nametitlerow"><span class="nametitleicon"><svg viewBox="0 0 24 24" width="15" height="15"
+        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true"><path d="M11 10.27 7 3.34"/><path d="m11 13.73-4 6.93"/><path d="M12 22v-2"/><path d="M12 2v2"/><path d="M14 12h8"/><path d="m17 20.66-1-1.73"/><path d="m17 3.34-1 1.73"/><path d="M2 12h2"/><path d="m20.66 17-1.73-1"/><path d="m20.66 7-1.73 1"/><path d="m3.34 17 1.73-1"/><path d="m3.34 7 1.73 1"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="8"/></svg></span><span data-i18n="header.settings">Einstellungen</span></h3>
+    <div class="path" id="settingsFile"></div>
+    <div id="settingsBody"></div>
+    <div id="settingsStatus"></div>
+    <div class="confirmbtns">
+      <button class="act" id="btnCloseSettings" data-i18n="action.cancel">Abbrechen</button>
+      <button class="act" id="btnSave" data-i18n="action.save">Speichern</button>
+    </div>
+    <div class="settingsfoot">
+      <div>TrackTab <!--__VERSION__--> — Music Library Toolkit · by sgt.works</div>
+      <div><a href="#" id="btnCheckUpdate" data-i18n="settings.check_update">Auf Updates prüfen</a></div>
+    </div>
+  </div>
+</div>
+
+<div id="statsOverlay" class="overlay">
+  <div class="confirmbox statsbox">
+    <div class="statshead">
+      <h3 data-i18n="stats.title">Statistik</h3>
+      <select id="statsYearSelect"></select>
+      <button class="act small" id="btnStatsRebuild"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" /><path d="M8 16H3v5" /></svg></span> <span data-i18n="stats.rebuild_button">Neu berechnen</span></button>
+    </div>
+    <div id="statsStatus"></div>
+    <div id="statsBody"></div>
+    <div class="confirmbtns">
+      <button class="act" id="btnCloseStats" data-i18n="action.close">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<div class="panel" id="dropsPanel">
+  <div class="drophead-main">
+    <div>
+      <div style="font-weight:600;font-size:22px" data-i18n="drop.title">Einzelprüfungen</div>
+      <div id="dropStatus"></div>
+    </div>
+    <div>
+      <button class="act" id="dropPick">Dateien öffnen</button>
+      <button class="act" id="dropRename" disabled>Dateien automatisch umbenennen</button>
+      <button class="act" id="dropAddLib" disabled>In Music-Bibliothek importieren</button>
+      <button class="act" id="btnDropCols" disabled><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg></span> <span data-i18n="cols.button">Spalten ▾</span></button>
+      <button class="act" id="dropClear">Liste leeren</button>
+    </div>
+  </div>
+  <div class="panel" id="dropColsMenu" style="display:none"></div>
+  <div id="dropBulkbar" style="display:none"></div>
+  <div id="dropList"></div>
+</div>
+
+<div class="applayout">
+<aside class="sidebar" id="sidebar">
+  <div class="sidebar-body">
+    <div class="treehead">
+      <span data-i18n="tree.title">Listen</span>
+      <span class="treehead-actions" style="display:none">
+        <button class="treeadd" id="btnNewPlaylist" data-i18n-title="tree.new_playlist" title="Neue Playlist"><svg viewBox="0 0 24 24" width="15" height="15"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"><path d="M16 5H3"/><path d="M11 12H3"/><path d="M11 19H3"/><path d="M21 16V5"/><circle cx="18" cy="16" r="3"/></svg></button>
+        <button class="treeadd" id="btnNewSmart" data-i18n-title="tree.new_smart" title="Neue Smart Playlist"><svg viewBox="0 0 24 24" width="15" height="15"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg></button>
+        <button class="treeadd" id="btnNewFolder" data-i18n-title="tree.new_folder" title="Neuer Ordner"><svg viewBox="0 0 24 24" width="15" height="15"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7v10"/><path d="M11 7v10"/><path d="m15 7 2 10"/></svg></button>
+      </span>
+    </div>
+    <div class="tree" id="tree"></div>
+  </div>
+  <div class="sidebar-grip" id="sidebarGrip" data-i18n-title="tree.resize_title" title="Breite ändern"></div>
+</aside>
+<div class="mainpane">
+  <div class="plhead" id="playlistHeader" style="display:none">
+    <div class="plhead-row">
+      <span class="plhead-icon" id="plHeadIcon"></span>
+      <span class="plhead-name" id="plHeadName"></span>
+      <span class="plhead-count" id="plHeadCount"></span>
+      <span class="plhead-actions">
+        <button type="button" class="act small" id="plHeadMergeToggle" hidden
+                data-i18n-title="genres.merge_toggle_title" title="Zusammenführungs-Vorschläge">
+          <span class="btnicon" id="plHeadMergeToggleIcon"></span>
+          <span data-i18n="genres.merge_toggle_label">Vorschläge</span>
+        </button>
+        <button class="act small" id="plUndo" data-i18n-title="undo.undo" title="Rückgängig">↩</button>
+        <button class="act small" id="plRedo" data-i18n-title="undo.redo" title="Wiederherstellen">↪</button>
+      </span>
+    </div>
+    <div id="plHeadBubblesRow" class="chipsrow genrebox-bubbles" hidden></div>
+    <div id="plHeadIssueBubblesRow" class="chipsrow genrebox-bubbles" hidden></div>
+    <button type="button" class="genrebox-expandlink" id="plHeadBubblesExpand" hidden>
+      <span class="btnicon" id="plHeadBubblesExpandIcon"></span>
+      <span id="plHeadBubblesExpandLabel"></span>
+    </button>
+    <div id="plHeadMergeSuggestions" class="genrebox-merge" hidden></div>
+  </div>
+  <div class="panel" id="filterPanel">
+    <div class="controls">
+      <span class="searchwrap">
+        <input type="search" id="q" data-i18n-placeholder="filter.search_placeholder" placeholder="Suche in Artist, Titel, Dateiname, Pfad … (z. B. /Künstler SGT — siehe Suchhilfe)">
+        <ul id="searchAcList" class="ac-list" style="display:none"></ul>
+      </span>
+      <span id="searchResultCount" class="path"></span>
+      <button class="act small" id="btnSearchHelp" data-i18n-title="search.help.title" title="Suchhilfe"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span> <span data-i18n="search.help.title">Suchhilfe</span></button>
+      <label class="toggle" style="color:var(--dim)"><input type="checkbox" id="groupAlbums">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span data-i18n="filter.group_albums_label">nach Album gruppieren</span></label>
+      <button class="act" id="csvsel"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="m5 16-3 3 3 3"/><path d="m9 22 3-3-3-3"/></svg></span> <span data-i18n="export.csv_button">CSV Export</span></button>
+      <button class="act" id="m3usel"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><path d="M11.65 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v10.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 20v-7l3 1.474"/><circle cx="6" cy="20" r="2"/></svg></span> <span data-i18n="export.m3u_button">M3U8 Export</span></button>
+    </div>
+    <div id="searchChips" class="chipsrow"></div>
+    <div id="bulkbar" style="display:none"></div>
+  </div>
+
+  <div class="tablehead">
+    <button class="act" id="btnCols"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+        aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="M15 3v18"/></svg></span> <span data-i18n="cols.button">Spalten ▾</span></button>
+  </div>
+  <div class="panel" id="colsMenu" style="display:none"></div>
+
+  <div id="stickyHead"><div id="stickyHeadScroll"><table><thead><tr></tr></thead></table></div></div>
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th class="sel" style="width:54px"><input type="checkbox" id="selAll" data-i18n-title="table.select_all_title" title="Alle angezeigten auswählen"></th>
+        <th data-k="v" style="width:90px" data-i18n="col.status">Status</th>
+        <th id="colsAnchor" style="display:none"></th>
+        <th class="filler"></th>
+        <th class="links" style="width:220px" data-i18n="col.open">Öffnen</th>
+      </tr></thead>
+      <tbody id="tb"></tbody>
+    </table>
+  </div>
+  <div class="foot" id="more"></div>
+</div>
+</div>
+<div class="sub" id="sub"></div>
+<div class="appfoot">TrackTab <!--__VERSION__--> — Music Library Toolkit · by sgt.works</div>
+<div id="toasts"></div>
+<div id="rowMoreMenu" class="rowmore-menu"></div>
+
+<script>
+<!--__JS__-->
+</script>
+<div id="searchHelpOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="search.help.title">Suchhilfe</h3>
+    <p class="confirmnote" data-i18n="search.help.intro">Alles nebeneinander ist UND-verknüpft, z. B.
+      „/ALBUM 7 /KÜNSTLER Guetta“. Mehrere Wörter gehören mit Anführungszeichen zusammen
+      („/TITEL "Radio Edit"“), Alternativen mit OR in Klammern („/GENRE (House OR Dance)“).
+      „/NO“ verneint immer nur das direkt folgende Element — ein Wort, eine Phrase, eine
+      Klammergruppe oder einen ganzen Parameter („/NO /GENRE Acapella“). Ein Parameter ohne
+      folgenden Wert wird ignoriert.</p>
+    <div id="searchHelpBody" class="searchhelplist"></div>
+    <div class="confirmbtns">
+      <button class="act" id="searchHelpClose" data-i18n="action.close">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<div id="updateCheckOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 id="updateCheckTitle"></h3>
+    <p class="confirmnote" id="updateCheckBody"></p>
+    <div class="confirmbtns">
+      <button class="act" id="updateCheckClose" data-i18n="action.close">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<div id="rbPlaylistOverlay" class="overlay">
+  <div class="confirmbox settingsbox">
+    <h3 data-i18n="settings.rbpicker_title">Rekordbox-Playlist auswählen</h3>
+    <div id="rbPlaylistList" class="rbplaylistlist"></div>
+    <div class="confirmbtns">
+      <button class="act" id="rbPlaylistCancel" data-i18n="action.cancel">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<div id="confirmOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 id="confirmTitle"></h3>
+    <div class="confirmfile" id="confirmFile"></div>
+    <div class="path" id="confirmPath"></div>
+    <div class="confirmfacts" id="confirmFacts"></div>
+    <p class="confirmnote confirmnote-music" id="confirmMusicNote"></p>
+    <p class="confirmnote" data-i18n="confirm.trash_note">Die Datei wandert in den Papierkorb und lässt sich von
+      dort wiederherstellen. Der Eintrag verschwindet aus dieser Liste.</p>
+    <div class="confirmbtns">
+      <button class="act" id="confirmNo"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="confirmExtra" style="display:none"></button>
+      <button class="act danger" id="confirmYes" data-i18n="action.to_trash">In den Papierkorb</button>
+    </div>
+  </div>
+</div>
+
+<div id="fixOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 id="fixTitle" data-i18n="fix.title">Bitrate korrigieren?</h3>
+    <div class="confirmfile" id="fixFile"></div>
+    <div class="path" id="fixPath"></div>
+    <div class="confirmfacts" id="fixFacts"></div>
+    <div class="setfield" style="margin-top:14px">
+      <label for="fixKbps" data-i18n="fix.kbps_label">Neu kodieren mit (kbps)</label>
+      <input type="number" id="fixKbps" min="32" max="320" step="8">
+    </div>
+    <p class="confirmnote" data-i18n="fix.note">Die Datei wird neu kodiert und ersetzt die bestehende
+      unter demselben Namen. Das Original landet vorher im Papierkorb und lässt
+      sich von dort wiederherstellen. Tags, Cover und Cue-Punkte bleiben erhalten.</p>
+    <div id="fixStatus"></div>
+    <div class="confirmbtns">
+      <button class="act" id="fixNo"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act danger" id="fixYes" data-i18n="fix.encode_button">Neu kodieren</button>
+    </div>
+  </div>
+</div>
+
+<div id="tagIssuesOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="fixtag.title">Auffälligkeiten</h3>
+    <div class="confirmfile" id="tagIssuesFile"></div>
+    <div class="path" id="tagIssuesPath"></div>
+    <div class="confirmfacts" id="tagIssuesList"></div>
+    <div id="tagIssuesStatus"></div>
+    <div class="confirmbtns">
+      <button class="act" id="tagIssuesClose" data-i18n="action.close">Schließen</button>
+      <button class="act" id="tagIssuesManual"><span class="btnicon" id="tagIssuesManualIcon"></span> <span data-i18n="fixtag.manual_edit_link">Manuell bearbeiten</span></button>
+      <button class="act" id="tagIssuesFixAll"><span class="btnicon" id="tagIssuesFixAllIcon"></span> <span data-i18n="fixtag.auto_fix_button">Quick Fix</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="exportZipOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="export_zip.title">Als ZIP exportieren</h3>
+    <div class="confirmfile" id="exportZipFile"></div>
+    <div class="optlist">
+      <div class="optrow">
+        <div class="opttext">
+          <label for="exportZipRename" class="optlabel" data-i18n="export_zip.rename_toggle_label">Dateien im Export umbenennen</label>
+          <div class="opthelp" data-i18n="export_zip.rename_toggle_help">Nur die Namen im ZIP-Archiv folgen dem Muster – die Originaldateien in der Bibliothek bleiben unverändert.</div>
+        </div>
+        <label class="toggle"><input id="exportZipRename" type="checkbox" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+    </div>
+    <div class="setfield" id="exportZipPatternField">
+      <label for="exportZipPattern" data-i18n="export_zip.pattern_label">Namensmuster</label>
+      <input type="text" id="exportZipPattern">
+    </div>
+    <div id="exportZipStatus"></div>
+    <div class="confirmbtns">
+      <button class="act" id="exportZipNo" data-i18n="action.cancel">Abbrechen</button>
+      <button class="act" id="exportZipYes" data-i18n="export_zip.confirm">Exportieren</button>
+    </div>
+  </div>
+</div>
+
+<div id="convertOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="convert.title">Format konvertieren?</h3>
+    <div class="confirmfile" id="convertFile"></div>
+    <div class="convertswitch">
+      <button type="button" class="csbtn" id="convertTargetMp3" data-i18n="convert.target_mp3">MP3 320 kbit/s CBR</button>
+      <button type="button" class="csbtn" id="convertTargetAiff" data-i18n="convert.target_aiff">AIFF</button>
+    </div>
+    <div class="optlist">
+      <div class="optrow">
+        <div class="opttext">
+          <label for="convertTrash" class="optlabel" data-i18n="convert.trash_toggle_label">Originaldatei in den Papierkorb legen</label>
+          <div class="opthelp" data-i18n="convert.trash_toggle_help">Aus: Original bleibt unangetastet liegen, die
+            konvertierte Datei kommt zusätzlich neu zur Bibliothek (und zu Music.app, falls dort bereits vorhanden)
+            hinzu, statt das Original zu ersetzen.</div>
+        </div>
+        <label class="toggle"><input id="convertTrash" type="checkbox" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+    </div>
+    <p class="confirmnote" data-i18n="convert.note">Dateien, bei denen das Ziel eine Qualitätsverbesserung wäre
+      (Upscaling) oder die schon im Zielformat vorliegen, werden übersprungen. Tags und Cover werden übernommen.</p>
+    <div id="convertStatus"></div>
+    <div class="confirmbtns">
+      <button class="act" id="convertNo"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act danger" id="convertYes"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/><circle cx="12" cy="12" r="1"/></svg></span> <span data-i18n="convert.encode_button">Konvertieren</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="convertResultOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="convert.result_title">Konvertierung abgeschlossen</h3>
+    <div id="convertResultGroups"></div>
+    <div class="confirmbtns">
+      <button class="act" id="convertResultClose" data-i18n="action.close">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<div id="askOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 id="askTitle"></h3>
+    <p class="confirmnote" id="askNote"></p>
+    <div class="confirmbtns">
+      <button class="act" id="askNo"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act danger" id="askYes" data-i18n="action.delete">Löschen</button>
+    </div>
+  </div>
+</div>
+
+<div id="rulesOverlay" class="overlay">
+  <div class="confirmbox rulesbox">
+    <h3 data-i18n="smart.dialog_title">Regeln bearbeiten</h3>
+    <div class="setfield" style="margin-top:14px">
+      <label for="rulesName" data-i18n="tree.name_label">Name</label>
+      <input type="text" id="rulesName" spellcheck="false" maxlength="80">
+    </div>
+    <div class="rulesmatch">
+      <span data-i18n="smart.match_prefix">Entspricht</span>
+      <select id="rulesMatch">
+        <option value="all" data-i18n="smart.match_all">allen</option>
+        <option value="any" data-i18n="smart.match_any">beliebigen</option>
+      </select>
+      <span data-i18n="smart.match_suffix">der folgenden Regeln:</span>
+    </div>
+    <div id="rulesRows"></div>
+    <div class="ruleslimit">
+      <label><input type="checkbox" id="rulesLimitOn"> <span data-i18n="smart.limit_label">Begrenzen auf</span></label>
+      <input type="number" id="rulesLimitValue" min="1" step="1" value="25" style="width:80px">
+      <select id="rulesLimitKind">
+        <option value="count" data-i18n="smart.limit_count">Objekte</option>
+        <option value="minutes" data-i18n="smart.limit_minutes">Minuten</option>
+        <option value="mb" data-i18n="smart.limit_mb">MB</option>
+      </select>
+      <span data-i18n="smart.limit_by">ausgewählt nach</span>
+      <select id="rulesLimitBy">
+        <option value="added" data-i18n="smart.by_added">zuletzt hinzugefügt</option>
+        <option value="cutoff" data-i18n="smart.by_cutoff">niedrigster Cutoff</option>
+        <option value="artist" data-i18n="smart.by_artist">Künstler</option>
+        <option value="random" data-i18n="smart.by_random">Zufall</option>
+      </select>
+    </div>
+    <p class="confirmnote" id="rulesPreview"></p>
+    <div class="confirmbtns">
+      <button class="act" id="rulesNo"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="rulesYes"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></span> <span data-i18n="action.save">Speichern</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="scanOptionsOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="scanopts.title">Scan-Optionen</h3>
+    <div class="optlist">
+      <div class="optrow">
+        <div class="opttext">
+          <label for="scanModeDb" class="optlabel" data-i18n="scanopts.mode_db">Bibliothek Scan (Datenbank)</label>
+          <div class="opthelp" data-i18n="scanopts.mode_db_help">Verarbeitet nur neue oder geänderte Dateien und
+            entfernt fehlende aus der Datenbank — der normale, schnelle Scan.</div>
+        </div>
+        <label class="toggle"><input id="scanModeDb" type="checkbox" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <div class="optrow">
+        <div class="opttext">
+          <label for="scanModeFull" class="optlabel" data-i18n="scanopts.mode_full">Bibliothek Scan (Vollständig)</label>
+          <div class="opthelp" data-i18n="scanopts.mode_full_help">Ignoriert den Cache und verarbeitet ausnahmslos
+            alle bekannten Dateien neu — dauert entsprechend länger.</div>
+        </div>
+        <label class="toggle"><input id="scanModeFull" type="checkbox">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <div class="optrow">
+        <div class="opttext">
+          <label for="scanOptCutoff" class="optlabel" data-i18n="scanopts.cutoff">Cutoff Scan</label>
+          <div class="opthelp" data-i18n="scanopts.cutoff_help">Ermittelt die Tiefpasskante und damit das
+            Qualitäts-Verdikt. Aus → die Datei bekommt nur Metadaten, das Verdikt bleibt "unbekannt".</div>
+        </div>
+        <label class="toggle"><input id="scanOptCutoff" type="checkbox" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <div class="optrow">
+        <div class="opttext">
+          <label for="scanOptLoudness" class="optlabel" data-i18n="scanopts.loudness">Lautheit Scan</label>
+          <div class="opthelp" data-i18n="scanopts.loudness_help">Misst zusätzlich Lautheit, Spitzenpegel und
+            Dynamikumfang (LUFS/dBTP/LRA) — rein informativ, ohne Einfluss auf das Verdikt.</div>
+        </div>
+        <label class="toggle"><input id="scanOptLoudness" type="checkbox" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <div class="optrow" id="scanOptMetaRow">
+        <div class="opttext">
+          <label for="scanOptMeta" class="optlabel" data-i18n="scanopts.meta">Metadaten Scan</label>
+          <div class="opthelp" data-i18n="scanopts.meta_help">Erzwingt den Cover-Abgleich mit Music.app unabhängig
+            von der Einstellung dafür. Tags werden für jede in diesem Lauf verarbeitete Datei ohnehin neu gelesen —
+            für bereits bekannte, unveränderte Dateien nur bei "Vollständig".</div>
+        </div>
+        <label class="toggle"><input id="scanOptMeta" type="checkbox">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <div class="optrow">
+        <div class="opttext">
+          <label for="scanOptTagIssues" class="optlabel" data-i18n="scanopts.tag_issues">Auffälligkeiten neu prüfen</label>
+          <div class="opthelp" data-i18n="scanopts.tag_issues_help">Bewertet die Tags ALLER bereits bekannten Dateien neu
+            (nicht nur neue/geänderte) — ohne erneutes Dekodieren, deutlich schneller als "Vollständig". Entspricht
+            "./run.command recheck-tags".</div>
+        </div>
+        <label class="toggle"><input id="scanOptTagIssues" type="checkbox">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+    </div>
+    <div class="confirmbtns">
+      <button class="act" id="scanOptionsCancel"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="scanOptionsStart"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></span> <span data-i18n="scanopts.start_button">Scannen</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="rbSyncOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="rbsync.title">Rekordbox abgleichen</h3>
+    <div class="optlist">
+      <div class="optrow">
+        <div class="opttext">
+          <label for="rbSyncPresence" class="optlabel" data-i18n="rbsync.presence_label">In Rekordbox</label>
+          <div class="opthelp" data-i18n="rbsync.presence_help">Gleicht ab, welche Tracks bereits in Rekordbox'
+            Sammlung liegen, und aktualisiert das entsprechende Zeichen in der Prüfliste.</div>
+        </div>
+        <label class="toggle"><input id="rbSyncPresence" type="checkbox" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <div class="optrow">
+        <div class="opttext">
+          <label for="rbSyncFixPaths" class="optlabel" data-i18n="rbsync.fixpaths_label">Gelöschte/verschobene Dateien korrigieren</label>
+          <div class="opthelp" data-i18n="rbsync.fixpaths_help">Sucht Rekordbox-Einträge, deren Datei fehlt, unter
+            den eigenen Bibliothekspfaden wieder — vor dem Schreiben wird eine Vorschau angezeigt.</div>
+        </div>
+        <label class="toggle"><input id="rbSyncFixPaths" type="checkbox" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+    </div>
+    <div class="confirmbtns">
+      <button class="act" id="rbSyncCancel"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="rbSyncStart"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></span> <span data-i18n="rbsync.start_button">Abgleichen</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="rbFixOverlay" class="overlay">
+  <div class="confirmbox rbfixbox">
+    <h3 data-i18n="rbfix.title">Rekordbox-Abgleich</h3>
+    <p class="confirmnote" id="rbFixSummary"></p>
+    <div class="picklist" id="rbFixList"></div>
+    <div class="confirmbtns">
+      <button class="act" id="rbFixCancel"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="rbFixApply"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></span> <span data-i18n="rbfix.apply_button">Übernehmen</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="pickOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 id="pickTitle" data-i18n="tree.pick_title">Zur Playlist hinzufügen</h3>
+    <p class="confirmnote" id="pickNote"></p>
+    <div class="picklist" id="pickList"></div>
+    <div class="confirmbtns">
+      <button class="act" id="pickNo"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="pickNew" data-i18n="tree.pick_new">Neue Playlist …</button>
+    </div>
+  </div>
+</div>
+
+<div id="nameOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 class="nametitlerow"><span class="nametitleicon" id="nameTitleIcon" hidden></span>
+      <span id="nameTitle" data-i18n="tree.dialog_new_playlist">Neue Playlist</span></h3>
+    <div class="setfield" id="nameField">
+      <label for="nameInput" data-i18n="tree.name_label">Name</label>
+      <input type="text" id="nameInput" spellcheck="false" maxlength="80">
+    </div>
+    <div class="setfield" id="nameStyleRows">
+      <label data-i18n="tree.icon_label">Symbol</label>
+      <div class="iconpickhead">
+        <span class="iconpreview" id="nameIconPreview"></span>
+        <div class="icontabs" id="nameIconTabs">
+          <button type="button" class="iconmode" data-mode="sym" data-i18n="tree.icon_mode_symbol">Symbol</button>
+          <button type="button" class="iconmode" data-mode="emoji" data-i18n="tree.icon_mode_emoji">Emoji</button>
+        </div>
+      </div>
+      <div class="stylerow" id="nameIcons"></div>
+      <div class="symnamerow" id="nameSymNameRow">
+        <input type="text" id="nameSymInput" class="syminput" spellcheck="false" maxlength="40"
+               data-i18n-placeholder="tree.icon_name_placeholder" placeholder="Lucide-Namen eingeben …">
+        <a class="symlink" id="nameSymLink" href="https://lucide.dev/icons/" target="_blank" rel="noopener"
+           data-i18n="tree.icon_browse_link">Alle Icons ansehen</a>
+      </div>
+      <p class="emojihint" id="nameSymHint" data-i18n="tree.icon_name_unknown"></p>
+      <input type="text" id="nameEmojiInput" class="emojiinput" maxlength="8"
+             data-i18n-placeholder="tree.icon_emoji_placeholder" placeholder="Emoji einfügen …">
+      <p class="emojihint" id="nameEmojiHint" data-i18n="tree.icon_emoji_hint"></p>
+      <label data-i18n="tree.color_label">Farbe</label>
+      <div class="stylerow" id="nameColors"></div>
+    </div>
+    <div class="setfield" id="nameColsField">
+      <label for="nameColsSelect" data-i18n="cols.view_field_label">Spaltenansicht</label>
+      <select id="nameColsSelect"></select>
+    </div>
+    <div class="setfield" id="nameMerkField">
+      <label class="toggle"><input type="checkbox" id="nameMerkCheckbox">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span data-i18n="tree.merk_checkbox_label">Als Merkliste verwenden</span></label>
+      <p class="emojihint" id="nameMerkHint"></p>
+    </div>
+    <div class="confirmbtns">
+      <button class="act" id="nameNo"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="nameYes"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/></svg></span> <span data-i18n="action.save">Speichern</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="mergeChooseOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="genres.merge_choose_title">Zusammenführen</h3>
+    <p class="path" id="mergeChooseReason"></p>
+    <p class="path" data-i18n="genres.merge_choose_text">Auf welchen Wert soll zusammengeführt werden?</p>
+    <div class="mergechoose-options" id="mergeChooseOptions"></div>
+    <div class="confirmbtns">
+      <button class="act" id="mergeChooseCancel" data-i18n="action.cancel">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<div id="m3uOverlay" class="overlay">
+  <div class="confirmbox">
+    <h3 data-i18n="export.playlist_title">Playlist exportieren</h3>
+    <div class="setfield" style="margin-top:14px">
+      <label for="m3uFilename" data-i18n="export.filename_label">Dateiname</label>
+      <input type="text" id="m3uFilename" spellcheck="false">
+    </div>
+    <p class="confirmnote" id="m3uNote">Exportiert die aktuell gefilterte Ansicht als
+      M3U8-Playlist mit absoluten Dateipfaden.</p>
+    <div class="confirmbtns">
+      <button class="act" id="m3uNo"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="m3uYes" data-i18n="export.button">Exportieren</button>
+    </div>
+  </div>
+</div>
+
+<div id="tagsOverlay" class="overlay">
+  <div class="confirmbox tagsbox">
+    <h3 data-i18n="tags.dialog_title">Tags bearbeiten</h3>
+    <div class="path" id="tagsPath"></div>
+    <div class="tagsmain">
+      <div class="tagscover" id="tagsCoverZone">
+        <img id="tagsCoverImg" alt="Cover" style="display:none">
+        <div id="tagsCoverEmpty" class="tagscover-empty" data-i18n="tags.cover_empty">kein Cover<br>Bild hierher ziehen</div>
+        <input type="file" id="tagsCoverInput" accept="image/*" hidden>
+        <div class="tagscover-actions">
+          <button class="act small" id="tagsCoverBtn"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><circle cx="10" cy="12" r="2"/><path d="m20 17-1.296-1.296a2.41 2.41 0 0 0-3.408 0L9 22"/></svg></span> <span data-i18n="tags.cover_select">Bild auswählen</span></button>
+          <button class="act small" id="tagsCoverPasteBtn"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="M11 14h10"/><path d="M16 4h2a2 2 0 0 1 2 2v1.344"/><path d="m17 18 4-4-4-4"/><path d="M8 4H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 1.793-1.113"/><rect x="8" y="2" width="8" height="4" rx="1"/></svg></span> <span data-i18n="tags.cover_paste">Zwischenablage einfügen</span></button>
+          <button class="act small danger" id="tagsCoverDeleteBtn"><span class="btnicon" id="tagsCoverDeleteIcon"></span> <span data-i18n="tags.cover_delete">Cover löschen</span></button>
+        </div>
+      </div>
+      <div class="setfields">
+        <div class="setfield full"><label for="tagsTitle" data-i18n="field.title">Titel</label>
+          <input type="text" id="tagsTitle"></div>
+        <div class="setfield full"><label for="tagsArtist" data-i18n="field.artist">Künstler</label>
+          <input type="text" id="tagsArtist"></div>
+        <div class="setfield half"><label for="tagsAlbum" data-i18n="field.album">Album</label>
+          <input type="text" id="tagsAlbum"></div>
+        <div class="setfield half"><label for="tagsAlbumArtist" data-i18n="field.album_artist">Albumkünstler</label>
+          <input type="text" id="tagsAlbumArtist"></div>
+        <div class="setfield half"><label for="tagsTrackNo" data-i18n="tags.track_label">Track</label>
+          <div class="trackfield">
+            <input type="number" id="tagsTrackNo" min="0" max="999" step="1" data-i18n-placeholder="tags.track_no_placeholder" placeholder="Nr.">
+            <span data-i18n="tags.track_of">von</span>
+            <input type="number" id="tagsTrackTotal" min="0" max="999" step="1" data-i18n-placeholder="tags.track_total_placeholder" placeholder="Gesamt">
+          </div>
+        </div>
+        <div class="setfield half"><label for="tagsComposer" data-i18n="field.composer">Komponist</label>
+          <input type="text" id="tagsComposer"></div>
+        <div class="setfield half"><label for="tagsGenre" data-i18n="field.genre">Genre</label>
+          <input type="text" id="tagsGenre"></div>
+        <div class="setfield"><label for="tagsYear" data-i18n="field.year">Jahr</label>
+          <input type="number" id="tagsYear" min="0" max="2100" step="1"></div>
+        <div class="setfield"><label for="tagsBpm" data-i18n="field.bpm">BPM</label>
+          <input type="number" id="tagsBpm" min="0" max="400" step="0.1"></div>
+        <div class="setfield full"><label for="tagsComment" data-i18n="tags.comment_label">Kommentare</label>
+          <textarea id="tagsComment" rows="2"></textarea></div>
+      </div>
+    </div>
+    <div class="tagslookup">
+      <button class="act small" id="tagsLookupBtn"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg></span> <span data-i18n="lookup.search_online">Online-Vorschläge suchen</span></button>
+      <button class="act small" id="tagsLookupManualToggle"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg></span> <span data-i18n="lookup.manual_search">Manuelle Suche</span></button>
+      <div id="tagsLookupStatus"></div>
+      <div class="tagslookup-manual" id="tagsLookupManual" style="display:none">
+        <input type="text" id="tagsLookupQuery" data-i18n-placeholder="lookup.manual_placeholder" placeholder="Eigener Suchbegriff …">
+        <button class="act small" id="tagsLookupManualBtn"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/></svg></span> <span data-i18n="lookup.search_button">Suchen</span></button>
+      </div>
+      <div id="tagsLookupResults"></div>
+    </div>
+    <div id="tagsStatus"></div>
+    <div class="confirmbtns tagsbtns">
+      <button class="act" id="tagsPrev"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m12 8-4 4 4 4"/><path d="M16 12H8"/></svg></span> <span data-i18n="tags.prev">Vorheriger</span></button>
+      <button class="act" id="tagsNext"><span data-i18n="tags.next">Nächster</span> <span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="m12 16 4-4-4-4"/><path d="M8 12h8"/></svg></span></button>
+      <span style="flex:1"></span>
+      <button class="act" id="tagsCancel"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+              fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+              aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg></span> <span data-i18n="action.cancel">Abbrechen</span></button>
+      <button class="act" id="tagsSave"><span class="btnicon" id="tagsSaveIcon"></span> <span data-i18n="action.save">Speichern</span></button>
+    </div>
+  </div>
+</div>
+
+<div id="coverOverlay" class="overlay">
+  <div class="coverbox">
+    <img id="coverBig" alt="Cover">
+    <button class="act" id="coverClose" data-i18n="action.close">Schließen</button>
+  </div>
+</div>
+
+<div id="dropOverlay">
+  <div>
+    <div style="font-size:34px">↓</div>
+    <div style="font-size:17px;font-weight:600;margin-top:6px" data-i18n="dropzone.title">Audiodateien hier ablegen</div>
+    <div style="opacity:.75;margin-top:4px" data-i18n="dropzone.subtitle">werden sofort geprüft, ohne in die Bibliothek zu wandern</div>
+  </div>
+</div>
+<input type="file" id="dropInput" multiple accept="audio/*,.mp3,.m4a,.wav,.flac,.aif,.aiff" hidden>
+<button id="toTopBtn" class="totop" data-i18n-title="action.to_top" title="Nach oben scrollen">
+  <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4"
+       stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>
+</button>
+
+<div id="queuePopup" style="display:none">
+  <div class="queuepopup-head">
+    <div class="queuepopup-tabs">
+      <button class="qptab on" data-qptab="queue" data-i18n="queue.tab_queue">Warteschlange</button>
+      <button class="qptab" data-qptab="history" data-i18n="queue.tab_history">Zuletzt gehört</button>
+    </div>
+    <span class="queuepopup-head-actions">
+      <button class="act small" id="queueClearBtn"
+              data-i18n-title="queue.clear_title" title="Warteschlange leeren"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><path d="M10 11v6" /><path d="M14 11v6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" /><path d="M3 6h18" /><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></svg></span> <span data-i18n="queue.clear_button">Leeren</span></button>
+      <button class="iconbtn plain queuepopup-close" id="queuePopupClose" data-i18n-title="action.close" title="Schließen"><svg viewBox="0 0 24 24" width="17" height="17"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </span>
+  </div>
+  <div id="queueList"></div>
+</div>
+<div id="playerBar">
+  <div class="pbartrack" id="pbarTrack">
+    <img id="pbarCover" class="pbarcover" alt="" style="display:none">
+    <div class="pbarcover-empty" id="pbarCoverEmpty"></div>
+    <div class="pbarmeta">
+      <div class="pbartitle" id="pbarTitle"><span class="pbartitle-inner" id="pbarTitleInner">Kein Titel ausgewählt</span></div>
+      <div class="pbarartist" id="pbarArtist"></div>
+    </div>
+  </div>
+  <div class="pbarcenter">
+    <div class="pbarbtns">
+      <button class="iconbtn" id="pbarShuffle" data-i18n-title="player.bar.shuffle_title" title="Zufallswiedergabe"></button>
+      <button class="iconbtn" id="pbarPrev" data-i18n-title="player.bar.prev_title" title="Vorheriger Titel"></button>
+      <button class="pbtn" id="pbarPlay" data-i18n-title="player.bar.play_title" title="Wiedergabe/Pause"></button>
+      <button class="iconbtn" id="pbarNext" data-i18n-title="player.bar.next_title" title="Nächster Titel"></button>
+      <button class="iconbtn" id="pbarRepeatTrack" data-i18n-title="player.bar.repeat_track_title" title="Titel wiederholen"></button>
+      <button class="iconbtn" id="pbarRepeatList" data-i18n-title="player.bar.repeat_list_title" title="Liste wiederholen"></button>
+    </div>
+    <div class="pbarseek">
+      <span class="pbartime" id="pbarTimeCur">–:––</span>
+      <div class="pbarprogress" id="pbarProgress"><div class="pbarprogress-fill" id="pbarProgressFill"></div><div class="pbar-bubble" id="pbarSeekBubble"></div></div>
+      <span class="pbartime" id="pbarTimeTotal">–:––</span>
+    </div>
+    <div class="pbarvolume">
+      <button class="iconbtn" id="pbarMute" data-i18n-title="player.bar.mute_title" title="Stumm schalten"></button>
+      <span class="pbarvol-wrap">
+        <input type="range" id="pbarVolume" min="0" max="100" value="100" step="1"
+               data-i18n-title="player.bar.volume_title" title="Lautstärke">
+        <div class="pbar-bubble" id="pbarVolBubble"></div>
+      </span>
+    </div>
+  </div>
+  <div class="pbarqueue">
+    <button class="act" id="pbarQueueBtn" data-i18n-title="player.bar.queue_title" title="Warteschlange">
+      <span class="btnicon" id="pbarQueueIcon"></span>
+      <span data-i18n="queue.label">Warteschlange</span> <span id="pbarQueueCount">0</span>
+    </button>
+  </div>
+</div>
+</body>
+</html>
