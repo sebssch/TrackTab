@@ -1306,7 +1306,11 @@ function playlistBadgeHtml(node) {
 // im Baum eine andere Zahl als in der Tabelle.
 function playlistCount(id) {
   const node = PLAYLISTS.find(n => n.id === id);
-  const paths = node && node.kind === "smart" ? (SMART_CACHE.get(id) || []) : (PLAYLIST_ITEMS[id] || []);
+  // Bei normalen Listen der Live-Stand aus PLAYLIST_SETS: setFavorite() und
+  // bulkApply() schreiben ihn sofort, PLAYLIST_ITEMS zieht erst nach dem
+  // Serveraufruf nach -- der Zaehler im Baum hinkte sonst bis zum Neuladen hinterher.
+  const paths = node && node.kind === "smart" ? (SMART_CACHE.get(id) || [])
+    : (PLAYLIST_SETS[id] || PLAYLIST_ITEMS[id] || []);
   let n = 0;
   for (const path of paths) {
     const r = ROW_BY_PATH.get(path);
@@ -1675,10 +1679,21 @@ function wireTreeDnd(host) {
   });
 }
 
+// Setzt den Live-Stand einer Playlist (Set + Array) lokal, ohne Serveraufruf --
+// fuer die sofortige Rueckmeldung (Zaehler im Baum) vor der Serverantwort.
+// reloadPlaylists() bzw. der Rueckweg im catch stellen danach den echten Stand her.
+function setPlaylistLocal(playlistId, paths) {
+  PLAYLIST_ITEMS[playlistId] = [...paths];
+  PLAYLIST_SETS[playlistId] = new Set(paths);
+}
+
 async function dropTracksOnPlaylist(playlistId, paths) {
   const node = PLAYLISTS.find(n => n.id === playlistId);
   if (!node || !paths.length) return;
   const before = [...(PLAYLIST_ITEMS[playlistId] || [])];
+  // Zaehler sofort hochziehen, nicht erst nach der Serverantwort.
+  setPlaylistLocal(playlistId, [...before, ...paths.filter(p => !before.includes(p))]);
+  updateCards();
   try {
     const data = await playlistApi("/api/playlist-items",
       {op: "add", id: playlistId, paths: paths});
@@ -1694,6 +1709,8 @@ async function dropTracksOnPlaylist(playlistId, paths) {
       }));
     }
   } catch (err) {
+    setPlaylistLocal(playlistId, before);
+    updateCards();
     note(t("tree.drop_failed", {error: err.message}), true);
   }
 }
@@ -2458,6 +2475,9 @@ async function removeFromPlaylist(playlistId, paths) {
   const node = PLAYLISTS.find(n => n.id === playlistId);
   if (!node || !paths.length) return;
   const before = [...(PLAYLIST_ITEMS[playlistId] || [])];
+  // Zaehler sofort runterziehen, nicht erst nach der Serverantwort.
+  setPlaylistLocal(playlistId, before.filter(p => !paths.includes(p)));
+  updateCards();
   try {
     const data = await playlistApi("/api/playlist-items",
       {op: "remove", id: playlistId, paths: paths});
@@ -2470,6 +2490,8 @@ async function removeFromPlaylist(playlistId, paths) {
       track_word: data.changed === 1 ? t("tree.track_singular") : t("tree.track_plural"),
     }));
   } catch (err) {
+    setPlaylistLocal(playlistId, before);
+    updateCards();
     note(t("tree.remove_failed", {error: err.message}), true);
   }
 }
@@ -3299,15 +3321,16 @@ async function setFavorite(r, playlistId, flag) {
   if (!PLAYLIST_SETS[playlistId]) PLAYLIST_SETS[playlistId] = new Set();
   const before = PLAYLIST_SETS[playlistId].has(r.p);
   flag ? PLAYLIST_SETS[playlistId].add(r.p) : PLAYLIST_SETS[playlistId].delete(r.p);
+  PLAYLIST_ITEMS[playlistId] = [...PLAYLIST_SETS[playlistId]];
   updateCards(); render();
   const listName = (merkPlaylists().find(n => n.id === playlistId) || {}).name || playlistId;
   try {
     await playlistApi("/api/playlist-items",
       {op: flag ? "add" : "remove", id: playlistId, paths: [r.p]});
-    PLAYLIST_ITEMS[playlistId] = [...PLAYLIST_SETS[playlistId]];
     note(t(flag ? "toast.favorite_added" : "toast.favorite_removed", {list: listName}));
   } catch (err) {
     before ? PLAYLIST_SETS[playlistId].add(r.p) : PLAYLIST_SETS[playlistId].delete(r.p);
+    PLAYLIST_ITEMS[playlistId] = [...PLAYLIST_SETS[playlistId]];
     updateCards(); render();
     note(t("toast.save_failed", {error: err.message}), true);
   }
@@ -6427,6 +6450,17 @@ async function bulkApply(kind) {
     ? !rows.some(r => PLAYLIST_SETS[kind.slice(3)] && PLAYLIST_SETS[kind.slice(3)].has(r.p))
     : null;
 
+  // Merken: Aenderung sofort fuer die ganze Auswahl anwenden (Zaehler im Baum,
+  // Badges, Sammelleiste), die Serveraufrufe laufen danach nur noch nach. Ein
+  // fehlgeschlagener Aufruf nimmt seine Zeile im Worker wieder zurueck.
+  const flId = kind.startsWith("fl:") ? kind.slice(3) : null;
+  if (flId) {
+    if (!PLAYLIST_SETS[flId]) PLAYLIST_SETS[flId] = new Set();
+    rows.forEach(r => flTarget ? PLAYLIST_SETS[flId].add(r.p) : PLAYLIST_SETS[flId].delete(r.p));
+    PLAYLIST_ITEMS[flId] = [...PLAYLIST_SETS[flId]];
+    updateCards(); render();
+  }
+
   let musicErrors = 0;
   let cloudNotes = 0;
   const queue = rows.slice();
@@ -6447,11 +6481,14 @@ async function bulkApply(kind) {
           // Zielrichtung einheitlich fuer ALLE Ausgewaehlten (kein Toggle je
           // Zeile) -- sonst uneindeutig, was ein Klick bewirkt. flTarget ist
           // vor der Warteschlange bestimmt (siehe oben).
-          const listId = kind.slice(3);
-          if (!PLAYLIST_SETS[listId]) PLAYLIST_SETS[listId] = new Set();
-          flTarget ? PLAYLIST_SETS[listId].add(r.p) : PLAYLIST_SETS[listId].delete(r.p);
-          await playlistApi("/api/playlist-items",
-            {op: flTarget ? "add" : "remove", id: listId, paths: [r.p]});
+          // Schon oben angewendet -- bei einem Fehler wieder zuruecknehmen.
+          try {
+            await playlistApi("/api/playlist-items",
+              {op: flTarget ? "add" : "remove", id: flId, paths: [r.p]});
+          } catch (err) {
+            flTarget ? PLAYLIST_SETS[flId].delete(r.p) : PLAYLIST_SETS[flId].add(r.p);
+            throw err;
+          }
         } else if (kind === "correct") {
           r.mc = 1; r.ig = 0;
           await persistCorrected(r.p, true);
@@ -6484,7 +6521,7 @@ async function bulkApply(kind) {
   // Worker -- die Playlist-eigene Ansicht (playlistRows()) braucht sie, aber
   // ein Neuaufbau des Arrays bei jeder einzelnen Zeile waere bei grosser
   // Auswahl unnoetig teuer.
-  if (kind.startsWith("fl:")) PLAYLIST_ITEMS[kind.slice(3)] = [...(PLAYLIST_SETS[kind.slice(3)] || [])];
+  if (flId) PLAYLIST_ITEMS[flId] = [...(PLAYLIST_SETS[flId] || [])];
   // Merken raeumt die Auswahl bewusst nicht ab -- anders als die uebrigen
   // Sammelaktionen ist das Hinzufuegen zu einer Liste kein Abschluss der
   // Bearbeitung: derselbe Satz Tracks soll sich direkt danach noch einer
