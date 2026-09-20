@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.0.1] - 2026-09-20
+
+### Changed
+- Quick Fix „Cover ungewöhnlich groß": übergroße eingebettete Cover werden jetzt auf ca. 1000 px (längere Kante) statt 500 px verkleinert und neu als JPEG komprimiert. Die Erkennung (> 2 MB) bleibt unverändert.
+
 ## [1.0.0] - 2026-09-20
 
 Erste Ausgabe.

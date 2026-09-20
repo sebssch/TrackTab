@@ -427,7 +427,7 @@ const I18N_EN = {
   "confirm.fix_bulk_title": "Fix {count} files to their measured bitrate?",
   "confirm.fix_bulk_note": "Each file is re-encoded to its own measured class. Originals go to the trash.",
   "confirm.fix_tag_issues_bulk_title": "Fix the safely fixable issues on {count} files?",
-  "confirm.fix_tag_issues_bulk_note": "Control characters/whitespace are removed, the ID3 version raised if needed, genre codes resolved, duplicate tag frames merged, and oversized covers resized to about 500×500px and recompressed. Ambiguous cases (encoding, brackets, missing fields, missing/corrupt cover) are left unchanged.",
+  "confirm.fix_tag_issues_bulk_note": "Control characters/whitespace are removed, the ID3 version raised if needed, genre codes resolved, duplicate tag frames merged, and oversized covers resized to about 1000×1000px and recompressed. Ambiguous cases (encoding, brackets, missing fields, missing/corrupt cover) are left unchanged.",
   "confirm.encode_now": "Re-encode now",
   "confirm.declared_kbps": "declared <b>{kbps} kbps</b>",
   "confirm.rekordbox_quality_title_single": "Cutoff below the threshold — add anyway?",

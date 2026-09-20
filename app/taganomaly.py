@@ -64,9 +64,9 @@ MANUAL_ONLY = {MOJIBAKE, UNBALANCED_BRACKETS, TAG_EQUALS_FILENAME,
                MISSING_ARTIST, MISSING_COVER,
                CORRUPT_COVER, EXT_CODEC_MISMATCH}
 
-# Ueblich fuer eingebettete Cover (Streaming-Dienste/DJ-Software erwarten
-# selten mehr) -- laengere Kante, Seitenverhaeltnis bleibt erhalten.
-_COVER_MAX_SIDE = 500
+# Zielgroesse fuer uebergrosse eingebettete Cover -- laengere Kante,
+# Seitenverhaeltnis bleibt erhalten.
+_COVER_MAX_SIDE = 1000
 _COVER_JPEG_QUALITY = 85
 
 _STRING_FIELDS = ("artist", "title", "album", "album_artist", "composer",

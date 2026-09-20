@@ -443,7 +443,7 @@ const I18N_DE = {
   "confirm.fix_bulk_title": "{count} Dateien auf die gemessene Bitrate korrigieren?",
   "confirm.fix_bulk_note": "Jede Datei wird auf ihre eigene gemessene Klasse neu kodiert. Originale landen im Papierkorb.",
   "confirm.fix_tag_issues_bulk_title": "Bei {count} Dateien die sicher behebbaren Auffälligkeiten korrigieren?",
-  "confirm.fix_tag_issues_bulk_note": "Steuerzeichen/Leerraum werden entfernt, die ID3-Version ggf. angehoben, Genre-Codes aufgelöst, doppelte Tag-Frames zusammengeführt und übergroße Cover auf ca. 500×500px verkleinert und neu komprimiert. Uneindeutige Fälle (Encoding, Klammern, fehlende Felder, fehlendes/beschädigtes Cover) bleiben unverändert.",
+  "confirm.fix_tag_issues_bulk_note": "Steuerzeichen/Leerraum werden entfernt, die ID3-Version ggf. angehoben, Genre-Codes aufgelöst, doppelte Tag-Frames zusammengeführt und übergroße Cover auf ca. 1000×1000px verkleinert und neu komprimiert. Uneindeutige Fälle (Encoding, Klammern, fehlende Felder, fehlendes/beschädigtes Cover) bleiben unverändert.",
   "confirm.encode_now": "Jetzt neu kodieren",
   "confirm.declared_kbps": "deklariert <b>{kbps} kbps</b>",
   "confirm.rekordbox_quality_title_single": "Cutoff unter der Schwelle — trotzdem hinzufügen?",
