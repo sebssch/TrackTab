@@ -9437,6 +9437,14 @@ async function pollScan() {
 
   if (s.error) { scanLine(esc(t("scan.failed", {error: s.error})), true); return; }
   if (s.finished) {
+    // Der Server haelt das Ergebnis bis zum naechsten Scan vor. Ohne diese
+    // Merkung zeichnet jedes Neuladen (auch ueber "Seite neu laden") dieselbe
+    // Meldung samt Link sofort wieder.
+    const seenKey = "tracktab.scanSeen";
+    let seen = null;
+    try { seen = sessionStorage.getItem(seenKey); } catch (_) { /* ohne Storage: Meldung zeigen */ }
+    if (seen !== null && seen === String(s.started)) return;
+    try { sessionStorage.setItem(seenKey, String(s.started)); } catch (_) { /* egal */ }
     const f = s.finished;
     scanLine(`${esc(f.cancelled ? t("scan.cancelled_after") : t("scan.finished"))} ` +
       `${esc(t("scan.progress_of", {done: f.done.toLocaleString("de-DE"), total: f.todo.toLocaleString("de-DE")}))}` +
