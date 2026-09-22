@@ -40,6 +40,8 @@ Diese Variante erzeugt eine doppelklickbare App, mit der du TrackTab danach komp
 
 Das Bundle ist nicht signiert. Auf einem fremden Mac hilft beim allerersten Start ein Rechtsklick auf die App → *Öffnen*, statt sie einfach zu doppelklicken.
 
+Ein eigener Build nutzt einen eigenen Datenordner (`TrackTab-Build` statt `TrackTab` unter `~/Library/Application Support/`) und einen eigenen Port-Bereich — auch wenn er über die Verknüpfung in `/Applications` gestartet wird. Er läuft also unabhängig von und gleichzeitig zu einer per .dmg installierten Version (siehe oben), mit eigener, zunächst leerer Bibliothek.
+
 **Beenden:** über den Button **Beenden** in der Oberfläche, per `Cmd+Q` oder per Rechtsklick auf das Dock-Symbol → *Beenden*. Nur das Browser-Fenster zu schließen beendet die App **nicht** — sie läuft dann im Hintergrund weiter (erkennbar am Dock-Symbol) und ein Scan wird dadurch nicht unterbrochen.
 
 Nach einer neuen Version des Quellcodes einfach `./build_app.sh` erneut ausführen — die App erkennt eine geänderte Oberfläche automatisch und aktualisiert sich beim nächsten Start selbst.

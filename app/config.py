@@ -25,6 +25,13 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).parent.parent
 APP_NAME = "TrackTab"
+# Eigener Datenordner fuer ein .app-Bundle, das noch nicht nach /Applications
+# verschoben wurde (z.B. dist/TrackTab.app aus build_app.sh, direkt geoeffnet
+# zum Testen) -- sonst wuerden Scans/Tag-Aenderungen/Bitrate-Korrekturen einer
+# Testversion die echte Bibliotheksdatenbank der installierten App treffen.
+# Beide Varianten bleiben dasselbe Bundle (gleiche bundle_identifier, siehe
+# tracktab.spec), nur der beschreibbare Ort unterscheidet sich.
+_BUILD_APP_NAME = "TrackTab-Build"
 _OLD_APP_NAMES = ("TrackLab", "Audio Quality Check", "MP3 Quality Check")
 
 # Dateiendungen, die "extensions" annehmen darf (settings.validate()) und die
@@ -54,14 +61,31 @@ def bundle_dir() -> Path:
     return PROJECT_ROOT
 
 
+def is_installed_location() -> bool:
+    """Laeuft dieses Bundle aus /Applications (oder ~/Applications)?
+
+    Nur im gepackten Betrieb aussagekraeftig -- im Quellbaum zeigt
+    sys.executable auf den venv-Python, nicht auf ein .app-Bundle.
+    """
+    try:
+        exe = Path(sys.executable).resolve()
+    except OSError:
+        return True
+    installed_roots = (Path("/Applications"), Path.home() / "Applications")
+    return any(root in exe.parents for root in installed_roots)
+
+
 def base_dir() -> Path:
     """Beschreibbarer Ort fuer Datenbank, Reports und lokale Konfiguration."""
     if is_frozen():
-        target = Path.home() / "Library" / "Application Support" / APP_NAME
+        installed = is_installed_location()
+        name = APP_NAME if installed else _BUILD_APP_NAME
+        target = Path.home() / "Library" / "Application Support" / name
         if not target.exists():
             # Umbenennung: die Daten unter dem alten Namen weiterverwenden statt
-            # mit leerer Datenbank neu anzufangen.
-            for old_name in _OLD_APP_NAMES:
+            # mit leerer Datenbank neu anzufangen. Gilt nur fuer die installierte
+            # App -- eine Build-Kopie startet immer mit einer leeren Datenbank.
+            for old_name in (_OLD_APP_NAMES if installed else ()):
                 old = Path.home() / "Library" / "Application Support" / old_name
                 if old.is_dir():
                     old.rename(target)

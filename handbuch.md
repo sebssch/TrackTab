@@ -56,7 +56,7 @@ Andere Dokumente:
 
 ## Betriebsarten
 
-Es gibt drei Wege, TrackTab zu benutzen. Die fertige App und ein eigener Build teilen sich denselben Datenordner (`~/Library/Application Support/TrackTab/`) und damit dieselbe Bibliothek und Einstellungen. Der Terminal-Betrieb direkt aus dem Quellcode legt seine Datenbank und Einstellungen dagegen im Projektordner selbst ab — er läuft also mit einem eigenen, getrennten Stand.
+Es gibt drei Wege, TrackTab zu benutzen. Die fertige App (Installation über eine .dmg-Datei) nutzt den Datenordner `~/Library/Application Support/TrackTab/`. Ein eigener App-Build legt automatisch einen eigenen, getrennten Datenordner (`TrackTab-Build`) an und läuft auch auf einem anderen Port — egal ob du ihn direkt aus `dist/` öffnest oder über die von `build_app.sh` angelegte Verknüpfung in Programme startest. So kannst du beide Versionen gleichzeitig offen haben (z. B. eine feste Version für deine echte Bibliothek und eine zum Testen neuer Änderungen), ohne dass sie sich Daten oder Port teilen. Der Terminal-Betrieb direkt aus dem Quellcode legt seine Datenbank und Einstellungen dagegen im Projektordner selbst ab — er läuft also ebenfalls mit einem eigenen, getrennten Stand.
 
 ### 1. Fertige App (Installation über eine .dmg-Datei)
 

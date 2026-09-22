@@ -27,7 +27,18 @@ from . import media
 from . import report as report_mod
 
 _FIRST_PORT = 8756
+# Eigener Portbereich fuer ein .app-Bundle, das noch nicht nach /Applications
+# verschoben wurde (z.B. dist/TrackTab.app aus build_app.sh) -- sonst haelt
+# _existing_instance() eine parallel laufende installierte Version faelschlich
+# fuer sich selbst und oeffnet nur deren Fenster, statt einen eigenen Server
+# zu starten. cfgmod.is_installed_location() entscheidet auch, welchen
+# Application-Support-Ordner base_dir() dafuer verwendet (eigene Datenbank).
+_BUILD_FIRST_PORT = 8790
 _PORT_TRIES = 20
+
+
+def _default_first_port() -> int:
+    return _FIRST_PORT if cfgmod.is_installed_location() else _BUILD_FIRST_PORT
 
 
 def dialog(text: str, title: str = "TrackTab", stop: bool = True,
@@ -165,7 +176,8 @@ def main() -> int:
     # Zweitstart zuerst abfangen: laeuft die App schon, ist alles Weitere
     # (ffmpeg-Pruefung, Report anlegen, Port suchen) ueberfluessig -- dann
     # nur die vorhandene Oberflaeche wieder nach vorn holen.
-    running = _existing_instance()
+    first_port = _default_first_port()
+    running = _existing_instance(first_port)
     if running is not None:
         if os.environ.get("MP3QC_NO_BROWSER", "") != "1":
             url = f"http://127.0.0.1:{running}/report.html"
@@ -193,10 +205,10 @@ def main() -> int:
         finally:
             conn.close()
 
-    port = _free_port()
+    port = _free_port(first_port)
     if port is None:
-        dialog(f"Kein freier Port zwischen {_FIRST_PORT} und "
-               f"{_FIRST_PORT + _PORT_TRIES}. Läuft die App bereits?")
+        dialog(f"Kein freier Port zwischen {first_port} und "
+               f"{first_port + _PORT_TRIES}. Läuft die App bereits?")
         return 1
 
     from . import macapp

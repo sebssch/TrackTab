@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.2.0] - 2026-09-22
+
+### Added
+- Ein eigener App-Build (`dist/TrackTab.app`, auch über die von `build_app.sh` angelegte Verknüpfung in `/Applications`) nutzt jetzt einen eigenen Datenordner (`TrackTab-Build`) und einen eigenen Portbereich statt sich mit einer per .dmg installierten Version Datenbank, Einstellungen und Port zu teilen — beide Varianten können jetzt gleichzeitig laufen, ohne sich gegenseitig zu beeinflussen.
+
 ## [1.1.0] - 2026-09-22
 
 ### Added
