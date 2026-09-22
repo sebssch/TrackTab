@@ -63,6 +63,19 @@ function applyStaticI18n() {
 }
 document.addEventListener("DOMContentLoaded", applyStaticI18n);
 
+// PWA-Installierbarkeit (sw.js). "load" statt "DOMContentLoaded": die
+// Registrierung braucht kein DOM-Element und soll nicht mit dem initialen
+// Rendern eines ggf. grossen eingebetteten Datensatzes konkurrieren.
+// .catch() ist Pflicht, kein Kosmetikzusatz: wird report.html ohne Server
+// direkt als file:// geoeffnet (siehe Fallback in initStorage()), scheitert
+// register() (file:// ist kein gueltiger SW-Scope) -- das darf den
+// bestehenden No-Server-Modus nicht stoeren.
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  });
+}
+
 // #toTopBtn steht wie die obigen Ueberlagerungen im HTML nach diesem
 // <script>-Block -- Zuweisung deshalb ebenfalls erst bei DOMContentLoaded.
 document.addEventListener("DOMContentLoaded", () => {

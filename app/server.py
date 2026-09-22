@@ -49,6 +49,7 @@ from . import db as db_mod
 from . import jobs
 from . import lookup as lookup_mod
 from . import media
+from . import pwa as pwa_mod
 from . import rekordbox as rekordbox_mod
 from . import report as report_mod
 from . import rewrite as rewrite_mod
@@ -107,12 +108,17 @@ def _split_hostport(raw: str | None, default_port: int) -> tuple[str, int]:
     return host.lower(), int(port)
 
 # Inhaltsrichtlinie fuer jede Antwort, siehe _Handler._security_headers().
+# manifest-src/worker-src explizit noetig fuer /manifest.json bzw. /sw.js
+# (PWA-Installierbarkeit, siehe pwa.py) -- ohne eigene Angabe fallen beide auf
+# default-src 'none' zurueck und der Browser verweigert Manifest-Fetch bzw.
+# Service-Worker-Registrierung stillschweigend.
 _CSP = ("default-src 'none'; "
         "img-src 'self' data: blob: https:; "
         "media-src 'self' blob:; "
         "style-src 'self' 'unsafe-inline'; "
         "script-src 'self' 'unsafe-inline'; "
         "connect-src 'self'; "
+        "manifest-src 'self'; worker-src 'self'; "
         "base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 
 # Erlaubte Cover-Bildtypen. Der MIME-Typ eines eingebetteten Covers ist freier
@@ -162,7 +168,7 @@ _CHUNK = 256 * 1024
 # Ersparnis bringt.
 _GZIP_MIN_BYTES = 32 * 1024
 _GZIP_TYPES = ("text/", "application/json", "application/javascript",
-               "image/svg+xml", "application/xml")
+               "image/svg+xml", "application/xml", "application/manifest+json")
 # Stufe 6 ist die zlib-Vorgabe. Am Report gemessen: Stufe 6 braucht 189 ms und
 # liefert 20 %, Stufe 1 ist deutlich schneller bei kaum schlechterer Quote --
 # und diese Antworten entstehen waehrend der Nutzer wartet, nicht im Voraus.
@@ -988,6 +994,16 @@ class _Handler(BaseHTTPRequestHandler):
 
         if route in ("/", "/report.html", "/index.html"):
             self._serve_report()
+        elif route == "/manifest.json":
+            self._get_manifest()
+        elif route == "/sw.js":
+            self._get_service_worker()
+        elif route == "/icon-192.png":
+            self._send(200, pwa_mod.ICON_192_PNG, "image/png")
+        elif route == "/icon-512.png":
+            self._send(200, pwa_mod.ICON_512_PNG, "image/png")
+        elif route == "/apple-touch-icon.png":
+            self._send(200, pwa_mod.ICON_APPLE_TOUCH_PNG, "image/png")
         elif route == "/api/ping":
             tools_ok, tools_msg = media.available()
             self._json({"ok": True, "version": "2.0",
@@ -1397,6 +1413,25 @@ class _Handler(BaseHTTPRequestHandler):
             return
         # Symbole aendern sich praktisch nie — der Browser darf sie behalten
         self._send(200, png, "image/png", {"Cache-Control": "max-age=86400"})
+
+    # ── PWA: Installierbarkeit ───────────────────────────────────────────
+    def _get_manifest(self) -> None:
+        """Web-App-Manifest, siehe pwa.py. Kein Cache-Control-Override --
+        aendert sich genau dann, wenn TrackTab selbst aktualisiert wird, eine
+        veraltete Kopie nach einem In-Place-Update waere schlechter als der
+        vernachlaessigbare Mehraufwand eines Neu-Fetches."""
+        self._send(200, pwa_mod.MANIFEST_JSON, "application/manifest+json; charset=utf-8")
+
+    def _get_service_worker(self) -> None:
+        """Service Worker fuer die PWA-Installation, siehe app/webui/sw.js.
+        Anders als /manifest.json (in Python generiert) frisch von der Platte
+        gelesen -- reine Textdatei, kein Grund fuer eine eigene Konstante."""
+        try:
+            body = (cfgmod.webui_dir() / "sw.js").read_bytes()
+        except OSError:
+            self._send(404, "sw.js fehlt.".encode("utf-8"), "text/plain; charset=utf-8")
+            return
+        self._send(200, body, "application/javascript; charset=utf-8")
 
     # ── Audio-Streaming mit Range ─────────────────────────────────────────
     def _get_audio(self) -> None:

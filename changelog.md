@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.1.0] - 2026-09-22
+
+### Added
+- TrackTab laesst sich jetzt als eigene App installieren (Progressive Web App): ueber das Installiersymbol in der Adressleiste (Chrome/Edge) oder „Zum Dock hinzufuegen" (Safari) oeffnet sich die Oberflaeche danach in einem eigenen Fenster ohne Browser-Tabs/Adressleiste statt in einem normalen Tab. Der lokale Server muss dafuer weiterhin laufen.
+
 ## [1.0.3] - 2026-09-20
 
 ### Fixed

@@ -18,6 +18,7 @@ Andere Dokumente:
   - [1. Fertige App (Installation über eine .dmg-Datei)](#1-fertige-app-installation-über-eine-dmg-datei)
   - [2. Eigener App-Build](#2-eigener-app-build)
   - [3. Nutzung über das Terminal](#3-nutzung-über-das-terminal)
+- [Als eigene App installieren](#als-eigene-app-installieren)
 - [Die Web-Oberfläche](#die-web-oberfläche)
   - [Ansichten: Bearbeiten und Player](#ansichten-bearbeiten-und-player)
 - [Einstellungen](#einstellungen)
@@ -68,6 +69,20 @@ Du baust dir aus dem Quellcode eine eigene, doppelklickbare App — danach brauc
 ### 3. Nutzung über das Terminal
 
 Du startest TrackTab direkt per Befehl im Terminal. Das ist der schnellste Weg für den Einstieg und eignet sich auch, wenn du einzelne Schritte (nur scannen, nur den Report neu erzeugen, …) gezielt einzeln ausführen willst. Voraussetzungen und alle Befehle: [installation.md](installation.md#3-ausführung--betrieb-über-das-terminal).
+
+---
+
+## Als eigene App installieren
+
+Egal auf welchem der drei Wege du TrackTab startest: Die Oberfläche öffnet sich zunächst als normaler Tab in deinem Browser. Du kannst sie zusätzlich als eigenständige App installieren — sie läuft dann in einem eigenen Fenster ohne Adressleiste und Tabs, mit eigenem Symbol im Dock, genau wie eine normal installierte App.
+
+- **Chrome / Edge:** Klicke auf das Installieren-Symbol in der Adressleiste (rechts neben der URL) und bestätige.
+- **Safari (macOS Sonoma oder neuer):** Menü *Ablage → Zum Dock hinzufügen…*.
+
+Die Installation ist ein einmaliger Schritt. Danach öffnest du TrackTab künftig über das neue Dock-Symbol statt über den Browser.
+
+> [!important]
+> Auch die installierte App braucht weiterhin den laufenden lokalen Server im Hintergrund (siehe [Betriebsarten](#betriebsarten)) — sie zeigt sonst nur eine Meldung, dass TrackTab nicht erreichbar ist.
 
 ---
 

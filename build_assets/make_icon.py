@@ -22,10 +22,18 @@ Geschrieben werden:
 
     app/webui/index.html            Favicon + Kopfzeilen-Symbol werden
                                     darin als data:-URI ersetzt
+    app/pwa.py                      PWA-Icons (180/192/512 px) werden darin
+                                    als reines Base64 ersetzt (ausgeliefert
+                                    als echte Bilddatei, nicht als data:-URI
+                                    -- Safari ignoriert data:-URI-Icons in
+                                    Manifest/apple-touch-icon unzuverlaessig)
+                                    -- aus der gepolsterten App-Zeichnung,
+                                    nicht der randlosen Favicon-Fassung
 
 Nach dem Lauf `./run.command report` ausfuehren: der Server liefert
 data/report.html aus, nicht app/webui/ -- ohne den Neubau zeigt die
-Oberflaeche weiter das alte Symbol.
+Oberflaeche weiter das alte Symbol. Das PWA-Manifest (app/pwa.py) braucht das
+NICHT -- es wird live ausgeliefert, ein Serverneustart reicht.
 """
 import base64
 import math
@@ -33,6 +41,7 @@ import re
 import pathlib
 import subprocess
 import sys
+from io import BytesIO
 
 import numpy as np
 from PIL import Image, ImageChops, ImageDraw, ImageFilter
@@ -181,6 +190,29 @@ def patch_index_html(uri_128, uri_32):
     path.write_text(html, encoding="utf-8")
 
 
+def patch_pwa_module(b64_192, b64_512, b64_apple_touch):
+    """Tauscht die drei Icon-Konstanten in app/pwa.py aus.
+
+    Reines Base64 ohne "data:image/png;base64,"-Praefix -- die drei Icons
+    werden dort als echte Bilddateien ausgeliefert (server.py), nicht als
+    data:-URI. Gleiches Prinzip wie patch_index_html(): ueber den
+    Variablennamen ansteuern, Treffer-Anzahl pruefen statt stillschweigend
+    nichts zu ersetzen.
+    """
+    path = ROOT / "app" / "pwa.py"
+    src = path.read_text(encoding="utf-8")
+    patterns = (
+        (r'(_ICON_192_B64 = ")[^"]*(")', "PWA-Icon 192", b64_192),
+        (r'(_ICON_512_B64 = ")[^"]*(")', "PWA-Icon 512", b64_512),
+        (r'(_ICON_APPLE_TOUCH_B64 = ")[^"]*(")', "Apple-Touch-Icon 180", b64_apple_touch),
+    )
+    for pattern, label, uri in patterns:
+        src, hits = re.subn(pattern, lambda m: m.group(1) + uri + m.group(2), src)
+        if hits != 1:
+            raise SystemExit(f"FEHLER: {label} in pwa.py {hits}x gefunden, erwartet 1x")
+    path.write_text(src, encoding="utf-8")
+
+
 def main():
     ASSETS.mkdir(exist_ok=True)
     DOCS.mkdir(exist_ok=True)
@@ -222,9 +254,25 @@ def main():
     # lesbar), fuer Lesezeichen und Retina die 128er.
     patch_index_html(as_uri(fav), as_uri(fav32))
 
+    # PWA-Icons: aus der gepolsterten App-Zeichnung (wie appicon.icns), nicht
+    # der randlosen flat-Fassung -- eine installierte PWA bekommt auf macOS
+    # ein eigenes Dock-Icon, soll also wie das App-Symbol aussehen. 180 px ist
+    # Apples Standardgroesse fuer apple-touch-icon.
+    icon_192 = scaled(app_icon, 192)
+    icon_512 = scaled(app_icon, 512)
+    icon_apple_touch = scaled(app_icon, 180)
+
+    def png_b64(img):
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("ascii")
+
+    patch_pwa_module(png_b64(icon_192), png_b64(icon_512), png_b64(icon_apple_touch))
+
     print(f"appicon.icns        {icns.stat().st_size // 1024} KB")
     print(f"docs/app-icon.png   256 px")
     print(f"favicon 32/128 px   in index.html eingesetzt")
+    print(f"PWA-Icons 180/192/512 in app/pwa.py eingesetzt")
     print("\nJetzt `./run.command report` laufen lassen.")
     return 0
 

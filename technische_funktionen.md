@@ -994,13 +994,16 @@ Die Freigabe eines Pfades hängt daran, dass er als Zeile in der Datenbank steht
 
 #### Antwort-Header (`_security_headers()`)
 
-Hängt an jeder Antwort, auch an den von Hand gebauten (Audio-Range-Streaming, ZIP-Bündel): `X-Content-Type-Options: nosniff` (der MIME-Typ eines Covers ist freier Text aus der Datei), `X-Frame-Options: DENY` und `frame-ancestors 'none'` (die Oberfläche hat Knöpfe, die Dateien in den Papierkorb legen — eingebettet wären die per Clickjacking bedienbar), `Referrer-Policy: no-referrer` sowie eine CSP mit `default-src 'none'`. `'unsafe-inline'` für Skript und Stil bleibt nötig, weil CSS und JS bewusst in die eine Report-Datei eingebettet sind; `img-src` erlaubt zusätzlich `https:` für die Cover-Vorschauen der Online-Suche und `blob:` für die Vorschau eines noch nicht gespeicherten Covers.
+Hängt an jeder Antwort, auch an den von Hand gebauten (Audio-Range-Streaming, ZIP-Bündel): `X-Content-Type-Options: nosniff` (der MIME-Typ eines Covers ist freier Text aus der Datei), `X-Frame-Options: DENY` und `frame-ancestors 'none'` (die Oberfläche hat Knöpfe, die Dateien in den Papierkorb legen — eingebettet wären die per Clickjacking bedienbar), `Referrer-Policy: no-referrer` sowie eine CSP mit `default-src 'none'`. `'unsafe-inline'` für Skript und Stil bleibt nötig, weil CSS und JS bewusst in die eine Report-Datei eingebettet sind; `img-src` erlaubt zusätzlich `https:` für die Cover-Vorschauen der Online-Suche und `blob:` für die Vorschau eines noch nicht gespeicherten Covers. `manifest-src 'self'` und `worker-src 'self'` sind fuer die PWA-Installierbarkeit noetig (siehe [PWA / Installierbarkeit — Interna](#pwa--installierbarkeit--interna)) — ohne eigene Angabe fallen beide Ressourcentypen auf `default-src 'none'` zurueck und der Browser verweigert Manifest-Fetch bzw. Service-Worker-Registrierung, ohne dass das im UI sichtbar würde.
 
 **GET-Routen:**
 
 | Pfad | Zweck |
 |---|---|
 | `/`, `/report.html`, `/index.html` | liefert die vorgebaute `data/report.html` aus — **nicht** `app/webui/` direkt |
+| `/manifest.json` | Web-App-Manifest fuer PWA-Installierbarkeit, live aus `app/pwa.py` gebaut (nicht in `data/report.html` eingebacken) — siehe [PWA / Installierbarkeit — Interna](#pwa--installierbarkeit--interna) |
+| `/sw.js` | Service Worker, frisch von `app/webui/sw.js` gelesen |
+| `/icon-192.png`, `/icon-512.png`, `/apple-touch-icon.png` | PWA-Icons als echte Bilddateien aus `app/pwa.py` (nicht als data:-URI im Manifest) |
 | `/api/ping` | Health-Check, prüft `media.available()` |
 | `/api/check-update` | Manuell angestoßene Update-Prüfung (Link im Einstellungen-Fuß) gegen `lookup.check_update()` — vergleicht `__version__` mit dem neuesten GitHub-Release von `sebssch/TrackTab`. Liefert `{reachable: false}`, wenn das Repo (noch) nicht öffentlich erreichbar ist oder es keinen Release gibt — kein Fehlerfall, derselbe stille Fallback wie bei den Online-Metadatenquellen |
 | `/api/ignored` / `/api/corrected` | Liste der jeweiligen Pfade |
@@ -1076,6 +1079,22 @@ Die fünf reinen Ausliefer-Endpunkte (`/api/audio`, `/api/cover`, `/api/waveform
 - **`/api/cover`** schickt `ETag` + `Cache-Control: private, max-age=604800`. Das ist gefahrlos, weil der Client bei jeder eigenen Cover-Änderung ohnehin ein neues `&v=<rev>` an die URL hängt (siehe `bumpCoverRev()`). Vorher stand dort `no-store`: jede Neuzeichnung der Tabelle und jeder Trackwechsel holte damit jedes Bild erneut, und serverseitig hieß das jedes Mal die komplette Datei durch mutagen parsen.
 - **`_send()`** setzt `no-store` nur noch als **Vorgabe**: ein eigener `Cache-Control`-Wert in `extra` ersetzt sie. Zwei Header gleichen Namens fasst der Browser zu einer Liste zusammen, in der `no-store` immer gewinnt — das eigene `max-age` blieb dadurch wirkungslos (betraf bisher schon `/api/appicon`).
 - **`/api/waveform`** teilt gleichzeitige Anfragen für denselben Pfad auf **einen** ffmpeg-Lauf auf (`_waveform_shared()` mit `threading.Event`). Vorher startete jede gleichzeitig aufgeklappte Zeile ihren eigenen Unterprozess, der die Datei komplett nach f32 dekodiert (bei 8 kHz mono rund 10 MB je 5-Minuten-Track, vollständig im Speicher). Der dauerhafte Speicher bleibt der DB-Cache (`db.waveform_put`).
+
+### PWA / Installierbarkeit — Interna
+
+`/manifest.json` und `/sw.js` machen die Oberflaeche installierbar (Chrome/Edge-Installiersymbol, Safaris „Zum Dock hinzufuegen") — danach laeuft sie in einem eigenen Fenster ohne Tabs/Adresszeile statt in einem Browser-Tab. Weder die gebaute `.app` noch `./run.command serve` boten das vorher: `app/macapp.py`s `NSApplication`-Huelle ist reine Lifecycle-Plumbing (Cmd+Q/Dock-Quit), kein `NSWindow`/`WKWebView` — beide Wege oeffneten schon immer nur den System-Browser via `media.open_url()`.
+
+**CSP-Voraussetzung:** `manifest-src 'self'; worker-src 'self'` in `_CSP` (`server.py`) ist zwingend, siehe [Antwort-Header](#antwort-header-_security_headers). Ohne diese beiden Direktiven faellt der Browser auf `default-src 'none'` zurueck und verweigert Manifest-Fetch bzw. Service-Worker-Registrierung — das ganze Feature waere wirkungslos, ohne dass irgendwo ein Fehler im UI sichtbar wuerde.
+
+**Icons:** `app/pwa.py` haelt drei base64-PNGs (180/192/512 px), generiert von `build_assets/make_icon.py::patch_pwa_module()` aus der gepolsterten App-Zeichnung (wie `appicon.icns`), **nicht** der randlosen `flat`-Fassung, die fuer die Favicons in `index.html` verwendet wird — eine installierte PWA bekommt auf macOS ein eigenes Dock-Icon und soll wie das App-Symbol aussehen. `build_assets/` selbst ist im gebuendelten Bundle zur Laufzeit nicht verfuegbar (`config.bundle_dir()` deckt nur `app/webui`, `config.yaml`, `vendor/` ab), deshalb die base64-Konstanten als versionierter Python-Quellcode statt eines Laufzeit-Dateizugriffs.
+
+Anders als die Favicons in `index.html` haengen diese drei Icons **nicht** als data:-URI im Manifest bzw. im `apple-touch-icon`-Link, sondern werden ueber echte Bild-Routen ausgeliefert (`/icon-192.png`, `/icon-512.png`, `/apple-touch-icon.png` — `server.py`, direkt aus `pwa_mod.ICON_*_PNG`). Grund: Safaris „Zum Dock hinzufuegen" ignoriert data:-URI-Icons sowohl im Manifest als auch in `apple-touch-icon` nachweislich unzuverlaessig und faellt sonst auf ein generisches Buchstaben-Icon zurueck ([Apple Developer Forum](https://developer.apple.com/forums/thread/738535); [Bericht zu favicon.ico-Fallback](https://coywolf.com/guides/how-to-create-pwa-icons-that-look-correct-on-all-platforms-and-devices/)). `<link rel="apple-touch-icon">` (`index.html`) ist zusaetzlich zum Manifest gesetzt, weil es laut Apple-Dokumentation Vorrang vor den Manifest-Icons hat — die dokumentierte Prioritaet ist apple-touch-icon > Manifest-Icons > `favicon.ico`.
+
+**Kein echtes Offline-Caching:** TrackTab haengt fuer alles (Datenbank, ffmpeg/ffprobe, AppleScript-Automation, Audio-Streaming) am laufenden lokalen Server — eine gecachte Kopie waere immer veraltet. `app/webui/sw.js` nutzt deshalb bewusst nirgends `caches.match()`/`caches.put()`. Der einzige `fetch`-Handler faengt Seitenaufrufe (`mode === "navigate"`) bei einem Verbindungsfehler ab und zeigt eine kurze eingebettete „Server nicht erreichbar"-Seite statt der nackten Browser-Fehlermeldung — reine Fehlerbehandlung fuer den wahrscheinlichsten Fehlerfall (Dock-Icon angeklickt, bevor der Server laeuft), kein Offline-Modus. Alles andere (`/api/*`, Audio-Streaming, Waveform, Cover) reicht der Handler unveraendert durch.
+
+**Zwei bewusste Ausnahmen von der i18n-Pflicht** (siehe CLAUDE.md „Sprache & Konventionen"): `name`/`short_name` im Manifest sind OS-Chrome (Dock-Tooltip, Installations-Dialog), werden serverseitig in `app/pwa.py` erzeugt und beruehren nie `app.js`s `t()`/`data-i18n` — behandelt wie das bestehende `<title>TrackTab</title>` und `CFBundleDisplayName` (`tracktab.spec`), ein fixer, sprachunabhaengiger Produktname. Der „Server nicht erreichbar"-Text in `sw.js` laeuft in einem eigenen Kontext ohne Zugriff auf `I18N_DE`/`I18N_EN` — ein kurzer zweisprachiger Text direkt in der Datei ersetzt hier die i18n-Pipeline.
+
+`app/webui/sw.js` ist bewusst **nicht** Teil von `_UI_FILES` (`report.py`) — ein Service Worker kann nicht in die Single-File-`report.html` eingebettet werden, er braucht eine eigene, erreichbare URL. Aenderungen an `sw.js` brauchen deshalb anders als am uebrigen `app/webui/` **keinen** `./run.command report`-Neubau, nur einen Serverneustart — dasselbe gilt fuer `/manifest.json`, das live aus `app/pwa.py` erzeugt wird.
 
 ### Verbindungsaufbau: `_setup_once` & WAL
 
@@ -1410,6 +1429,10 @@ SQLite-Persistenzschicht: Schema, Migrationen, Cache-Lookups, Speichern, sowie d
 
 Siehe [Server — Endpunktreferenz](#server--endpunktreferenz) weiter oben für alle GET-/POST-Routen und Sicherheitsgates.
 
+#### `app/pwa.py`
+
+Web-App-Manifest fuer die PWA-Installierbarkeit (`MANIFEST_JSON`, einmal beim Import gebaut, ausgeliefert unter `/manifest.json`) plus drei rohe Icon-PNGs (`ICON_192_PNG`/`ICON_512_PNG`/`ICON_APPLE_TOUCH_PNG`, ausgeliefert als echte Bilddateien unter `/icon-192.png`/`/icon-512.png`/`/apple-touch-icon.png` — bewusst keine data:-URIs, siehe unten). Icon-Konstanten werden von `build_assets/make_icon.py::patch_pwa_module()` ersetzt. Siehe [PWA / Installierbarkeit — Interna](#pwa--installierbarkeit--interna).
+
 #### `app/report.py`
 
 Erzeugt HTML/CSV/M3U aus DB-Zeilen.
@@ -1667,6 +1690,8 @@ Vier Quelldateien, von `report._template()` per reiner String-Ersetzung (kein Bu
 | `app.js` | Gesamte Client-Logik: Tabellen-Rendering/Sortierung/Filter, Wellenform je Bibliothekszeile (Bearbeiten-Ansicht, `waveViews`) + eigenstaendiger Einzelpruefungs-Player (`players`), globaler Mediaplayer + Warteschlange (`queueState`, beide Ansichten, siehe [Der globale Mediaplayer — Interna](#der-globale-mediaplayer--interna)), Einstellungen-Rendering (konsumiert das `GROUPS`-Schema), Drag-&-Drop, `localStorage`-Fallback ohne Server, Shop-Suchtext-Aufbereitung (DJ-Pool-Zusatz-Entfernung), Scan-Steuerung, Übersetzungen (`t()`/`resolveLang()`, siehe Einstellung `ui_language`), Fortschritts-Toasts (`progressToast()`, u. a. bei „Dateien öffnen", Sammel-Neuanalyse, Rekordbox-/Music-Abgleich) |
 
 Nicht im Detail dokumentiert (JS/CSS-Interna außerhalb des Scopes dieses Dokuments) — wer den `localStorage`-Fallback oder die Shop-Suchtext-Logik ändern will, muss direkt in `app.js` nachsehen, dort existiert keine Python-Entsprechung.
+
+`app/webui/sw.js` (Service Worker fuer PWA-Installierbarkeit) gehoert bewusst **nicht** zu den obigen Quelldateien — es wird unter `/sw.js` live von der Platte gelesen statt in die Single-File-`report.html` eingebettet. Siehe [PWA / Installierbarkeit — Interna](#pwa--installierbarkeit--interna).
 
 ---
 

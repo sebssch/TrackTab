@@ -1,3 +1,3 @@
 """TrackTab — erkennt hochgerechnete Bitraten per Spektralanalyse."""
 
-__version__ = "1.0.3"
+__version__ = "1.1.0"
