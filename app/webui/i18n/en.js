@@ -745,8 +745,6 @@ const I18N_EN = {
 
   // ── Quit ────────────────────────────────────────────────────────────────
   "quit.button": "Quit",
-  "quit.done_title": "TrackTab has quit.",
-  "quit.done_note": "This tab can be closed.",
   "quit.confirm_scan_running": "A scan is still running. Quitting will cancel it.\nFiles already measured stay saved, the rest is picked up on the next scan.\n\nQuit anyway?",
   "quit.failed": "Quit failed: {error}",
 

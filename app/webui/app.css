@@ -835,12 +835,6 @@ button.act.warn-orange:hover { background:var(--dc-orange-bg); }
 /* ── Werkzeugleiste, Einstellungen, Scan ────────────────────────────── */
 .toolbar { display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px; }
 #scanLine { color:var(--dim); font-size:13px; display:flex; align-items:center; gap:10px; }
-/* Ganzflaechiger Hinweis nach dem Beenden: die Seite dahinter ist tot, ihre
-   Knoepfe wuerden ins Leere laufen. */
-#quitveil { position:fixed; inset:0; z-index:9999; display:flex;
-            align-items:center; justify-content:center; text-align:center;
-            background:var(--bg); color:var(--dim); font-size:15px;
-            line-height:1.6; padding:24px; }
 #scanLine.warn { color:var(--susp); }
 .bar { display:inline-block; width:140px; height:7px; border-radius:4px;
        background:var(--line); overflow:hidden; }

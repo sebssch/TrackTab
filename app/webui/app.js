@@ -13285,19 +13285,40 @@ async function quitServer(force) {
   return res.json();
 }
 
-// Die Seite bleibt nach dem Beenden stehen, aber jeder Knopf darauf liefe
-// jetzt ins Leere. Der Schleier sagt das und deckt sie zu. window.close()
-// waere schoener, greift aber nur bei Tabs, die ein Skript geoeffnet hat --
-// diesen hier hat der Server aufgemacht.
-function showQuitVeil() {
+// Nach erfolgreichem /api/quit lebt der Server serverseitig noch bis zu
+// ~0.9s weiter (siehe app/server.py: request_stop() wartet 0.4s in einem
+// eigenen Thread, bevor httpd.shutdown() laeuft, serve_forever()s eigener
+// Poll-Takt braucht danach nochmal bis zu 0.5s, um das zu bemerken -- erst
+// dann schliesst serve()s finally-Block mit httpd.server_close() den
+// Socket wirklich). Ein sofortiges location.reload() traefe also fast
+// immer noch den lebenden Server und zeigte kurz die gewohnte Oberflaeche
+// statt in die Offline-Seite des Service Workers (app/webui/sw.js) zu
+// laufen -- die zeigt seit dieser Aenderung auch das Ziel nach einem
+// bewussten Beenden, ein eigener "TrackTab ist beendet"-Bildschirm
+// existiert bewusst nicht mehr.
+//
+// Deshalb aktiv auf das tatsaechliche Ende warten: ein kurz getakteter
+// Poll gegen /api/ping, der auf den ERSTEN FEHLSCHLAG wartet -- die
+// Kehrseite des Polls auf der Offline-Seite selbst (sw.js), der auf den
+// ersten ERFOLG wartet. Ein fester setTimeout waere keine sichere Wahl:
+// die 0.4-0.9s sind eine dokumentierte UNTERGRENZE, kein Vertrag --
+// Systemlast kann das Fenster verlaengern. Eine Obergrenze (30 x 200ms =
+// 6s) laedt trotzdem neu, falls /api/ping aus irgendeinem Grund dauerhaft
+// weiter antwortet, statt endlos zu pollen.
+function reloadAfterQuit() {
   clearTimeout(scanTimer);
   for (const a of document.querySelectorAll("audio")) a.pause();
   queueAudio.pause();
-  const veil = document.createElement("div");
-  veil.id = "quitveil";
-  veil.innerHTML = `<div><strong>${esc(t("quit.done_title"))}</strong><br>`
-                 + `${esc(t("quit.done_note"))}</div>`;
-  document.body.appendChild(veil);
+  let tries = 0;
+  const poll = setInterval(() => {
+    tries += 1;
+    fetch("/api/ping", { cache: "no-store" }).then(() => {
+      if (tries >= 30) { clearInterval(poll); location.reload(); }
+    }).catch(() => {
+      clearInterval(poll);
+      location.reload();
+    });
+  }, 200);
 }
 
 document.getElementById("btnQuit").onclick = async () => {
@@ -13313,7 +13334,7 @@ document.getElementById("btnQuit").onclick = async () => {
       data = await quitServer(true);
     }
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
-    showQuitVeil();
+    reloadAfterQuit();
   } catch (err) {
     btn.disabled = false;
     note(t("quit.failed", {error: err.message}), true);

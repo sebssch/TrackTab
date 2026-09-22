@@ -29,6 +29,10 @@ Geschrieben werden:
                                     Manifest/apple-touch-icon unzuverlaessig)
                                     -- aus der gepolsterten App-Zeichnung,
                                     nicht der randlosen Favicon-Fassung
+    app/webui/sw.js                 Dieselbe 192px-Fassung wandert zusaetzlich
+                                    als bare Base64 in die OFFLINE_ICON_B64-
+                                    Konstante (zentriertes Icon auf der
+                                    "Server nicht erreichbar"-Seite)
 
 Nach dem Lauf `./run.command report` ausfuehren: der Server liefert
 data/report.html aus, nicht app/webui/ -- ohne den Neubau zeigt die
@@ -213,6 +217,23 @@ def patch_pwa_module(b64_192, b64_512, b64_apple_touch):
     path.write_text(src, encoding="utf-8")
 
 
+def patch_sw_js(b64_icon):
+    """Tauscht die Icon-Konstante in app/webui/sw.js aus.
+
+    Bare Base64 wie bei patch_pwa_module() -- das "data:image/png;base64,"-
+    Praefix haengt OFFLINE_HTML selbst beim Einsetzen ins <img src="..."> an.
+    Gleiches Prinzip: ueber den Variablennamen ansteuern, Treffer-Anzahl
+    pruefen statt stillschweigend nichts zu ersetzen.
+    """
+    path = ROOT / "app" / "webui" / "sw.js"
+    src = path.read_text(encoding="utf-8")
+    pattern = r'(const OFFLINE_ICON_B64 = ")[^"]*(")'
+    src, hits = re.subn(pattern, lambda m: m.group(1) + b64_icon + m.group(2), src)
+    if hits != 1:
+        raise SystemExit(f"FEHLER: OFFLINE_ICON_B64 in sw.js {hits}x gefunden, erwartet 1x")
+    path.write_text(src, encoding="utf-8")
+
+
 def main():
     ASSETS.mkdir(exist_ok=True)
     DOCS.mkdir(exist_ok=True)
@@ -268,11 +289,13 @@ def main():
         return base64.b64encode(buf.getvalue()).decode("ascii")
 
     patch_pwa_module(png_b64(icon_192), png_b64(icon_512), png_b64(icon_apple_touch))
+    patch_sw_js(png_b64(icon_192))
 
     print(f"appicon.icns        {icns.stat().st_size // 1024} KB")
     print(f"docs/app-icon.png   256 px")
     print(f"favicon 32/128 px   in index.html eingesetzt")
     print(f"PWA-Icons 180/192/512 in app/pwa.py eingesetzt")
+    print(f"Offline-Icon        in sw.js eingesetzt")
     print("\nJetzt `./run.command report` laufen lassen.")
     return 0
 

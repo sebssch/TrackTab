@@ -3,6 +3,14 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.3.0] - 2026-09-22
+
+### Added
+- Die installierte PWA kann TrackTab jetzt direkt starten, wenn der lokale Server nicht läuft: Die Hinweisseite zeigt das TrackTab-Symbol und einen Knopf **Starten**, der die App über ein eigenes URL-Schema (`tracktab://`) öffnet und die Seite automatisch neu lädt, sobald der Server bereit ist. Funktioniert nur mit der gebauten App, nicht im Terminal-Betrieb.
+
+### Changed
+- Nach dem Beenden (Knopf **Beenden**) zeigt TrackTab jetzt denselben Bildschirm wie bei einem nicht erreichbaren Server, statt eines separaten Hinweises — die Seite lädt sich automatisch neu, sobald der Server wirklich gestoppt hat.
+
 ## [1.2.0] - 2026-09-22
 
 ### Added

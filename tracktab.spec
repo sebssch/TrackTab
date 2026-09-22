@@ -67,5 +67,17 @@ app = BUNDLE(
         # Cocoa-Anwendung: macapp.py haengt eine echte NSApplication samt
         # Menueleiste davor, damit Cmd+Q und "Beenden" im Dock ankommen.
         "NSPrincipalClass": "NSApplication",
+        # Eigenes URL-Schema, damit die "Server nicht erreichbar"-Seite der
+        # PWA (app/webui/sw.js) die App per Klick starten kann, statt den
+        # Umweg ueber Finder/Spotlight zu verlangen. macOS registriert das
+        # Schema ueber die Launch-Services-Indizierung dieses Bundles, auch
+        # ohne dass die App je gestartet wurde. macapp.py behandelt den
+        # resultierenden Apple Event in application_openURLs_.
+        "CFBundleURLTypes": [
+            {
+                "CFBundleURLName": "com.sgt.tracktab.start",
+                "CFBundleURLSchemes": ["tracktab"],
+            },
+        ],
     },
 )

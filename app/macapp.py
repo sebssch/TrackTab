@@ -256,6 +256,18 @@ def run(console, port: int, open_browser: bool = True) -> int:
             _focus_or_open(url)
             return True
 
+        def application_openURLs_(self, _app, _urls):
+            # Eigenes "tracktab://"-Schema (siehe tracktab.spec), ausgeloest
+            # vom Start-Knopf auf der Offline-Seite des Service Workers
+            # (app/webui/sw.js), wenn der Server nicht erreichbar war. War
+            # die App noch nicht gestartet, hat macOS applicationDidFinishLaunching_
+            # bereits angestossen -- der Server kommt gleich hoch und oeffnet
+            # per open_browser selbst einen Tab. Lief die App schon (Server
+            # aus unbekanntem Grund haengengeblieben), bleibt sonst nur die
+            # unsichtbare Aktivierung ohne Tab -- deshalb hier zusaetzlich
+            # denselben Weg wie beim Dock-Klick nehmen.
+            _focus_or_open(url)
+
         def openReport_(self, _sender):
             _focus_or_open(url)
 

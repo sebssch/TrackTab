@@ -764,8 +764,6 @@ const I18N_DE = {
 
   // ── Beenden ───────────────────────────────────────────────────────────
   "quit.button": "Beenden",
-  "quit.done_title": "TrackTab ist beendet.",
-  "quit.done_note": "Dieser Tab kann geschlossen werden.",
   "quit.confirm_scan_running": "Es läuft noch ein Scan. Beim Beenden bricht er ab.\nBereits gemessene Dateien bleiben gespeichert, der Rest wird beim nächsten Scan nachgeholt.\n\nTrotzdem beenden?",
   "quit.failed": "Beenden fehlgeschlagen: {error}",
 
