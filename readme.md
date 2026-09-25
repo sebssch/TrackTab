@@ -8,6 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/sebssch/TrackTab/releases/latest"><img src="https://img.shields.io/github/v/release/sebssch/TrackTab?label=aktuelles%20Release" alt="Aktuelles Release"></a>
+  <a href="https://github.com/sebssch/TrackTab/releases"><img src="https://img.shields.io/github/downloads/sebssch/TrackTab/total?label=Downloads" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Sprache-DE_%7C_EN-blue" alt="Sprache: Deutsch und Englisch">
 </p>
 
