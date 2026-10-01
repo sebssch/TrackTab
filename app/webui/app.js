@@ -1377,8 +1377,13 @@ function extChildren(source, parentId, depth = 0) {
   if (depth > 12) return [];
   const st = EXT_TREES[source];
   const prefix = EXT_SOURCES[source].prefix;
+  // Rekordbox liefert seine Knoten in ID-Reihenfolge, die eigene (manuell
+  // sortierbare) Reihenfolge steckt in 'seq' -- ohne Sortierung weicht der
+  // Baum von Rekordbox ab. Music-Knoten haben kein 'seq' (alle 0), dort
+  // laesst die stabile Sortierung die gelieferte Reihenfolge unveraendert.
   return st.nodes
     .filter(n => (n.parent || null) === (parentId || null))
+    .sort((a, b) => (a.seq || 0) - (b.seq || 0))
     .map(n => ({
       id: `${source}:${n.id}`,
       view: n.kind === "folder" ? null : `${prefix}${n.id}`,

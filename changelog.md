@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.4.1] - 2026-10-02
+
+### Fixed
+- Rekordbox: Ordner und Playlisten erscheinen im Seitenbaum jetzt in derselben Reihenfolge wie in Rekordbox (bisher in der Reihenfolge ihres Anlegens).
+
 ## [1.4.0] - 2026-10-02
 
 ### Added
