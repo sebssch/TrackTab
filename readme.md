@@ -10,6 +10,13 @@
   <a href="https://github.com/sebssch/TrackTab/releases/latest"><img src="https://img.shields.io/github/v/release/sebssch/TrackTab?label=aktuelles%20Release" alt="Aktuelles Release"></a>
   <a href="https://github.com/sebssch/TrackTab/releases"><img src="https://img.shields.io/github/downloads/sebssch/TrackTab/total?label=Downloads" alt="Downloads"></a>
   <img src="https://img.shields.io/badge/Sprache-DE_%7C_EN-blue" alt="Sprache: Deutsch und Englisch">
+  <img src="https://komarev.com/ghpvc/?username=sebssch&repo=TrackTab&label=Aufrufe&color=blue&style=flat" alt="README-Aufrufe">
+</p>
+
+<p align="center">
+  <a href="handbuch.md">Dokumentation</a> ·
+  <a href="installation.md">Installation</a> ·
+  <a href="changelog.md">Changelog</a>
 </p>
 
 <p align="center">
