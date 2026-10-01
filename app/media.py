@@ -947,8 +947,9 @@ _CLOUD_LIBRARY_STATUSES = {"matched", "uploaded", "purchased", "subscription", "
 def remove_from_music_library(path: str, title: str | None = None) -> tuple[int, bool]:
     """
     Entfernt den Track mit dieser 'location' aus der Music.app-Bibliothek --
-    Gegenstueck zu add_to_music_library(), aufgerufen wenn eine Datei, die
-    in music_added steht, in den Papierkorb wandert (server._post_trash()).
+    Gegenstueck zu add_to_music_library(), aufgerufen wenn eine Datei in den
+    Papierkorb wandert und eine Music App eingestellt ist (server._post_trash(),
+    unabhaengig davon, ob der Pfad in music_added steht).
     Ohne das bliebe in Music.app eine Karteileiche zurueck, die auf die
     geloeschte Datei zeigt.
 

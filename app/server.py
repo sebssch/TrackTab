@@ -2719,30 +2719,27 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         cfg = cfgmod.load()
-        with self.lock:
-            conn = db_mod.connect(cfg)
-            try:
-                # Ohne ausgewaehlte Music App bleibt der Abgleich unten aus,
-                # auch wenn der Pfad noch aus einer aelteren Zeit in
-                # 'music_added' steht (siehe _require_music()).
-                in_library = bool(cfg.get("external_music")) and \
-                    path in db_mod.music_added_map(conn)
-            finally:
-                conn.close()
 
         # Muss VOR move_to_trash() laufen: remove_from_music_library() liest
         # 'location' je Kandidat einzeln von der noch vorhandenen Datei --
         # nach dem Papierkorb waere das nicht mehr moeglich, die Music.app-
         # Karteileiche bliebe garantiert stehen (genau das war der Bug).
+        # Laeuft bei eingestellter Music App IMMER, nicht nur fuer Pfade in
+        # 'music_added': der Track kann auch ausserhalb von TrackTab (oder
+        # vor dem ersten Abgleich) in Music.app gelandet sein. Sicher, weil
+        # nur ein Treffer mit exakt gleichem Dateipfad geloescht wird.
         # Titel mit Dateiname als Rueckfallebene: Music.app selbst benennt
         # taglose Importe so, siehe remove_from_music_library().
         library_error = None
         cloud_note = False
-        if in_library:
+        removed_from_music = False
+        if cfg.get("external_music"):
             title = row["title"] or Path(path).stem
             try:
-                _, cloud_note = media.remove_from_music_library(path, title)
-                audit_log.log("music-entfernt", path)
+                count, cloud_note = media.remove_from_music_library(path, title)
+                if count > 0:
+                    removed_from_music = True
+                    audit_log.log("music-entfernt", path)
             except Exception as exc:                     # noqa: BLE001
                 library_error = str(exc)
 
@@ -2768,7 +2765,7 @@ class _Handler(BaseHTTPRequestHandler):
             # Ohne Neubacken zeigt report.html die geloeschte Zeile nach dem
             # naechsten Neuladen weiter an, siehe /api/prune.
             self._rebuild(cfg)
-        self._json({"ok": True, "total": total, "removed_from_music": in_library,
+        self._json({"ok": True, "total": total, "removed_from_music": removed_from_music,
                      "music_error": library_error, "music_cloud_note": cloud_note})
 
     def _post_convert(self) -> None:
