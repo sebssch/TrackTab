@@ -3,6 +3,12 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.3.1] - 2026-10-01
+
+### Fixed
+- Rekordbox-Smart-Playlists mit Zeitregel (z. B. „hinzugefügt in den letzten 6 Monaten") lassen sich jetzt anzeigen. `pyrekordbox` wertet solche Regeln fehlerhaft aus; TrackTab rechnet sie jetzt selbst in einen festen Stichtag um.
+- Beim Verschieben in den Papierkorb wird der Track jetzt immer auch aus Music.app entfernt, sobald eine Music App eingestellt ist — nicht mehr nur, wenn TrackTab ihn selbst dorthin importiert hatte. Entfernt wird nur ein Treffer mit exakt gleichem Dateipfad; die Rückmeldung „aus Music.app entfernt" erscheint nur noch, wenn tatsächlich etwas entfernt wurde.
+
 ## [1.3.0] - 2026-09-22
 
 ### Added

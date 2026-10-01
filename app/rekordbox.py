@@ -111,6 +111,9 @@ class SmartListUnsupported(Exception):
     hat kein '.month'. An echtem Material bestaetigt: eine Playlist
     "last-6-month" mit genau dieser Regel. Betrifft nur das LESEN fremder
     Smart Playlists; alles andere in dieser Datei ist davon unberuehrt.
+
+    Zeitregeln werden inzwischen selbst ausgewertet (_smart_contents()); die
+    Ausnahme bleibt fuer alles, was auch dort nicht berechenbar ist.
     """
 
 
@@ -865,6 +868,42 @@ def playlists() -> list[dict]:
     return _query_cached(mod, _query)
 
 
+def _smart_contents(db, node):
+    """
+    Inhalt einer Smart Playlist. Wie db.get_playlist_contents(), aber mit
+    eigener Auswertung der Zeitregeln (Operator IN_LAST/NOT_IN_LAST):
+    pyrekordbox 0.4.4 rechnet sie falsch (siehe SmartListUnsupported). Sie
+    werden vorab in einen festen Stichtag umgeschrieben ("in den letzten 6
+    Monaten" = Datum > heute minus 6 Monate) und laufen dann ueber den
+    normalen GREATER/LESS-Zweig der Bibliothek.
+    """
+    from datetime import datetime
+    from dateutil.relativedelta import relativedelta
+    from pyrekordbox.db6.smartlist import Operator, SmartList
+    from pyrekordbox.db6.tables import DjmdContent
+
+    sl = SmartList()
+    sl.parse(node.SmartList)
+    now = datetime.now()
+    for cond in sl.conditions:
+        if cond.operator not in (Operator.IN_LAST, Operator.NOT_IN_LAST):
+            continue
+        n = int(cond.value_left)
+        if cond.unit == "day":
+            t0 = now - relativedelta(days=n)
+        elif cond.unit == "month":
+            t0 = now - relativedelta(months=n)
+        elif cond.unit == "year":
+            t0 = now - relativedelta(years=n)
+        else:
+            raise ValueError(f"Unbekannte Zeiteinheit '{cond.unit}'")
+        cond.operator = int(Operator.GREATER if cond.operator == Operator.IN_LAST
+                            else Operator.LESS)
+        cond.unit = ""
+        cond.value_left = t0.strftime("%Y-%m-%d")
+    return db.query(DjmdContent).filter(sl.filter_clause())
+
+
 def playlist_tracks(playlist_id: str) -> list[dict]:
     """
     Tracks einer Rekordbox-Playlist in ihrer Reihenfolge (TrackNo).
@@ -890,7 +929,7 @@ def playlist_tracks(playlist_id: str) -> list[dict]:
         rows: list[dict] = []
         if node.Attribute == _RB_SMART:
             try:
-                contents = list(db.get_playlist_contents(node))
+                contents = list(_smart_contents(db, node))
             except Exception as exc:                       # noqa: BLE001
                 if _is_stale_cache_error(exc):
                     raise
