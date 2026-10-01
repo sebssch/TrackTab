@@ -3,6 +3,18 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.4.0] - 2026-10-02
+
+### Added
+- Tracks lassen sich per Drag & Drop auf normale Rekordbox-Playlisten im Baum ziehen (Rekordbox muss geschlossen sein; Prüfung beim Ziehen, beim Ablegen und serverseitig). `/api/rekordbox-add-playlist` nimmt dafür optional `playlist_id`.
+- Rekordbox-Playlisten bearbeiten: „Aus Rekordbox-Playlist entfernen" und „Aus Rekordbox-Sammlung entfernen" (wie Rekordbox' „Von der Sammlung entfernen", inkl. Sicherung der Analyseordner), Reihenfolge per Verschieben ändern. Gelöscht wird wie bei Rekordbox selbst nur als Markierung (Soft-Delete).
+- Neue Spalte „#" zeigt die Position in Rekordbox-, Music-App- und eigenen Playlisten; Spaltensortierung lässt diese Reihenfolge unverändert.
+
+### Fixed
+- Rekordbox: In Rekordbox entfernte Tracks und Playlist-Einträge (dort nur als gelöscht markiert) galten in TrackTab weiter als vorhanden — beim Präsenz-Abgleich, bei Cues/Wellenform und beim Hinzufügen (ein früher entfernter Eintrag wurde als „schon vorhanden" übersprungen, ein neuer Eintrag konnte an einem unsichtbaren Track landen).
+- Rekordbox: Hinzufügen hinterließ Lücken in der Track-Nummerierung der Playlist.
+- Schreibzugriffe auf Rekordbox prüfen jetzt auch den Hintergrunddienst „rekordboxAgent".
+
 ## [1.3.1] - 2026-10-01
 
 ### Fixed

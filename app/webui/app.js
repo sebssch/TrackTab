@@ -226,6 +226,10 @@ rebuildMerkViews();
 // als feste, nicht per Drag verschiebbare Kopfzelle im HTML (siehe renderHead()
 // weiter unten), ist aber wie jede andere Spalte hier ausblendbar.
 const OPTIONAL_COLUMNS = [
+  // Position in der geoeffneten Playlist (eigene, Music.app, Rekordbox) --
+  // in allen anderen Ansichten leer. Die Zahl ist die massgebliche
+  // Reihenfolge; eine Spaltensortierung aendert sie nicht.
+  {key: "po", label: t("col.position"), numeric: true},
   {key: "v", label: t("col.status"), numeric: false},
   {key: "co", label: t("col.cutoff"), numeric: true},
   {key: "kb", label: t("field.declared"), numeric: true},
@@ -258,7 +262,7 @@ const OPTIONAL_COLUMNS = [
 // festen Wert -- den Restplatz nimmt die Fuellzelle (td.filler) auf, sonst
 // liesse sich die Spalte nicht anpassen (sie wuerde jede Aenderung sofort
 // wieder mit dem freien Platz ausgleichen).
-const DEFAULT_COL_WIDTHS = {v:105, co:90, kb:105, mk:75, cf:110, st:75, lu:90, tp:60, du:70, rb:105,
+const DEFAULT_COL_WIDTHS = {po:50, v:105, co:90, kb:105, mk:75, cf:110, st:75, lu:90, tp:60, du:70, rb:105,
   im:85, da:115, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, cm:180, a:150, t:200, n:340,
   ti:280};
 
@@ -365,7 +369,13 @@ const activeColumnStore = () => activeColumnView() || state.columnsByLayout[stat
 function normalizeColumnStore(store) {
   const known = new Set(OPTIONAL_COLUMNS.map(c => c.key));
   const order = (Array.isArray(store.order) ? store.order : []).filter(k => known.has(k));
-  for (const c of OPTIONAL_COLUMNS) if (!order.includes(c.key)) order.push(c.key);
+  for (const c of OPTIONAL_COLUMNS) {
+    if (order.includes(c.key)) continue;
+    // "#" gehoert nach vorn, auch in schon gespeicherten Reihenfolgen --
+    // hinten angehaengt (wie jede andere neue Spalte) waere sie gerade dort
+    // unsichtbar, wo sie gebraucht wird.
+    if (c.key === "po") order.unshift(c.key); else order.push(c.key);
+  }
   store.order = order;
   store.hidden = (Array.isArray(store.hidden) ? store.hidden : []).filter(k => known.has(k));
   store.widths = (store.widths && typeof store.widths === "object") ? store.widths : {};
@@ -1378,6 +1388,9 @@ function extChildren(source, parentId, depth = 0) {
       // sie werden dort berechnet und liessen sich hier auch spaeter nicht
       // sinnvoll aendern.
       locked: true,
+      // Nur normale Rekordbox-Playlisten nehmen Tracks per Drag & Drop auf
+      // (Ordner/Smart Playlists nicht) -- renderTree() gibt data-rbpl aus.
+      rbpl: source === "rekordbox" && n.kind === "playlist" ? n.id : null,
       count: n.kind === "folder" ? null : n.count,
       kids: extChildren(source, n.id, depth + 1),
     }));
@@ -1504,6 +1517,8 @@ function renderTree() {
       `${n.view && state.view === n.view ? " on" : ""}" ` +
       `data-id="${esc(n.id)}"${n.view ? ` data-view="${esc(n.view)}"` : ""}` +
       `${n.node ? ` data-pl="${esc(n.node.id)}"` : ""}` +
+      `${n.rbpl ? ` data-rbpl="${esc(n.rbpl)}"` : ""}` +
+      `${n.lazy === "rekordbox" ? ` title="${esc(t("tree.rekordbox_dnd_hint"))}"` : ""}` +
       `${n.top ? ' data-top="1"' : ""}` +
       `${n.lazy ? ` data-lazy="${esc(n.lazy)}"` : ""} style="--depth:${depth}">` +
       `<span class="twist${hasKids ? (open ? " open" : "") : " leaf"}"` +
@@ -1572,6 +1587,8 @@ function renderTree() {
 // (beim dragover ist der INHALT noch nicht lesbar, nur die Typliste).
 const DND_TRACKS = "application/x-tracktab-tracks";
 const DND_NODE = "application/x-tracktab-node";
+// Zeilen-Indizes (DATA) -- nur fuers Umsortieren in einer Rekordbox-Playlist.
+const DND_ROWS = "application/x-tracktab-rows";
 
 // Kompaktes Zug-Abbild fuer setDragImage() statt der ganzen Tabellenzeile
 // (die als Standard-Abbild die Ablageziele darunter verdeckt). EIN einziges,
@@ -1596,6 +1613,19 @@ function buildDragBadge(r, extraCount) {
 function clearTreeDropMarks() {
   document.querySelectorAll(".treenode.dropinto, .treenode.dropbefore, .treenode.dropafter")
     .forEach(el => el.classList.remove("dropinto", "dropbefore", "dropafter"));
+  document.querySelectorAll(".treenode.dropblocked")
+    .forEach(el => el.classList.remove("dropblocked"));
+}
+
+// Laeuft Rekordbox? Wird beim Start eines Spurzugs einmal abgefragt (nicht bei
+// jedem dragover) und steuert, ob Rekordbox-Playlisten als Ziel taugen. Die
+// verbindliche Pruefung folgt beim Ablegen und serverseitig.
+let rbRunning = false;
+function refreshRbRunning() {
+  if (!apiMode || !REKORDBOX_NAME) return;
+  fetch("/api/rekordbox-status", {cache: "no-store"}).then(r => r.json())
+    .then(d => { rbRunning = !!(d.ok && d.running); })
+    .catch(() => {});
 }
 
 // Wohin wuerde die Ablage an dieser Stelle fuehren? "into" nur dort, wo der
@@ -1605,6 +1635,7 @@ function clearTreeDropMarks() {
 function treeDropTarget(btn, ev, kind) {
   const node = btn.dataset.pl ? PLAYLISTS.find(n => n.id === btn.dataset.pl) : null;
   if (kind === "tracks") {
+    if (btn.dataset.rbpl) return "into";
     return (node && node.kind === "playlist") ? "into" : null;
   }
   if (btn.dataset.id === "root:tracktab") return "into";
@@ -1662,6 +1693,14 @@ function wireTreeDnd(host) {
       if (!kind || !apiMode) return;
       const where = treeDropTarget(btn, ev, kind);
       if (!where) return;
+      // Rekordbox laeuft: schreiben waere unzulaessig -> nicht als Ziel
+      // anbieten (Status steht seit dragstart in rbRunning).
+      if (btn.dataset.rbpl && rbRunning) {
+        ev.dataTransfer.dropEffect = "none";
+        clearTreeDropMarks();
+        btn.classList.add("dropblocked");
+        return;
+      }
       ev.preventDefault();
       ev.dataTransfer.dropEffect = kind === "tracks" ? "copy" : "move";
       clearTreeDropMarks();
@@ -1670,7 +1709,7 @@ function wireTreeDnd(host) {
     };
     btn.ondragleave = ev => {
       if (!btn.contains(ev.relatedTarget)) {
-        btn.classList.remove("dropinto", "dropbefore", "dropafter");
+        btn.classList.remove("dropinto", "dropbefore", "dropafter", "dropblocked");
       }
     };
     btn.ondrop = ev => {
@@ -1684,7 +1723,11 @@ function wireTreeDnd(host) {
         let paths = [];
         try { paths = JSON.parse(ev.dataTransfer.getData(DND_TRACKS) || "[]"); }
         catch (e) { paths = []; }
-        dropTracksOnPlaylist(btn.dataset.pl, paths);
+        if (btn.dataset.rbpl) {
+          dropTracksOnRekordbox(btn.dataset.rbpl, btn.querySelector(".tlabel").textContent, paths);
+        } else {
+          dropTracksOnPlaylist(btn.dataset.pl, paths);
+        }
       } else {
         dropTreeNode(ev.dataTransfer.getData(DND_NODE), btn, where);
       }
@@ -1869,16 +1912,23 @@ async function loadExtPlaylist(source, playlistId) {
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || t("error.unknown"));
   const paths = [];
+  // Positionsgleich zu paths: Rekordbox' Eintrags-/Track-IDs. Entfernen und
+  // Umsortieren adressieren damit den einzelnen Eintrag -- der Pfad ist
+  // dafuer ungeeignet (fehlt bei Titeln ohne Datei, Schreibweise vom Server
+  // angeglichen, bei doppelten Eintraegen mehrdeutig).
+  const entries = [];
   for (const track of (data.tracks || [])) {
+    const ids = {entryId: track.entry_id || null, contentId: track.content_id || null};
     if (track.known && track.path) {
       const row = ROW_BY_PATH.get(track.path);
-      if (row) { paths.push(row.p); continue; }
+      if (row) { paths.push(row.p); entries.push({key: row.p, ...ids}); continue; }
     }
     const idx = ensureExtRow(source, track);
     paths.push(DATA[idx].p || `\u0000ext${idx}`);   // Ersatzschluessel ohne Pfad
     DATA[idx].extKey = paths[paths.length - 1];
+    entries.push({key: paths[paths.length - 1], ...ids});
   }
-  const entry = {paths, set: new Set(paths),
+  const entry = {paths, entries, set: new Set(paths),
                  unsupported: !!data.unsupported, error: data.error || null};
   EXT_CONTENTS.set(key, entry);
   return entry;
@@ -4226,7 +4276,8 @@ function renderColsMenu() {
 function renderDropColsMenu() {
   const menu = document.getElementById("dropColsMenu");
   if (!menu) return;
-  const sortedCols = [...OPTIONAL_COLUMNS].sort((a, b) => a.label.localeCompare(b.label, "de"));
+  const sortedCols = OPTIONAL_COLUMNS.filter(c => c.key !== "po")
+    .sort((a, b) => a.label.localeCompare(b.label, "de"));
   menu.innerHTML = `<div class="colsbtnrow">
     <button class="act" id="dropColsReset"><span class="btnicon">${ICONS.rulerDimensionLine}</span> ${
       esc(t("cols.reset_widths"))}</button>
@@ -4600,7 +4651,7 @@ function refreshI18nCache() {
   // oben (Zeile ~81) -- Objekte werden hier nur umbenannt, nicht ersetzt,
   // sonst wuerden gespeicherte Spaltenreihenfolge/-breiten ihre Referenz
   // verlieren.
-  const columnKeyToI18n = {v:"col.status", co:"col.cutoff", kb:"field.declared", mk:"col.class", cf:"field.confidence",
+  const columnKeyToI18n = {po:"col.position", v:"col.status", co:"col.cutoff", kb:"field.declared", mk:"col.class", cf:"field.confidence",
     st:"col.steepness", lu:"col.loudness", tp:"col.clip", du:"field.duration", rb:"col.rekordbox",
     im:"col.in_music", da:"field.added", cv:"col.cover", al:"field.album", tn:"col.track_no",
     aa:"field.album_artist", cp:"field.composer", ge:"field.genre", yr:"field.year", bp:"field.bpm",
@@ -5153,6 +5204,21 @@ async function resetPartiallyDismissedGroups() {
   }
 }
 
+// Reihenfolge der aktuell geoeffneten Liste als Map Schluessel -> Index, oder
+// null ausserhalb einer Playlist. Schluessel wie in filtered(): Fremdlisten
+// ueber extRowKey() (Ersatzzeilen ohne Pfad), eigene ueber den Pfad.
+function listPositionMap(view) {
+  if (!view) return null;
+  let order = null;
+  if (view.ext) order = (EXT_CONTENTS.get(view.extKey) || {}).paths || null;
+  else if (String(view.id).startsWith("pl:")) order = PLAYLIST_ITEMS[view.id.slice(3)] || null;
+  if (!order) return null;
+  const map = new Map();
+  order.forEach((key, i) => { if (!map.has(key)) map.set(key, i); });
+  return map;
+}
+const posKeyOf = r => extRowKey(r);
+
 function filtered() {
   const q = state.q;
   const view = currentView();
@@ -5273,6 +5339,17 @@ function filtered() {
       }
       return cmpText(tk.get(a), tk.get(b));
     });
+  } else if (state.sort === "po") {
+    // "#" = Grundreihenfolge der Liste, auf- oder absteigend.
+    const pos = listPositionMap(view);
+    if (pos) {
+      const rank = sortKeys(rows, r => {
+        const at = pos.get(posKeyOf(r));
+        return at === undefined ? pos.size : at;
+      });
+      const dir = state.dir;
+      rows.sort((a, b) => (rank.get(a) - rank.get(b)) * dir);
+    }
   } else if (state.sort) {
     const k = state.sort;
     // "n" (Datei) ist die einzige Spalte ohne gleichnamiges Datenfeld --
@@ -5361,7 +5438,14 @@ function spectrumSVG(r) {
 // Zell-Renderer je reorderbarer Spalte (OPTIONAL_COLUMNS-Keys) — 1:1 aus den
 // frueher fest verketteten Zeilen-Templates uebernommen, jetzt datengetrieben
 // nach state.colOrder statt fixer Reihenfolge.
+// Position je Zeile in der aktuellen Liste, einmal je render() gebildet
+// (listPositionMap()), damit die Zelle nicht je Zeile die Liste durchsucht.
+let POS_MAP = null;
 const CELL_RENDERERS = {
+  po: r => {
+    const at = POS_MAP ? POS_MAP.get(posKeyOf(r)) : undefined;
+    return `<td class="num">${at === undefined ? "" : at + 1}</td>`;
+  },
   co: r => `<td class="num">${r.co.toFixed(2).replace(".",",")}</td>`,
   kb: r => `<td class="num">${r.fam === "lossless"
       ? "<span class='path'>" + esc(t("field.lossless")) + "</span><br><span class='path'>" + fileExt(r.p) + "</span>"
@@ -5517,6 +5601,19 @@ function rowMoreMenuItems(r) {
       action: () => removeFromPlaylist(inList.id, [r.p]),
     });
   }
+  const rbList = currentRekordboxPlaylist();
+  if (rbList) {
+    items.push({
+      icon: ICONS.listX, label: t("rb.remove_from_playlist", {playlist: rbList.name}),
+      action: () => removeFromRekordboxPlaylist([r]),
+    });
+  }
+  if (REKORDBOX_NAME && apiMode && (rbList || (r.rb && !r.ext))) {
+    items.push({
+      icon: ICONS.trash, cls: "del", label: t("rb.remove_from_collection"),
+      action: () => removeFromRekordboxCollection([r]),
+    });
+  }
   if (!r.gone && apiMode && isFixable(r)) {
     items.push({
       icon: ICONS.fix, cls: "", title: t("action.fix_bitrate", {kbps: r.mk}),
@@ -5612,6 +5709,10 @@ function render() {
   renderIssueBubbles();
   if (dupGroupsDirty) { computeDuplicateGroups(); dupGroupsDirty = false; }
   const rows = filtered();
+  POS_MAP = listPositionMap(currentView());
+  // Geoeffnete normale Rekordbox-Playlist: Zeilen lassen sich dort
+  // umsortieren (inkl. Titel ohne lokale Datei).
+  const rbReorderable = !!currentRekordboxPlaylist();
   state.totalFiltered = rows.length;
   // Ergebniszahl direkt an der Suchleiste -- state.totalFiltered ist bereits
   // NACH Liste/Verdikt-Chips/"nur harte Kante"/Suche gezaehlt (siehe
@@ -5737,7 +5838,7 @@ function render() {
     }
     const nowPlaying = queueState.current && queueState.current.i === r.i;
     return groupHeader + `
-    <tr class="row${r.ig ? " ign" : ""}${r.mc ? " corr" : ""}${r.ext ? " extrow" : r.gone ? " gone" : ""}${state.selected.has(r.i) ? " picked" : ""}${r.i === cursorRowI ? " kbcursor" : ""}${freshFrom >= 0 && i >= freshFrom ? " fresh" : ""}" data-i="${r.i}" draggable="${r.ext ? "false" : "true"}">
+    <tr class="row${r.ig ? " ign" : ""}${r.mc ? " corr" : ""}${r.ext ? " extrow" : r.gone ? " gone" : ""}${state.selected.has(r.i) ? " picked" : ""}${r.i === cursorRowI ? " kbcursor" : ""}${freshFrom >= 0 && i >= freshFrom ? " fresh" : ""}" data-i="${r.i}" draggable="${r.ext && !rbReorderable ? "false" : "true"}">
       <td class="sel"><input type="checkbox" class="selchk" data-sel="${r.i}" ${state.selected.has(r.i) ? "checked" : ""}>${
         nowPlaying ? `<span class="nowplayingicon" title="${esc(t("player.now_playing_title"))}">${ICONS.audioLines}</span>` : ""}</td>
       ${hid("v") ? "" : `<td><span class="badge ${verdictOf(r)}">${VERDICT_ICONS[verdictOf(r)]}${labels[verdictOf(r)]}</span></td>`}
@@ -5836,16 +5937,26 @@ function render() {
 
   tb.querySelectorAll("tr.row").forEach(tr => tr.ondragstart = ev => {
     const r = DATA[+tr.dataset.i];
-    // Titel ohne lokale Datei (Music.app-Playlist ohne Match): draggable
-    // steht bereits auf "false" im Markup, diese Zeile ist zusaetzliche
-    // Absicherung gegen kuenftige Aenderungen an diesem Attribut.
-    if (r.ext) { ev.preventDefault(); return; }
     // Ist die gezogene Zeile Teil der Mehrfachauswahl, wandert die GANZE
     // Auswahl mit -- sonst waere das Auswaehlen mehrerer Zeilen fuer den Baum
     // wertlos. Sonst zaehlt nur die eine Zeile, unabhaengig von der Auswahl.
-    const paths = state.selected.has(r.i)
-      ? filtered().filter(x => state.selected.has(x.i)).map(x => x.p)
-      : [r.p];
+    const dragRows = state.selected.has(r.i)
+      ? filtered().filter(x => state.selected.has(x.i))
+      : [r];
+    // Zeilen-Indizes fuer das Umsortieren in einer Rekordbox-Playlist --
+    // dort zaehlen auch Titel ohne lokale Datei (Ersatzzeilen, kein Pfad).
+    if (rbReorderable) ev.dataTransfer.setData(DND_ROWS, JSON.stringify(dragRows.map(x => x.i)));
+    // Titel ohne lokale Datei: ausserhalb einer Rekordbox-Playlist gar nicht
+    // ziehbar (draggable="false" im Markup), dort nur zum Umsortieren -- ohne
+    // Pfad gibt es nichts, was in eine Playlist oder den Finder wandern kann.
+    if (r.ext) {
+      if (!rbReorderable) { ev.preventDefault(); return; }
+      ev.dataTransfer.effectAllowed = "move";
+      refreshRbRunning();
+      ev.dataTransfer.setDragImage(buildDragBadge(r, dragRows.length - 1), 20, 20);
+      return;
+    }
+    const paths = dragRows.filter(x => !x.ext).map(x => x.p);
     ev.dataTransfer.setData(DND_TRACKS, JSON.stringify(paths));
     // "copy" ALLEIN reicht nicht: das Umsortieren innerhalb einer Playlist
     // (weiter unten) setzt beim Ablegen dropEffect="move" -- ohne "move" in
@@ -5868,6 +5979,7 @@ function render() {
       ev.dataTransfer.setData("DownloadURL", downloadUrl);
     }
     document.body.classList.add("dragging-tracks");
+    refreshRbRunning();
     ev.dataTransfer.setDragImage(buildDragBadge(r, paths.length - 1), 20, 20);
   });
   tb.querySelectorAll("tr.row").forEach(tr => tr.ondragend = () => {
@@ -5882,6 +5994,36 @@ function render() {
   // konnte danach nichts mehr ziehen und bekam dafuer keine Erklaerung. Jetzt
   // wird beim Ablegen auf die manuelle Reihenfolge zurueckgeschaltet (siehe
   // reorderInPlaylist), sodass das Ergebnis auch sichtbar wird.
+  if (rbReorderable) {
+    // Umsortieren in einer Rekordbox-Playlist: schreibt die neue
+    // Zahlenreihenfolge nach Rekordbox (geschlossen, siehe rbRunning).
+    tb.querySelectorAll("tr.row").forEach(tr => {
+      tr.ondragover = ev => {
+        if (![...(ev.dataTransfer.types || [])].includes(DND_ROWS)) return;
+        if (rbRunning) { ev.dataTransfer.dropEffect = "none"; clearRowDropMarks(); return; }
+        ev.preventDefault();
+        ev.dataTransfer.dropEffect = "move";
+        const rect = tr.getBoundingClientRect();
+        clearRowDropMarks();
+        tr.classList.add((ev.clientY - rect.top) / rect.height < 0.5 ? "dropbefore" : "dropafter");
+      };
+      tr.ondragleave = ev => {
+        if (!tr.contains(ev.relatedTarget)) clearRowDropMarks();
+      };
+      tr.ondrop = ev => {
+        if (![...(ev.dataTransfer.types || [])].includes(DND_ROWS)) return;
+        ev.preventDefault();
+        const rect = tr.getBoundingClientRect();
+        const where = (ev.clientY - rect.top) / rect.height < 0.5 ? "before" : "after";
+        clearRowDropMarks();
+        let idxs = [];
+        try { idxs = JSON.parse(ev.dataTransfer.getData(DND_ROWS) || "[]"); }
+        catch (e) { idxs = []; }
+        reorderRekordboxPlaylist(idxs, DATA[+tr.dataset.i], where);
+      };
+    });
+  }
+
   const plNode = currentPlaylistNode();
   if (plNode && apiMode) {
     tb.querySelectorAll("tr.row").forEach(tr => {
@@ -6200,6 +6342,8 @@ function renderBulkBar() {
     <button class="iconbtn plain" id="bulkQueueAdd" title="${esc(t("bulk.queue_add_title"))}">${ICONS.listEnd}</button>
     ${apiMode ? `<button class="iconbtn plain" id="bulkListAdd" title="${esc(t("tree.add_to_playlist"))}">${ICONS.listPlus}</button>` : ""}
     ${currentPlaylistNode() && apiMode ? `<button class="iconbtn" id="bulkListRemove" title="${esc(t("tree.remove_from_list", {name: currentPlaylistNode().name}))}">${ICONS.listX}</button>` : ""}
+    ${currentRekordboxPlaylist() ? `<button class="iconbtn" id="bulkRbRemove" title="${esc(t("rb.remove_from_playlist", {playlist: currentRekordboxPlaylist().name}))}">${ICONS.listX}</button>` : ""}
+    ${REKORDBOX_NAME && apiMode && (currentRekordboxPlaylist() || selRows.some(r => r.rb && !r.ext)) ? `<button class="iconbtn del" id="bulkRbCollection" title="${esc(t("rb.remove_from_collection"))}">${ICONS.trash}</button>` : ""}
     ${!REKORDBOX_NAME ? "" : (REKORDBOX_PLAYLIST
       ? `<button class="iconbtn plain" id="bulkRbAdd" title="${esc(t("bulk.add_to_rekordbox_title", {playlist: REKORDBOX_PLAYLIST}))}">${appIcon("rekordbox", "Rekordbox")}</button>`
       : disabledAppIcon("rekordbox", "Rekordbox", REKORDBOX_MISSING_HINT, "bulkRbAdd"))}
@@ -6240,6 +6384,14 @@ function renderBulkBar() {
     if (!node) return;
     const paths = [...state.selected].map(i => DATA[i]).filter(Boolean).map(x => x.p);
     removeFromPlaylist(node.id, paths);
+  };
+  const bulkRbRemoveBtn = document.getElementById("bulkRbRemove");
+  if (bulkRbRemoveBtn) bulkRbRemoveBtn.onclick = () =>
+    removeFromRekordboxPlaylist([...state.selected].map(i => DATA[i]).filter(Boolean));
+  const bulkRbCollectionBtn = document.getElementById("bulkRbCollection");
+  if (bulkRbCollectionBtn) bulkRbCollectionBtn.onclick = () => {
+    const rows = [...state.selected].map(i => DATA[i]).filter(Boolean);
+    removeFromRekordboxCollection(currentRekordboxPlaylist() ? rows : rows.filter(r => r.rb && !r.ext));
   };
   const bulkTagsBtn = document.getElementById("bulkTags");
   if (bulkTagsBtn) bulkTagsBtn.onclick = () => {
@@ -8212,7 +8364,20 @@ function askRekordboxQuality(rows, problems) {
 // Fuegt Tracks der in den Einstellungen hinterlegten, bereits bestehenden
 // Rekordbox-Playlist hinzu -- schreibt direkt in Rekordbox' Datenbank,
 // Rekordbox muss dafuer beendet sein (Fehlermeldung kommt vom Server).
-async function addToRekordboxPlaylist(rows, btn) {
+// Ziehen von Tracks auf eine Rekordbox-Playlist im Baum.
+async function dropTracksOnRekordbox(playlistId, playlistName, paths) {
+  const rows = paths.map(p => DATA.find(r => r.p === p && !r.ext)).filter(Boolean);
+  if (!rows.length) return;
+  await addToRekordboxPlaylist(rows, null, {playlistId, playlistName});
+}
+
+// opts (optional): {playlistId, playlistName} = frei gewaehlte Ziel-Playlist
+// (Drag & Drop); ohne opts gilt die Playlist aus den Einstellungen. btn darf
+// null sein (kein Knopf beteiligt).
+async function addToRekordboxPlaylist(rows, btn, opts = {}) {
+  const targetName = opts.playlistName || REKORDBOX_PLAYLIST;
+  const noBtn = {classList: {add() {}, remove() {}}};
+  btn = btn || noBtn;
   let targetRows = rows;
   if (REKORDBOX_QUALITY_CHECK) {
     const problems = rows.filter(rekordboxQualityProblem);
@@ -8233,15 +8398,11 @@ async function addToRekordboxPlaylist(rows, btn) {
     // das vor jedem Schreibzugriff ohnehin nochmal selbst (die eigentliche
     // Absicherung); dieser Aufruf gibt nur die schnellere, klarere
     // Rueckmeldung direkt beim Klick, statt erst nach einem Schreibversuch.
-    const status = await fetch("/api/rekordbox-status").then(r => r.json());
-    if (status.ok && status.running) {
-      const err = new Error(t("toast.rekordbox_open_error"));
-      err.sticky = true;
-      throw err;
-    }
+    await rbEnsureClosed();
     const res = await fetch("/api/rekordbox-add-playlist", {method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({paths: targetRows.map(r => r.p)})});
+      body: JSON.stringify({paths: targetRows.map(r => r.p),
+                            ...(opts.playlistId ? {playlist_id: opts.playlistId} : {})})});
     const data = await res.json();
     if (!data.ok) {
       const err = new Error(data.error || t("error.unknown"));
@@ -8250,11 +8411,17 @@ async function addToRekordboxPlaylist(rows, btn) {
     }
     targetRows.forEach(r => { if (data.added.includes(r.p)) r.rb = 1; });
     btn.classList.add("done");
+    if (opts.playlistId) {
+      // Zaehler/Inhalt im Rekordbox-Ast veralten durch das Schreiben.
+      EXT_CONTENTS.delete(`rekordbox:${opts.playlistId}`);
+      EXT_TREES.rekordbox.loaded = false;
+      loadExtTree("rekordbox");
+    }
     const extra = [];
     if (data.skipped.length) extra.push(t("toast.rekordbox_skipped_suffix", {count: data.skipped.length}));
     const errCount = Object.keys(data.errors).length;
     if (errCount) extra.push(t("toast.rekordbox_errors_suffix", {count: errCount}));
-    note(t("toast.rekordbox_added", {count: data.added.length, playlist: esc(REKORDBOX_PLAYLIST)})
+    note(t("toast.rekordbox_added", {count: data.added.length, playlist: esc(data.playlist || targetName)})
        + (extra.length ? `, ${extra.join(", ")}` : "") + ".");
     // Scroll-Position sichern: tb.innerHTML in render() baut die ganze
     // Tabelle neu auf und reisst dabei den Fokus vom geklickten Knopf los —
@@ -8268,6 +8435,168 @@ async function addToRekordboxPlaylist(rows, btn) {
   }
   btn.classList.remove("busy");
   setTimeout(() => btn.classList.remove("done", "failed"), 1200);
+}
+
+// ── Rekordbox-Playlisten bearbeiten ────────────────────────────────────────
+// Entfernen (aus Playlist / aus Sammlung) und Umsortieren schreiben wie das
+// Hinzufuegen direkt in Rekordbox' master.db -- Rekordbox und sein
+// Hintergrunddienst muessen geschlossen sein. Adressiert wird ueber
+// Rekordbox' eigene IDs aus EXT_CONTENTS[...].entries, nicht ueber Pfade.
+
+// Geoeffnete, normale Rekordbox-Playlist ({id, name, key}) oder null.
+function currentRekordboxPlaylist() {
+  const id = String(state.view || "");
+  if (extSourceOfView(id) !== "rekordbox" || !apiMode) return null;
+  const plId = id.slice(EXT_SOURCES.rekordbox.prefix.length);
+  const node = EXT_TREES.rekordbox.nodes.find(n => String(n.id) === plId);
+  if (!node || node.kind !== "playlist") return null;
+  return {id: plId, name: node.name, key: `rekordbox:${plId}`};
+}
+
+// Eintraege der geoeffneten Playlist, die zu den Zeilen gehoeren (alle
+// Vorkommen, auch doppelte).
+function rbEntriesForRows(pl, rows) {
+  const entry = EXT_CONTENTS.get(pl.key);
+  if (!entry || !entry.entries) return [];
+  const keys = new Set(rows.map(extRowKey));
+  return entry.entries.filter(e => keys.has(e.key));
+}
+
+// Vorabpruefung vor jedem Schreibzugriff: laeuft Rekordbox (oder sein
+// Hintergrunddienst), wird gar nicht erst geschrieben. Der Server prueft
+// ohnehin nochmal selbst -- das hier ist nur die schnellere Rueckmeldung.
+async function rbEnsureClosed() {
+  const status = await fetch("/api/rekordbox-status", {cache: "no-store"}).then(r => r.json());
+  if (status.ok && status.running) {
+    const err = new Error(t(status.agent ? "toast.rekordbox_agent_error" : "toast.rekordbox_open_error"));
+    err.sticky = true;
+    throw err;
+  }
+}
+
+async function rbPost(url, body) {
+  const res = await fetch(url, {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if (!data.ok) {
+    const err = new Error(data.error || t("error.unknown"));
+    if (data.sticky) err.sticky = true;
+    throw err;
+  }
+  return data;
+}
+
+// Nach einem Schreibvorgang: Inhalt und Zaehler im Rekordbox-Ast sind veraltet.
+// Die geoeffnete Playlist wird frisch geladen und neu angezeigt.
+async function rbRefreshAfterWrite(playlistId) {
+  if (playlistId) EXT_CONTENTS.delete(`rekordbox:${playlistId}`);
+  else for (const k of [...EXT_CONTENTS.keys()]) if (k.startsWith("rekordbox:")) EXT_CONTENTS.delete(k);
+  EXT_TREES.rekordbox.loaded = false;
+  await loadExtTree("rekordbox");
+  // Bewusst nicht openExtPlaylist(): das setzt die Spaltensortierung zurueck,
+  // nach einem Entfernen soll die gewaehlte Sortierung aber stehen bleiben.
+  const id = String(state.view || "");
+  if (extSourceOfView(id) === "rekordbox") {
+    const scrollY = window.scrollY;
+    try {
+      await loadExtPlaylist("rekordbox", id.slice(EXT_SOURCES.rekordbox.prefix.length));
+      rebuildPlaylistIndex();
+    } catch (err) { /* Baum zeigt den Fehler, Liste bleibt beim alten Stand */ }
+    updateCards(); render();
+    window.scrollTo(0, scrollY);
+  }
+}
+
+async function removeFromRekordboxPlaylist(rows) {
+  const pl = currentRekordboxPlaylist();
+  if (!pl || !rows.length) return;
+  const entries = rbEntriesForRows(pl, rows).filter(e => e.entryId);
+  if (!entries.length) return;
+  const ok = await askConfirmSimple(
+    t("rb.remove_entries_title", {count: entries.length, playlist: pl.name}),
+    t("rb.remove_entries_note"));
+  if (!ok) return;
+  try {
+    await rbEnsureClosed();
+    const data = await rbPost("/api/rekordbox-remove-entries",
+      {playlist_id: pl.id, entry_ids: entries.map(e => e.entryId)});
+    state.selected.clear();
+    await rbRefreshAfterWrite(pl.id);
+    note(t("rb.removed_entries", {count: data.removed.length, playlist: esc(data.playlist || pl.name)}));
+  } catch (err) {
+    note(t("rb.edit_failed", {error: err.message}), true, !!err.sticky);
+  }
+}
+
+async function removeFromRekordboxCollection(rows) {
+  if (!rows.length) return;
+  const pl = currentRekordboxPlaylist();
+  // Aus einer Rekordbox-Playlist heraus sind die IDs bekannt (auch fuer
+  // Titel ohne lokale Datei); sonst loest der Server ueber den Pfad auf.
+  const contentIds = pl ? [...new Set(rbEntriesForRows(pl, rows).map(e => e.contentId).filter(Boolean))] : [];
+  const paths = pl ? [] : rows.filter(r => r.p && !r.ext).map(r => r.p);
+  const body = {content_ids: contentIds, paths};
+  try {
+    const mem = await rbPost("/api/rekordbox-membership", body);
+    if (!mem.found) { note(t("rb.not_in_collection"), "soft"); return; }
+    const lists = Object.values(mem.playlists || {}).reduce((a, b) => a + b, 0);
+    const ok = await askConfirmSimple(
+      t("rb.remove_collection_title", {count: mem.found}),
+      t("rb.remove_collection_note", {lists}));
+    if (!ok) return;
+    await rbEnsureClosed();
+    const data = await rbPost("/api/rekordbox-remove-collection", body);
+    const gone = new Set(data.paths || []);
+    for (const r of DATA) if (r.rb && gone.has(r.p)) r.rb = 0;
+    state.selected.clear();
+    await rbRefreshAfterWrite(null);
+    if (!pl) render();
+    const anlzFailed = Object.keys(data.anlz_errors || {}).length;
+    note(t("rb.removed_collection", {count: data.removed.length})
+       + (anlzFailed ? " " + t("rb.anlz_failed", {count: anlzFailed}) : ""));
+  } catch (err) {
+    note(t("rb.edit_failed", {error: err.message}), true, !!err.sticky);
+  }
+}
+
+// Zeilen innerhalb einer Rekordbox-Playlist verschieben. Gerechnet wird auf
+// der VOLLSTAENDIGEN Eintragsliste (wie reorderInPlaylist() fuer eigene
+// Listen), damit Suche/Teilansicht nichts verlieren. Ergebnis ist die neue
+// Zahlenreihenfolge -- eine aktive Spaltensortierung wird dafuer abgeschaltet.
+async function reorderRekordboxPlaylist(rowIdxs, targetRow, where) {
+  const pl = currentRekordboxPlaylist();
+  const entry = pl && EXT_CONTENTS.get(pl.key);
+  if (!entry || !entry.entries) return;
+  const moving = new Set(rowIdxs.map(i => DATA[i]).filter(Boolean).map(extRowKey));
+  const targetKey = extRowKey(targetRow);
+  if (!moving.size || moving.has(targetKey)) return;
+  if (state.sort) { state.sort = null; syncSortHeaders(); saveFilters(); }
+  const rest = entry.entries.filter(e => !moving.has(e.key));
+  const moved = entry.entries.filter(e => moving.has(e.key));
+  let at = rest.findIndex(e => e.key === targetKey);
+  if (at === -1) at = rest.length;
+  else if (where === "after") {
+    // hinter das LETZTE Vorkommen des Ziels (doppelte Eintraege)
+    while (at + 1 < rest.length && rest[at + 1].key === targetKey) at += 1;
+    at += 1;
+  }
+  const next = [...rest.slice(0, at), ...moved, ...rest.slice(at)];
+  const before = {paths: entry.paths, entries: entry.entries};
+  // Sofort umordnen, Rekordbox im Hintergrund -- bei Fehler zurueck.
+  entry.entries = next;
+  entry.paths = next.map(e => e.key);
+  render();
+  try {
+    await rbEnsureClosed();
+    await rbPost("/api/rekordbox-reorder",
+      {playlist_id: pl.id, entry_ids: next.map(e => e.entryId).filter(Boolean)});
+    await rbRefreshAfterWrite(pl.id);
+  } catch (err) {
+    entry.entries = before.entries;
+    entry.paths = before.paths;
+    render();
+    note(t("rb.edit_failed", {error: err.message}), true, !!err.sticky);
+  }
 }
 
 // ── Löschen mit Rückfrage ───────────────────────────────────────────────
@@ -11234,7 +11563,8 @@ function dropStatus(text, warn) {
 // Drag-Reorder gibt es hier bewusst nicht (Menue-Knopf reicht, siehe
 // renderDropColsMenu()).
 function dropVisibleCols() {
-  return state.dropColumns.order.filter(k => !state.dropColumns.hidden.includes(k) && CELL_RENDERERS[k]);
+  // "#" ergibt nur in einer Playlist Sinn, Einzelpruefungen sind keine.
+  return state.dropColumns.order.filter(k => k !== "po" && !state.dropColumns.hidden.includes(k) && CELL_RENDERERS[k]);
 }
 
 function renderDrops() {

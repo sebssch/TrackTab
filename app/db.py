@@ -1082,6 +1082,13 @@ def mark_rekordbox_present(conn: sqlite3.Connection, paths: list[str]) -> None:
     conn.commit()
 
 
+def unmark_rekordbox_present(conn: sqlite3.Connection, paths: list[str]) -> None:
+    """Gegenstueck zu mark_rekordbox_present() nach einem Entfernen aus der
+    Rekordbox-Sammlung -- der Haken verschwindet sofort."""
+    conn.executemany("DELETE FROM rekordbox WHERE path = ?", [(p,) for p in paths])
+    conn.commit()
+
+
 def music_added_map(conn: sqlite3.Connection) -> dict[str, float]:
     return {r["path"]: r["added_ts"] for r in conn.execute(
         "SELECT path, added_ts FROM music_added")}

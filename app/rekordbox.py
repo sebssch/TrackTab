@@ -2,7 +2,9 @@
 Zugriff auf Rekordbox' eigene Datenbank (master.db, SQLCipher-verschluesselt)
 ueber die Drittanbieter-Bibliothek pyrekordbox. Zwei Richtungen:
   1. Lesen: welche Pfade stehen ueberhaupt in der Sammlung (Praesenz-Haken).
-  2. Schreiben: Tracks zu einer bestehenden Playlist hinzufuegen.
+  2. Schreiben: Playlisten bearbeiten (hinzufuegen, entfernen, umsortieren)
+     und Tracks aus der Sammlung entfernen -- immer als Soft-Delete wie
+     Rekordbox selbst (siehe _live()/_soft_delete()).
 
 Rekordbox selbst hat kein CLI/AppleScript-Dictionary -- pyrekordbox liest/
 schreibt master.db direkt ueber SQLAlchemy. Bei JEDEM Oeffnen (lesend wie
@@ -266,12 +268,76 @@ def _with_malformed_retry(pyrekordbox_mod, fn):
             pass
 
 
+def _live(row) -> bool:
+    """Rekordbox loescht nie hart, sondern setzt rb_local_deleted=1 (Cloud-
+    Sync-Historie, an echtem Material bestaetigt: auch "Von der Sammlung
+    entfernen" laesst die Zeilen stehen). pyrekordbox liefert solche Zeilen
+    ungefiltert mit -- jede Abfrage, die den sichtbaren Stand meint, muss sie
+    selbst aussortieren."""
+    return not getattr(row, "rb_local_deleted", 0)
+
+
+def _live_content(db, path: str):
+    """Lebender DjmdContent zu einem Pfad. Nach einem Entfernen und erneuten
+    Import fuehrt Rekordbox fuer denselben Pfad eine NEUE Zeile neben der
+    toten (an echtem Material: 26 Pfade mit beidem) -- ein blindes .first()
+    traf dort mitunter die tote und haengte z.B. neue Playlist-Eintraege an
+    einen in Rekordbox unsichtbaren Track."""
+    for content in db.get_content(FolderPath=path):
+        if _live(content):
+            return content
+    return None
+
+
+def _add_content_fresh(db, path: str, **kwargs):
+    """
+    Wie db.add_content(), aber auch dann, wenn fuer den Pfad nur noch eine
+    soft-geloeschte Zeile existiert. pyrekordbox' add_content() lehnt jeden
+    vorhandenen FolderPath ab, auch tote -- Rekordbox selbst legt in diesem
+    Fall eine neue Zeile an (siehe _live_content()). Der Nachbau folgt
+    add_content() aus pyrekordbox 0.4.4 Feld fuer Feld.
+    """
+    try:
+        return db.add_content(path, **kwargs)
+    except ValueError as exc:
+        if "already exists" not in str(exc):
+            raise
+        live = _live_content(db, path)
+        if live is not None:
+            # Wettlauf: zwischendurch doch lebend angelegt worden.
+            return live
+    import datetime
+    from uuid import uuid4
+    from pyrekordbox.db6 import tables
+
+    p = Path(path)
+    file_type_string = p.suffix.lstrip(".").upper()
+    try:
+        file_type = getattr(tables.FileType, file_type_string)
+    except (AttributeError, ValueError) as exc:
+        raise ValueError(f"Ungültiger Dateityp: {p.suffix}") from exc
+    id_ = db.generate_unused_id(tables.DjmdContent)
+    file_id = db.generate_unused_id(tables.DjmdContent, id_field_name="rb_file_id")
+    content_link = db.get_menu_items(Name="TRACK").one()
+    device = db.get_device().first()
+    today = datetime.date.today()
+    content = tables.DjmdContent.create(
+        ID=id_, UUID=str(uuid4()), ContentLink=content_link.rb_local_usn,
+        DateCreated=today, DeviceID=device.ID, FileNameL=p.name,
+        FileSize=p.stat().st_size, FileType=file_type.value,
+        FolderPath=str(p), HotCueAutoLoad="on", MasterDBID=device.MasterDBID,
+        MasterSongID=id_, StockDate=today, rb_file_id=file_id, **kwargs)
+    db.add(content)
+    db.flush()
+    return content
+
+
 def collection_paths() -> set[str]:
     """Alle Dateipfade in der Rekordbox-Sammlung (read-only)."""
     pyrekordbox_mod = _import_pyrekordbox()
     return _with_malformed_retry(
         pyrekordbox_mod,
-        lambda db: {c.FolderPath for c in db.get_content() if c.FolderPath})
+        lambda db: {c.FolderPath for c in db.get_content() if c.FolderPath and _live(c)})
 
 
 _cached_db = None            # (Rekordbox6Database, master_db_path, mtime)
@@ -414,7 +480,7 @@ def stale_content_entries() -> list[dict]:
         out: list[dict] = []
         for c in db.get_content():
             path = c.FolderPath or ""
-            if not path:
+            if not path or not _live(c):
                 continue
             case_fix = None
             if Path(path).is_file():
@@ -547,7 +613,7 @@ def get_track_extras(path: str, style: str = "rgb") -> dict | None:
 
 
 def _track_extras(db, path: str, style: str) -> dict | None:
-    content = db.get_content(FolderPath=path).first()
+    content = _live_content(db, path)
     if content is None or not content.Analysed:
         return None
 
@@ -603,6 +669,30 @@ def is_running() -> bool:
     return bool(get_rekordbox_pid())
 
 
+def agent_running() -> bool:
+    """rekordboxAgent (Cloud-Sync-Hintergrundprozess) laeuft. Er schreibt
+    selbst in master.db und kann auch ohne geoeffnetes Rekordbox aktiv sein
+    -- is_running() sucht nur den Prozessnamen 'rekordbox' (Version 6 und 7
+    heissen beide so), den Agenten erfasst es nicht."""
+    _import_pyrekordbox()
+    from pyrekordbox.utils import get_rekordbox_agent_pid
+    return bool(get_rekordbox_agent_pid())
+
+
+def _check_writable() -> None:
+    """Gemeinsamer Vorspann JEDES Schreibzugriffs auf master.db."""
+    if is_running():
+        raise RekordboxRunning(
+            "Rekordbox ist gerade geöffnet. Bitte Rekordbox beenden und es "
+            "anschließend erneut versuchen — ein Schreibzugriff während "
+            "Rekordbox läuft könnte die Bibliothek beschädigen.")
+    if agent_running():
+        raise RekordboxRunning(
+            "Der Hintergrunddienst „rekordboxAgent“ läuft noch. Bitte ihn "
+            "beenden (Menüleisten-Symbol → Beenden) und es erneut versuchen — "
+            "er schreibt ebenfalls in die Rekordbox-Bibliothek.")
+
+
 def content_present(path: str) -> bool:
     """Leichter Praesenz-Check fuer GENAU einen Pfad -- Gegenstueck zu
     collection_paths() (liest die GESAMTE Sammlung, volles Backup+Neuoeffnen
@@ -620,7 +710,7 @@ def content_present(path: str) -> bool:
         pyrekordbox_mod = _import_pyrekordbox()
         return bool(_query_cached(
             pyrekordbox_mod,
-            lambda db: db.get_content(FolderPath=path).first() is not None))
+            lambda db: _live_content(db, path) is not None))
     except Exception:                                  # noqa: BLE001
         return False
 
@@ -939,14 +1029,23 @@ def playlist_tracks(playlist_id: str) -> list[dict]:
                            key=lambda s: (s.TrackNo or 0))
             # Gleicher Soft-Delete-Filter wie in playlists() -- sonst tauchen
             # laengst entfernte Tracks wieder in der Trackliste auf.
-            contents = [s.Content for s in songs
-                        if s.Content is not None and not getattr(s, "rb_local_deleted", 0)]
-        for content in contents:
+            # Eintrags-ID mitliefern: Entfernen/Umsortieren adressieren den
+            # EINZELNEN Playlist-Eintrag, nicht den Pfad -- der wird vom
+            # Server auf unsere DB-Schreibweise umgeschrieben, fehlt bei
+            # Titeln ohne lokale Datei und ist bei doppelten Eintraegen
+            # mehrdeutig.
+            contents = [(s.Content, s.ID) for s in songs
+                        if s.Content is not None and _live(s)]
+        if node.Attribute == _RB_SMART:
+            contents = [(c, None) for c in contents]
+        for content, entry_id in contents:
             artist = getattr(content, "Artist", None)
             rows.append({
                 "path": content.FolderPath or "",
                 "title": content.Title or "",
                 "artist": getattr(artist, "Name", "") or "",
+                "entry_id": str(entry_id) if entry_id is not None else None,
+                "content_id": str(content.ID),
             })
         return rows
 
@@ -954,7 +1053,8 @@ def playlist_tracks(playlist_id: str) -> list[dict]:
 
 
 def add_tracks_to_playlist(paths: list[str], playlist_name: str,
-                            metadata: dict | None = None) -> dict:
+                            metadata: dict | None = None,
+                            playlist_id: str | None = None) -> dict:
     """
     Fuegt Tracks zu einer BESTEHENDEN Rekordbox-Playlist hinzu. Legt die
     Playlist nicht an -- ein unbekannter Name ist ein Fehler, kein Auto-Create.
@@ -963,23 +1063,42 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
     Titel/Interpret/Album/Genre/BPM/Komponist/Jahr/Kommentar fuer Tracks, die
     Rekordbox noch nicht kennt -- siehe _content_tag_kwargs().
 
-    Liefert {"added": [...], "skipped": [...], "errors": {pfad: meldung}}.
+    'playlist_id' (optional, z.B. vom Drag & Drop auf einen Baumknoten) hat
+    Vorrang vor dem Namen: Namen sind in Rekordbox nicht eindeutig. Ordner und
+    Smart Playlists werden abgelehnt (dort laesst sich nichts hinzufuegen).
+
+    Liefert {"added": [...], "skipped": [...], "errors": {pfad: meldung},
+    "playlist": name}.
     """
     metadata = metadata or {}
     playlist_name = (playlist_name or "").strip()
-    if not playlist_name:
+    playlist_id = str(playlist_id or "").strip()
+    if not playlist_name and not playlist_id:
         raise ValueError("Keine Rekordbox-Playlist eingestellt (Einstellungen -> "
                           "Externe Programme).")
-    if is_running():
-        raise RekordboxRunning(
-            "Rekordbox ist gerade geöffnet. Bitte Rekordbox beenden und es "
-            "anschließend erneut versuchen — ein Schreibzugriff während "
-            "Rekordbox läuft könnte die Bibliothek beschädigen.")
+    _check_writable()
 
     pyrekordbox_mod = _import_pyrekordbox()
 
     def _run(db):
-        playlist = _find_playlist(db, playlist_name)
+        if playlist_id:
+            # Mit ID= liefert pyrekordbox direkt das Objekt (bzw. None), nicht
+            # eine Abfrage mit .first().
+            playlist = db.get_playlist(ID=playlist_id)
+            if playlist is not None and hasattr(playlist, "first"):
+                playlist = playlist.first()
+            if playlist is not None and getattr(playlist, "rb_local_deleted", 0):
+                playlist = None
+            if playlist is None:
+                raise PlaylistNotFound(
+                    "Die Playlist existiert in Rekordbox nicht mehr. "
+                    "Playlist-Ansicht neu laden und erneut versuchen.")
+            if playlist.Attribute != _RB_PLAYLIST:
+                raise PlaylistNotFound(
+                    f"„{playlist.Name}“ ist keine normale Playlist "
+                    "(Ordner und Smart Playlists nehmen keine Tracks auf).")
+        else:
+            playlist = _find_playlist(db, playlist_name)
         if playlist is None:
             raise PlaylistNotFound(
                 f"Playlist „{playlist_name}“ existiert nicht in Rekordbox. "
@@ -992,27 +1111,285 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
         errors: dict[str, str] = {}
         for path in paths:
             try:
-                content = db.get_content(FolderPath=path).first()
+                content = _live_content(db, path)
                 if content is None:
-                    try:
-                        content = db.add_content(path, **_content_tag_kwargs(db, metadata.get(path)))
-                    except ValueError:
-                        # Wettlauf mit einem anderen Prozess -- zwischen der
-                        # Abfrage oben und hier doch schon angelegt worden.
-                        content = db.get_content(FolderPath=path).first()
-                        if content is None:
-                            raise
-                already = db.get_playlist_songs(
-                    PlaylistID=playlist.ID, ContentID=content.ID).first()
-                if already is not None:
+                    content = _add_content_fresh(
+                        db, path, **_content_tag_kwargs(db, metadata.get(path)))
+                # Nur LEBENDE Eintraege zaehlen: ein frueher in Rekordbox
+                # entfernter Eintrag bleibt als Soft-Delete stehen und liesse
+                # den Track sonst faelschlich als "schon drin" ueberspringen.
+                already = any(_live(x) for x in db.get_playlist_songs(
+                    PlaylistID=playlist.ID, ContentID=content.ID))
+                if already:
                     skipped.append(path)
                     continue
                 db.add_to_playlist(playlist, content)
                 added.append(path)
             except Exception as exc:                     # noqa: BLE001
                 errors[path] = str(exc)
+        if added:
+            # add_to_playlist() vergibt TrackNo = Anzahl ALLER Zeilen + 1,
+            # soft-geloeschte eingeschlossen -- das hinterlaesst Luecken.
+            import datetime
+            db.flush()
+            _renumber(db, _live_songs(db, playlist.ID), datetime.datetime.now())
         db.commit()
-        return {"added": added, "skipped": skipped, "errors": errors}
+        return {"added": added, "skipped": skipped, "errors": errors,
+                "playlist": playlist.Name or playlist_name}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def _playlist_by_id(db, playlist_id: str):
+    """Normale (nicht Smart, kein Ordner), lebende Playlist per ID oder
+    PlaylistNotFound. get_playlist(ID=...) liefert ueber den Primaer-
+    schluessel das Objekt SELBST, nicht eine Abfrage."""
+    playlist = db.get_playlist(ID=str(playlist_id))
+    if playlist is not None and hasattr(playlist, "first"):
+        playlist = playlist.first()
+    if playlist is None or not _live(playlist):
+        raise PlaylistNotFound(
+            "Die Playlist existiert in Rekordbox nicht mehr. "
+            "Playlist-Ansicht neu laden und erneut versuchen.")
+    if playlist.Attribute != _RB_PLAYLIST:
+        raise PlaylistNotFound(
+            f"„{playlist.Name}“ ist keine normale Playlist "
+            "(Ordner und Smart Playlists lassen sich nicht bearbeiten).")
+    return playlist
+
+
+def _live_songs(db, playlist_id: str) -> list:
+    """Lebende Eintraege einer Playlist in ihrer Reihenfolge. TrackNo ist an
+    echtem Material nicht immer sauber (Luecken, Doppelte) -- die ID als
+    zweiter Schluessel haelt die Reihenfolge trotzdem stabil."""
+    songs = [s for s in db.get_playlist_songs(PlaylistID=str(playlist_id)) if _live(s)]
+    return sorted(songs, key=lambda s: (s.TrackNo or 0, str(s.ID)))
+
+
+def _touch(db, rows: list, now, **fields) -> None:
+    """Setzt Felder an mehreren Zeilen als EINE Aenderung fuer Rekordbox'
+    Update-Zaehler (USN) -- dasselbe Muster wie pyrekordbox'
+    move_song_in_playlist(): Einzelverfolgung aus, danach on_move() mit der
+    ganzen Liste, commit() vergibt allen dieselbe rb_local_usn."""
+    if not rows:
+        return
+    with db.registry.disabled():
+        for row in rows:
+            for key, value in fields.items():
+                setattr(row, key, value)
+            if hasattr(row, "updated_at"):
+                row.updated_at = now
+    db.registry.on_move(list(rows))
+
+
+def _soft_delete(db, rows: list, now) -> None:
+    """Loeschen wie Rekordbox selbst (an echtem Material abgelesen): Zeile
+    bleibt stehen, rb_local_deleted=1 und rb_data_status=2. pyrekordbox'
+    remove_from_playlist() loescht dagegen hart."""
+    _touch(db, [r for r in rows if _live(r)], now, rb_local_deleted=1, rb_data_status=2)
+
+
+def _renumber(db, songs: list, now) -> None:
+    """TrackNo lueckenlos 1..n in der Reihenfolge von 'songs'. Nur geaenderte
+    Zeilen werden angefasst."""
+    changed = []
+    with db.registry.disabled():
+        for no, song in enumerate(songs, start=1):
+            if song.TrackNo != no:
+                song.TrackNo = no
+                song.updated_at = now
+                changed.append(song)
+    if changed:
+        db.registry.on_move(changed)
+
+
+def remove_entries_from_playlist(playlist_id: str, entry_ids: list[str]) -> dict:
+    """
+    Entfernt einzelne Eintraege (DjmdSongPlaylist.ID) aus einer normalen
+    Playlist. Der Track bleibt in der Sammlung und in allen anderen
+    Playlisten. Liefert {"removed": [...], "skipped": [...], "playlist": name}.
+    """
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+    wanted = [str(e) for e in entry_ids if e]
+
+    def _run(db):
+        import datetime
+        now = datetime.datetime.now()
+        playlist = _playlist_by_id(db, playlist_id)
+        songs = _live_songs(db, playlist.ID)
+        by_id = {str(s.ID): s for s in songs}
+        hit = [by_id[e] for e in wanted if e in by_id]
+        skipped = [e for e in wanted if e not in by_id]
+        _soft_delete(db, hit, now)
+        hit_ids = {str(s.ID) for s in hit}
+        _renumber(db, [s for s in songs if str(s.ID) not in hit_ids], now)
+        db.commit()
+        return {"removed": sorted(hit_ids), "skipped": skipped,
+                "playlist": playlist.Name or ""}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def reorder_playlist(playlist_id: str, entry_ids: list[str]) -> dict:
+    """
+    Setzt die Reihenfolge einer normalen Playlist neu. 'entry_ids' ist die
+    gewuenschte Gesamtreihenfolge; nicht genannte lebende Eintraege (z.B. in
+    Rekordbox zwischenzeitlich hinzugekommen) wandern in ihrer bisherigen
+    Reihenfolge ans Ende -- es geht nie ein Eintrag verloren.
+    """
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+    wanted = [str(e) for e in entry_ids if e]
+
+    def _run(db):
+        import datetime
+        now = datetime.datetime.now()
+        playlist = _playlist_by_id(db, playlist_id)
+        songs = _live_songs(db, playlist.ID)
+        by_id = {str(s.ID): s for s in songs}
+        ordered, seen = [], set()
+        for e in wanted:
+            if e in by_id and e not in seen:
+                ordered.append(by_id[e])
+                seen.add(e)
+        ordered += [s for s in songs if str(s.ID) not in seen]
+        _renumber(db, ordered, now)
+        db.commit()
+        return {"order": [str(s.ID) for s in ordered], "playlist": playlist.Name or ""}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def resolve_content_ids(paths: list[str]) -> dict[str, str]:
+    """Pfad -> ID des lebenden DjmdContent (read-only). Faellt auf einen
+    Vergleich ohne Gross-/Kleinschreibung und Unicode-Form zurueck --
+    macOS-Volumes sind case-insensitiv, Rekordbox' FolderPath und unser Scan
+    koennen dieselbe Datei verschieden schreiben."""
+    import unicodedata
+    pyrekordbox_mod = _import_pyrekordbox()
+
+    def norm(p: str) -> str:
+        return unicodedata.normalize("NFC", p).casefold()
+
+    def _query(db):
+        out: dict[str, str] = {}
+        missing = []
+        for p in paths:
+            c = _live_content(db, p)
+            if c is not None:
+                out[p] = str(c.ID)
+            else:
+                missing.append(p)
+        if missing:
+            loose = {norm(c.FolderPath): str(c.ID) for c in db.get_content()
+                     if c.FolderPath and _live(c)}
+            for p in missing:
+                cid = loose.get(norm(p))
+                if cid:
+                    out[p] = cid
+        return out
+
+    return _query_cached(pyrekordbox_mod, _query)
+
+
+def collection_membership(content_ids: list[str]) -> dict[str, int]:
+    """Anzahl normaler Playlisten je Track (fuer den Warndialog vor dem
+    Entfernen aus der Sammlung; read-only)."""
+    pyrekordbox_mod = _import_pyrekordbox()
+    ids = {str(c) for c in content_ids}
+
+    def _query(db):
+        live_pl = {str(n.ID) for n in db.get_playlist()
+                   if _live(n) and n.Attribute == _RB_PLAYLIST}
+        lists: dict[str, set] = {c: set() for c in ids}
+        for s in db.get_playlist_songs():
+            cid = str(s.ContentID)
+            if cid in lists and _live(s) and str(s.PlaylistID) in live_pl:
+                lists[cid].add(str(s.PlaylistID))
+        return {c: len(v) for c, v in lists.items()}
+
+    return _query_cached(pyrekordbox_mod, _query)
+
+
+def _content_tables():
+    """Alle pyrekordbox-Tabellen mit ContentID-Bezug und Soft-Delete-Spalte
+    (Playlist-Eintraege, Cues, Verlauf, Mixer-Parameter, Tags, ...) -- per
+    Reflektion statt fester Liste, damit eine neue Tabelle in einem
+    pyrekordbox-Update nicht stillschweigend uebergangen wird."""
+    from pyrekordbox.db6 import tables
+    out = []
+    for obj in vars(tables).values():
+        if (isinstance(obj, type) and issubclass(obj, tables.Base) and obj is not tables.Base
+                and hasattr(obj, "__table__") and "ContentID" in obj.__table__.c
+                and "rb_local_deleted" in obj.__table__.c):
+            out.append(obj)
+    return out
+
+
+def remove_from_collection(content_ids: list[str]) -> dict:
+    """
+    Entfernt Tracks aus der Rekordbox-Sammlung -- wie Rekordbox' eigener
+    Befehl "Von der Sammlung entfernen" (an echtem Material abgelesen):
+    DjmdContent und ALLE abhaengigen Zeilen werden soft-geloescht, die
+    Analyseordner (ANLZ: Beatgrid, Wellenform, Cues) verschwinden. Die
+    Audiodatei selbst bleibt unangetastet.
+
+    Die ANLZ-Ordner werden nicht geloescht, sondern nach
+    backup/rekordbox/anlz/<zeitstempel>/ verschoben -- zusammen mit dem
+    master.db-Backup desselben Vorgangs (_open()) laesst sich so alles
+    vollstaendig zurueckspielen. Verschoben wird erst NACH dem commit():
+    scheitert der Datenbankteil, bleibt die Analyse an ihrem Platz.
+
+    Liefert {"removed": [{"content_id", "path"}], "skipped": [...],
+    "anlz_backup": pfad|None, "anlz_errors": {...}}.
+    """
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+    wanted = list(dict.fromkeys(str(c) for c in content_ids if c))
+
+    def _run(db):
+        import datetime
+        from pyrekordbox.db6 import tables
+        now = datetime.datetime.now()
+        removed, skipped, anlz_dirs = [], [], []
+        touched_playlists: set[str] = set()
+        dep_tables = _content_tables()
+        for cid in wanted:
+            content = db.query(tables.DjmdContent).filter_by(ID=cid).first()
+            if content is None or not _live(content):
+                skipped.append(cid)
+                continue
+            for table in dep_tables:
+                rows = [r for r in db.query(table).filter(table.ContentID == cid) if _live(r)]
+                if table is tables.DjmdSongPlaylist:
+                    touched_playlists.update(str(r.PlaylistID) for r in rows)
+                _soft_delete(db, rows, now)
+            try:
+                if content.AnalysisDataPath:
+                    anlz_dirs.append((cid, Path(db.get_anlz_dir(content))))
+            except Exception:                            # noqa: BLE001
+                pass
+            _soft_delete(db, [content], now)
+            removed.append({"content_id": cid, "path": content.FolderPath or ""})
+        for pid in touched_playlists:
+            _renumber(db, _live_songs(db, pid), now)
+        db.commit()
+
+        anlz_backup = None
+        anlz_errors: dict[str, str] = {}
+        existing = [(cid, d) for cid, d in anlz_dirs if d.is_dir()]
+        if existing:
+            anlz_backup = cfgmod.resolve("backup") / "rekordbox" / "anlz" / time.strftime("%Y%m%d-%H%M%S")
+            anlz_backup.mkdir(parents=True, exist_ok=True)
+            for cid, d in existing:
+                try:
+                    shutil.move(str(d), str(anlz_backup / cid))
+                except Exception as exc:                 # noqa: BLE001
+                    anlz_errors[cid] = str(exc)
+        return {"removed": removed, "skipped": skipped,
+                "anlz_backup": str(anlz_backup) if anlz_backup else None,
+                "anlz_errors": anlz_errors}
 
     return _with_malformed_retry(pyrekordbox_mod, _run)
 
@@ -1032,11 +1409,7 @@ def update_relocated_tracks(moves: list[dict], metadata: dict) -> dict:
 
     Liefert {"updated": [...], "not_found": [...], "errors": {pfad: meldung}}.
     """
-    if is_running():
-        raise RekordboxRunning(
-            "Rekordbox ist gerade geöffnet. Bitte Rekordbox beenden und es "
-            "anschließend erneut versuchen — ein Schreibzugriff während "
-            "Rekordbox läuft könnte die Bibliothek beschädigen.")
+    _check_writable()
 
     pyrekordbox_mod = _import_pyrekordbox()
 
@@ -1048,9 +1421,9 @@ def update_relocated_tracks(moves: list[dict], metadata: dict) -> dict:
             path = entry["path"]
             prior_path = entry.get("prior_path") or path
             try:
-                content = db.get_content(FolderPath=prior_path).first()
+                content = _live_content(db, prior_path)
                 if content is None and prior_path != path:
-                    content = db.get_content(FolderPath=path).first()
+                    content = _live_content(db, path)
                 if content is None:
                     not_found.append(path)
                     continue

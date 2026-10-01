@@ -316,14 +316,16 @@ GROUPS = [
                      "installierte Rekordbox-Versionen, keine anderen Programme. "
                      "Sind mehrere installiert (z.B. „rekordbox 6“ und "
                      "„rekordbox 7“), legt sie auch fest, welche Version für den "
-                     "Bibliothekszugriff (Playlist hinzufügen, Präsenz-Abgleich, "
+                     "Bibliothekszugriff (Playlisten bearbeiten, Präsenz-Abgleich, "
                      "Cues) verwendet wird. Leer lassen, dann wird die neueste "
                      "installierte Version automatisch verwendet."},
             {"key": "rekordbox_playlist", "type": "text", "rbpick": True, "reload": True,
              "label": "Rekordbox-Playlist",
              "placeholder": "z.B. ##WORK/Neue Tracks",
              "help": "Bereits bestehende Rekordbox-Playlist. Über den "
-                     "Rekordbox-Knopf hinzugefügte Tracks landen dort — die "
+                     "Rekordbox-Knopf hinzugefügte Tracks landen dort (per "
+                     "Drag & Drop auf eine Playlist im Baum lässt sich jede "
+                     "andere wählen) — die "
                      "Playlist wird nicht automatisch angelegt, sie muss vorher "
                      "in Rekordbox existieren. „Playlist auswählen“ lädt den "
                      "aktuellen Playlist-Baum und geht nur bei geschlossenem "
@@ -342,7 +344,8 @@ GROUPS = [
              "help": "Tracks mit gemessenem Cutoff darunter lösen die Warnung aus."},
             {"key": "rekordbox_quality_check", "type": "bool", "width": "half",
              "label": "Qualitätsprüfung beim Import",
-             "help": "Prüft beim Hinzufügen zu einer Rekordbox-Playlist den "
+             "help": "Prüft beim Hinzufügen zu einer Rekordbox-Playlist "
+                     "(Knopf oder Drag & Drop) den "
                      "gemessenen Cutoff jedes Tracks gegen die Schwelle rechts "
                      "— unabhängig von Verdikt oder manueller "
                      "Korrektur-Markierung. Liegt ein Track darunter (oder ist "

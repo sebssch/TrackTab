@@ -357,6 +357,17 @@ Klappst du **Music App** oder **Rekordbox** auf, liest TrackTab deren Playlisten
 
 Tracks, zu denen TrackTab keine Datei hat, stehen trotzdem an ihrer Stelle in der Liste — gedämpft und mit einem Hinweis: **keine lokale Datei** (ein Apple-Music-Track aus der Cloud) oder **nicht in TrackTab** (eine Datei außerhalb der gescannten Ordner). So bleibt die Reihenfolge nachvollziehbar, statt dass Lücken entstehen. Diese Zeilen zählen nirgends mit und lassen sich nicht abspielen oder bearbeiten.
 
+**Tracks per Drag & Drop in eine Rekordbox-Playlist ziehen:** Zieh einen oder mehrere Tracks aus der Tabelle auf eine normale Rekordbox-Playlist im Baum. Voraussetzung ist, dass **Rekordbox geschlossen ist**, weil TrackTab direkt in Rekordbox' Datenbank schreibt (vorher entsteht automatisch ein Backup). TrackTab prüft das mehrfach: Läuft Rekordbox, werden die Rekordbox-Playlisten beim Ziehen gestrichelt rot markiert und nehmen nichts an; wurde Rekordbox erst nach dem Ziehen gestartet, erscheint beim Ablegen ein bleibender Hinweis und es wird nichts geschrieben. Ordner und Smart Playlists sind kein Ziel. Tracks, die schon in der Playlist liegen, werden übersprungen.
+
+**Rekordbox-Playlisten bearbeiten:** In einer geöffneten Rekordbox-Playlist (keine Smart Playlist) gibt es im „…"-Menü einer Zeile und in der Leiste für ausgewählte Tracks zwei Befehle:
+
+- **Aus Rekordbox-Playlist entfernen** — nimmt nur den Eintrag aus dieser Playlist. Der Track bleibt in der Rekordbox-Sammlung und in allen anderen Playlisten.
+- **Aus Rekordbox-Sammlung entfernen** — wirkt wie Rekordbox' eigenes „Von der Sammlung entfernen": Der Track verschwindet aus allen Rekordbox-Playlisten, Cues und Verlauf entfallen. Die Audiodatei bleibt liegen. Vorher fragt TrackTab nach und zeigt, wie viele Playlist-Einträge betroffen sind. Diesen Befehl gibt es auch in allen anderen Listen für Tracks mit Rekordbox-Haken.
+
+**Reihenfolge ändern:** Zieh Zeilen innerhalb einer Rekordbox-Playlist an eine neue Stelle — die neue Reihenfolge wird in Rekordbox übernommen. Die Spalte **„#"** zeigt die Position in der Playlist (auch in eigenen und Music-App-Playlisten). Sortierst du die Tabelle nach einer anderen Spalte, z. B. nach Titel, ändert das nur die Ansicht; die Zahlen in „#" bleiben die echte Reihenfolge. Ein Klick auf „#" (oder der dritte Klick auf eine andere Spalte) stellt die Playlist-Reihenfolge wieder her.
+
+Für alle drei Aktionen gilt: **Rekordbox muss geschlossen sein**, ebenso der Hintergrunddienst „rekordboxAgent" (Menüleisten-Symbol). Vor jedem Schreiben legt TrackTab ein Backup der Rekordbox-Bibliothek an (`backup/rekordbox/`); beim Entfernen aus der Sammlung wandert auch die Rekordbox-Analyse des Tracks (Beatgrid, Wellenform) dorthin, sodass sich alles vollständig zurückspielen lässt.
+
 Einzelne Rekordbox-Smart-Playlists verwenden Zeitregeln, die nur Rekordbox selbst auswerten kann. Sie erscheinen im Baum, ihr Inhalt bleibt aber leer — TrackTab sagt das beim Öffnen.
 
 ![Regel-Editor einer Smart Playlist](docs/025-fremde-playlisten.png)

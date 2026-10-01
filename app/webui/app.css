@@ -565,6 +565,7 @@
        color:var(--accent); }
 
   .treenode.dropinto { outline:2px solid var(--accent); outline-offset:-2px; }
+  .treenode.dropblocked { outline:2px dashed var(--fake); outline-offset:-2px; cursor:not-allowed; }
   .treenode.dropbefore { box-shadow:inset 0 2px 0 0 var(--accent); }
   .treenode.dropafter { box-shadow:inset 0 -2px 0 0 var(--accent); }
   /* Waehrend Tracks gezogen werden, heben sich die moeglichen Ziele ab --

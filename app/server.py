@@ -1295,10 +1295,14 @@ class _Handler(BaseHTTPRequestHandler):
         """
         try:
             running = rekordbox_mod.is_running()
+            # Der Cloud-Sync-Dienst schreibt ebenfalls in master.db -- fuer
+            # die Oberflaeche zaehlt er wie ein geoeffnetes Rekordbox, nur
+            # mit eigener Meldung ("agent").
+            agent = not running and rekordbox_mod.agent_running()
         except Exception as exc:                     # noqa: BLE001
             self._fail(str(exc), 500)
             return
-        self._json({"ok": True, "running": running})
+        self._json({"ok": True, "running": running or agent, "agent": agent})
 
     def _get_merge_dismissed(self) -> None:
         """Dauerhaft ausgeblendete Zusammenfuehrungs-Vorschlaege aller drei
@@ -1755,6 +1759,14 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_add_to_library()
         elif route == "/api/rekordbox-add-playlist":
             self._post_rekordbox_add_playlist()
+        elif route == "/api/rekordbox-remove-entries":
+            self._post_rekordbox_remove_entries()
+        elif route == "/api/rekordbox-reorder":
+            self._post_rekordbox_reorder()
+        elif route == "/api/rekordbox-remove-collection":
+            self._post_rekordbox_remove_collection()
+        elif route == "/api/rekordbox-membership":
+            self._post_rekordbox_membership()
         elif route == "/api/rekordbox-sync":
             self._post_rekordbox_sync()
         elif route == "/api/rekordbox-scan":
@@ -2375,6 +2387,7 @@ class _Handler(BaseHTTPRequestHandler):
             payload = json.loads(self._body(1_000_000).decode("utf-8"))
             raw = payload.get("paths")
             paths = [str(p) for p in raw] if raw is not None else [str(payload["path"])]
+            playlist_id = str(payload.get("playlist_id") or "")
         except (ValueError, KeyError, TypeError) as exc:
             self._fail(f"Ungültige Anfrage: {exc}")
             return
@@ -2401,7 +2414,8 @@ class _Handler(BaseHTTPRequestHandler):
             # den beiden Abschnitten liegt nichts, was zusammenhaengen muss --
             # mark_rekordbox_present() ist ein reiner Praesenz-Cache.
             with self._rekordbox_lock:
-                result = rekordbox_mod.add_tracks_to_playlist(paths, playlist_name, metadata)
+                result = rekordbox_mod.add_tracks_to_playlist(
+                    paths, playlist_name, metadata, playlist_id or None)
             if result["added"]:
                 with self.lock:
                     conn = db_mod.connect(cfg)
@@ -2416,8 +2430,122 @@ class _Handler(BaseHTTPRequestHandler):
             self._fail(str(exc), 500)
             return
         for p in result["added"]:
-            audit_log.log("rekordbox", p, f"zu „{playlist_name}\"")
+            audit_log.log("rekordbox", p, f"zu „{result.get('playlist') or playlist_name}\"")
         self._json({"ok": True, **result})
+
+    def _rekordbox_write(self, fn) -> dict | None:
+        """Gemeinsamer Rahmen der Rekordbox-Bearbeitungen: eigener Lock (nicht
+        self.lock, siehe Reihenfolge-Regel bei _rekordbox_lock), laufendes
+        Rekordbox/Agent als bleibender Hinweis, alles andere als Fehler.
+        Liefert das Ergebnis oder None (Antwort ist dann schon gesendet)."""
+        try:
+            with self._rekordbox_lock:
+                return fn()
+        except rekordbox_mod.RekordboxRunning as exc:
+            self._json({"ok": False, "error": str(exc), "sticky": True}, 500)
+        except Exception as exc:                     # noqa: BLE001
+            self._fail(str(exc), 500)
+        return None
+
+    def _json_payload(self) -> dict | None:
+        try:
+            payload = json.loads(self._body(1_000_000).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("kein Objekt")
+            return payload
+        except (ValueError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return None
+
+    def _post_rekordbox_remove_entries(self) -> None:
+        """Einzelne Eintraege (DjmdSongPlaylist.ID) aus einer Rekordbox-
+        Playlist entfernen -- der Track bleibt in der Sammlung. Adressiert
+        wird ueber Rekordbox' eigene IDs statt ueber Pfade, deshalb ohne
+        _known_file(): auch Titel ohne lokale Datei lassen sich entfernen."""
+        payload = self._json_payload()
+        if payload is None:
+            return
+        pid = str(payload.get("playlist_id") or "")
+        entry_ids = [str(e) for e in (payload.get("entry_ids") or []) if e]
+        if not pid or not entry_ids:
+            self._fail("Keine Playlist oder keine Einträge angegeben")
+            return
+        result = self._rekordbox_write(
+            lambda: rekordbox_mod.remove_entries_from_playlist(pid, entry_ids))
+        if result is None:
+            return
+        audit_log.log("rekordbox", "", f"{len(result['removed'])} aus „{result['playlist']}\" entfernt")
+        self._json({"ok": True, **result})
+
+    def _post_rekordbox_reorder(self) -> None:
+        """Neue Gesamtreihenfolge einer Rekordbox-Playlist (Eintrags-IDs)."""
+        payload = self._json_payload()
+        if payload is None:
+            return
+        pid = str(payload.get("playlist_id") or "")
+        entry_ids = [str(e) for e in (payload.get("entry_ids") or []) if e]
+        if not pid or not entry_ids:
+            self._fail("Keine Playlist oder keine Einträge angegeben")
+            return
+        result = self._rekordbox_write(lambda: rekordbox_mod.reorder_playlist(pid, entry_ids))
+        if result is None:
+            return
+        audit_log.log("rekordbox", "", f"„{result['playlist']}\" umsortiert")
+        self._json({"ok": True, **result})
+
+    def _content_ids_from_payload(self, payload: dict) -> list[str]:
+        """content_ids direkt (aus einer Rekordbox-Playlist) und/oder Pfade
+        (Bibliothekszeilen kennen nur den Pfad) -> IDs lebender Tracks."""
+        ids = [str(c) for c in (payload.get("content_ids") or []) if c]
+        paths = [str(p) for p in (payload.get("paths") or []) if p]
+        if paths:
+            ids += list(rekordbox_mod.resolve_content_ids(paths).values())
+        return list(dict.fromkeys(ids))
+
+    def _post_rekordbox_membership(self) -> None:
+        """Wie viele Rekordbox-Playlisten ein Track betrifft -- nur lesend,
+        fuer den Warndialog vor dem Entfernen aus der Sammlung."""
+        payload = self._json_payload()
+        if payload is None:
+            return
+        try:
+            ids = self._content_ids_from_payload(payload)
+            counts = rekordbox_mod.collection_membership(ids) if ids else {}
+        except Exception as exc:                     # noqa: BLE001
+            self._fail(str(exc), 500)
+            return
+        self._json({"ok": True, "found": len(ids), "playlists": counts})
+
+    def _post_rekordbox_remove_collection(self) -> None:
+        """Tracks aus der Rekordbox-Sammlung entfernen (wie Rekordbox'
+        "Von der Sammlung entfernen"); die Audiodateien bleiben liegen."""
+        payload = self._json_payload()
+        if payload is None:
+            return
+        try:
+            ids = self._content_ids_from_payload(payload)
+        except Exception as exc:                     # noqa: BLE001
+            self._fail(str(exc), 500)
+            return
+        if not ids:
+            self._fail("Keiner der Tracks steht in der Rekordbox-Sammlung")
+            return
+        result = self._rekordbox_write(lambda: rekordbox_mod.remove_from_collection(ids))
+        if result is None:
+            return
+        paths = [r["path"] for r in result["removed"] if r["path"]]
+        if paths:
+            # Erst NACH dem Rekordbox-Lock (Reihenfolge-Regel): reiner
+            # Praesenz-Cache, der Haken soll sofort verschwinden.
+            with self.lock:
+                conn = db_mod.connect(cfgmod.load())
+                try:
+                    db_mod.unmark_rekordbox_present(conn, paths)
+                finally:
+                    conn.close()
+        for p in paths:
+            audit_log.log("rekordbox", p, "aus Sammlung entfernt")
+        self._json({"ok": True, **result, "paths": paths})
 
     def _post_rekordbox_sync(self) -> None:
         """Voller Abgleich gegen Rekordbox' Sammlung -- ein Fehlschlag darf
