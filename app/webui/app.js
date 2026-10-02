@@ -7442,6 +7442,12 @@ function openTagsPopup(r, isDrop) {
   // waehrend der offenen Dialogzeit in die Datei geschrieben hat.
   const initial = {};
   for (const [id] of TAGS_BULK_FIELD_MAP) initial[id] = document.getElementById(id).value;
+  // Kein Kuenstler-Tag in der Datei, das Feld zeigt nur den Albumkuenstler-
+  // Ersatz aus probe.py: Hinweis einblenden und den Wert als Aenderung
+  // werten, sonst meldet Speichern "Keine Änderungen" und schreibt nichts.
+  const artistFallback = !!r.a && (r.ti || []).some(x => x.code === "missing_artist");
+  document.getElementById("tagsArtistHint").hidden = !artistFallback;
+  if (artistFallback) initial.tagsArtist = "";
 
   const img = document.getElementById("tagsCoverImg");
   const empty = document.getElementById("tagsCoverEmpty");
@@ -7685,6 +7691,7 @@ function openTagsPopup(r, isDrop) {
         if (!data.ok) throw new Error(data.error || t("error.unknown"));
         if (isDrop) {
           Object.assign(r, fieldsToDropRow(fields));
+          if (data.issues) r.ti = data.issues;
           renderDrops();
         } else {
           applyRowUpdate(r.i, data.row);

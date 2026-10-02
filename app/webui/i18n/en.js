@@ -479,6 +479,7 @@ const I18N_EN = {
   "tags.track_of": "of",
   "tags.track_total_placeholder": "Total",
   "tags.comment_label": "Comments",
+  "tags.artist_fallback_hint": "The file has no artist tag – the album artist is shown instead. Saving writes it as the artist.",
   "tags.prev": "Previous",
   "tags.next": "Next",
   "tags.no_image_clipboard": "No image on the clipboard.",

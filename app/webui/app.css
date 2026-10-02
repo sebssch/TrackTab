@@ -1033,6 +1033,12 @@ tr.albumgroup .genrerename { margin-left:6px; }
 .settingsbox .setrow > .setfield.third { flex:0 0 calc(33.333% - 11px); max-width:calc(33.333% - 11px); }
 .settingsbox .setrow > .setfield.full { flex:1 1 100%; max-width:100%; }
 .setfield label { display:block; font-size:13px; margin-bottom:4px; }
+.fieldhint { margin-top:4px; font-size:12px; color:var(--dim); }
+/* Info-Variante: Icon + getoente Flaeche in der Designfarbe */
+.fieldhint.info { display:flex; gap:8px; align-items:flex-start; margin-top:6px; padding:8px 10px;
+  border-radius:8px; color:var(--fg); background:var(--accent-bg); }
+.fieldhint.info[hidden] { display:none; }
+.fieldhint.info svg { flex:none; margin-top:1px; color:var(--accent); }
 /* .toggle setzt display:inline-flex/align-items:center fuer sich selbst,
    verliert das aber gegen die obige Regel (gleiche Spezifitaet, .setfield
    label steht zuerst im Stylesheet) -- ohne diese Zeile faellt ein Schalter

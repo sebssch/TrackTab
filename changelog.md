@@ -3,6 +3,12 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.4.3] - 2026-10-02
+
+### Fixed
+- Tags bearbeiten: Hat eine Datei kein Künstler-Tag, zeigte das Feld „Künstler" ersatzweise den Albumkünstler, und Speichern meldete „Keine Änderungen". Jetzt weist eine Info-Box auf den Ersatzwert hin, und Speichern schreibt ihn als Künstler-Tag in die Datei.
+- Tags bearbeiten: Die Auffälligkeiten (z. B. „Künstler fehlt") werden nach dem Speichern neu geprüft und verschwinden sofort, nicht erst nach einem erneuten Scan.
+
 ## [1.4.2] - 2026-10-02
 
 ### Fixed

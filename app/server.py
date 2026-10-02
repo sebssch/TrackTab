@@ -3242,11 +3242,16 @@ class _Handler(BaseHTTPRequestHandler):
             return
         audit_log.log("tags", path, ", ".join(sorted(fields)))
 
+        # Auffaelligkeiten frisch bilden (nur mutagen, ms) -- sonst bliebe
+        # z.B. "Kuenstler fehlt" nach dem Setzen des Tags stehen.
+        new_issues = taganomaly_mod.detect(
+            path, (row["codec_family"] if row else "") or "")
+
         if row is None:
             # Noch nicht gescannt (siehe _authorize_path) -- es gibt keine
             # DB-Zeile zum Aktualisieren, der Client pflegt seine lokale
             # Kopie (drops-Array) selbst nach.
-            self._json({"ok": True, "row": None})
+            self._json({"ok": True, "row": None, "issues": new_issues})
             return
 
         cfg = cfgmod.load()
@@ -3254,6 +3259,7 @@ class _Handler(BaseHTTPRequestHandler):
             conn = db_mod.connect(cfg)
             try:
                 db_mod.update_tags(conn, path, fields)
+                db_mod.update_tag_issues(conn, path, new_issues)
                 db_mod.refresh_stat(conn, path)
                 row = db_mod.row_for_path(conn, path)
                 ignored = db_mod.ignored_paths(conn)

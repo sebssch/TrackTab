@@ -495,6 +495,7 @@ const I18N_DE = {
   "tags.track_of": "von",
   "tags.track_total_placeholder": "Gesamt",
   "tags.comment_label": "Kommentare",
+  "tags.artist_fallback_hint": "In der Datei ist kein Künstler-Tag gesetzt – angezeigt wird ersatzweise der Albumkünstler. Mit Speichern wird er als Künstler übernommen.",
   "tags.prev": "Vorheriger",
   "tags.next": "Nächster",
   "tags.no_image_clipboard": "Kein Bild in der Zwischenablage.",
