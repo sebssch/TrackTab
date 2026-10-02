@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.4.2] - 2026-10-02
+
+### Fixed
+- Auffälligkeiten: Der Hinweis „Interpret fehlt" heißt jetzt „Künstler fehlt" und passt damit zur Bezeichnung des Feldes in der übrigen Oberfläche.
+
 ## [1.4.1] - 2026-10-02
 
 ### Fixed

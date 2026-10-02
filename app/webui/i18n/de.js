@@ -820,7 +820,7 @@ const I18N_DE = {
   "tagissue.implausible_year": "Unplausibles Jahr",
   "tagissue.malformed_trackno": "Tracknummer nicht als Zahl erkennbar",
   "tagissue.missing_title": "Titel fehlt",
-  "tagissue.missing_artist": "Interpret fehlt",
+  "tagissue.missing_artist": "Künstler fehlt",
   "tagissue.missing_cover": "Kein Cover eingebettet",
   "tagissue.oversized_cover": "Cover ungewöhnlich groß",
   "tagissue.corrupt_cover": "Cover-Bilddaten beschädigt",
