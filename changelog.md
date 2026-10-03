@@ -3,6 +3,12 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.4.4] - 2026-10-03
+
+### Changed
+- Aufräumen: Bei Alben zeigen die Zusammenführungs-Vorschläge und der Ziel-Dialog den Künstler in eckigen Klammern hinter dem Albumnamen (wie in den Bubbles), damit erkennbar ist, welches Album gemeint ist.
+- Aufräumen: Die Box mit den Zusammenführungs-Vorschlägen wird bis 500 px hoch (vorher 240 px), danach scrollt sie.
+
 ## [1.4.3] - 2026-10-02
 
 ### Fixed
