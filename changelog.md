@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.5.1] - 2026-10-03
+
+### Fixed
+- Music.app: Der Playlisten-Baum folgt jetzt der Reihenfolge der Seitenleiste in Music.app (Ordner und Listen gemischt, vorher erst alle Listen, dann alle Ordner).
+
 ## [1.5.0] - 2026-10-03
 
 ### Added

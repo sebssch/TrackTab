@@ -1231,6 +1231,11 @@ def music_playlists() -> list[dict]:
        entspricht dem eigenen Knoten "Alle" und wuerde beim Anklicken die
        ganze Bibliothek nachladen.
 
+    4. Die Seitenleisten-Reihenfolge liefert nur die generische Sammlung
+       'playlists' (Ordner und Listen gemischt, Tiefensuche) -- 'user
+       playlists' und 'folder playlists' getrennt haben sie nicht. Ihre
+       Position wird als 'seq' mitgegeben; der Client sortiert danach.
+
     Die persistent ID ist ein stabiler Hex-Text und aendert sich laut
     Dictionary nie -- der richtige Schluessel fuer die Baumstruktur, anders
     als 'id' (eine je Sitzung vergebene Zahl) oder der Name (mehrfach
@@ -1259,6 +1264,11 @@ def music_playlists() -> list[dict]:
         '    set end of out to ((persistent ID of f) & tab & par2 & tab & "folder" '
         '& tab & "0" & tab & (name of f))\n'
         '  end repeat\n'
+        '  repeat with q in playlists\n'
+        '    try\n'
+        '      set end of out to ("#ORDER" & tab & (persistent ID of q))\n'
+        '    end try\n'
+        '  end repeat\n'
         '  set AppleScript\'s text item delimiters to linefeed\n'
         '  return out as text\n'
         'end tell\n'
@@ -1269,8 +1279,13 @@ def music_playlists() -> list[dict]:
             result.stderr.decode("utf-8", "replace").strip()[:300]
             or "Music.app-Playlisten konnten nicht gelesen werden")
     nodes: list[dict] = []
+    order: dict[str, int] = {}
     for line in result.stdout.decode("utf-8", "replace").splitlines():
         parts = line.split("\t")
+        if parts[0] == "#ORDER":
+            if len(parts) > 1 and parts[1]:
+                order.setdefault(parts[1], len(order))
+            continue
         if len(parts) < 5:
             continue
         pid, parent, kind, count, name = parts[0], parts[1], parts[2], parts[3], "\t".join(parts[4:])
@@ -1282,6 +1297,8 @@ def music_playlists() -> list[dict]:
             n = 0
         nodes.append({"id": pid, "parent": parent or None, "kind": kind,
                       "count": n, "name": name})
+    for node in nodes:
+        node["seq"] = order.get(node["id"], 0)
     return nodes
 
 
