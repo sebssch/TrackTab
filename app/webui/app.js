@@ -12956,10 +12956,10 @@ function valueEntriesFor(field) {
 // bereits escapetes HTML (anders als die anderen Feldwerte, die der
 // Aufrufer selbst escapet), weil Album zwei Werte in einen Span-Tag
 // verschachtelt.
-function valueBubbleLabelHtml(field, entry) {
-  if (field !== "album") return esc(entry.value);
+function valueBubbleLabelHtml(field, entry, renderValue = esc) {
+  if (field !== "album") return renderValue(entry.value);
   const artist = entry.groupArtist || t("group.no_artist");
-  return `${esc(entry.value)} <span class="albumbubbleartist">[${esc(artist)}]</span>`;
+  return `${renderValue(entry.value)} <span class="albumbubbleartist">[${esc(artist)}]</span>`;
 }
 
 function wireValueBoxOnce() {
@@ -13285,7 +13285,7 @@ function visualizeMergeValue(value) {
     m => `<span class="ws-marker">${"&nbsp;".repeat(m.length)}</span>`);
 }
 
-function askMergeTarget(a, b, kind) {
+function askMergeTarget(field, a, b, kind) {
   return new Promise(resolve => {
     const ov = document.getElementById("mergeChooseOverlay");
     document.getElementById("mergeChooseReason").textContent =
@@ -13293,7 +13293,7 @@ function askMergeTarget(a, b, kind) {
     const opts = document.getElementById("mergeChooseOptions");
     opts.innerHTML = [a, b].map((v, i) => `
       <button type="button" class="act mergechoose-opt" data-i="${i}">
-        <span>${visualizeMergeValue(v.value)}</span><span class="path">${esc(t("group.tracks_count", {count: v.count}))}</span>
+        <span>${valueBubbleLabelHtml(field, v, visualizeMergeValue)}</span><span class="path">${esc(t("group.tracks_count", {count: v.count}))}</span>
       </button>`).join("");
     ov.style.display = "flex";
     const close = result => { ov.style.display = "none"; document.onkeydown = null; resolve(result); };
@@ -13322,7 +13322,7 @@ function renderMergeSuggestions(field, hostId) {
     return `<div class="mergehint${previewing ? " previewing" : ""}" data-i="${i}">
       <span class="mergehint-text" data-mergeaction="preview" title="${esc(t("genres.merge_preview_title"))}">
         <span class="mergehint-eye">${previewing ? ICONS.eyeOff : ICONS.eye}</span>
-        ${esc(t("genres.merge_hint", {a: s.a.value, b: s.b.value}))}
+        ${t("genres.merge_hint", {a: valueBubbleLabelHtml(field, s.a), b: valueBubbleLabelHtml(field, s.b)})}
       </span>
       <button type="button" class="act small mergebtn" data-mergeaction="merge">
         <span class="btnicon">${ICONS.merge}</span> <span>${esc(t("genres.merge_button"))}</span>
@@ -13334,7 +13334,7 @@ function renderMergeSuggestions(field, hostId) {
     const s = suggestions[+row.dataset.i];
     row.querySelector('[data-mergeaction="preview"]').onclick = () => toggleMergePreview(field, s.a, s.b);
     row.querySelector('[data-mergeaction="merge"]').onclick = async () => {
-      const keep = await askMergeTarget(s.a, s.b, s.kind);
+      const keep = await askMergeTarget(field, s.a, s.b, s.kind);
       if (!keep) return;
       const drop = keep === s.a ? s.b : s.a;
       performValueRename(field, drop.value, keep.value, keep.groupArtist);

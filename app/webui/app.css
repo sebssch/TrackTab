@@ -943,8 +943,7 @@ button.act.small { padding:3px 9px; font-size:12px; }
 .genrebox-expandlink.expanded .btnicon svg { transform:rotate(180deg); }
 /* Abstand zur Bubble-Reihe darueber, eigenes Scrollen bei vielen
    Vorschlaegen -- sonst wuerde die Liste beliebig lang mitwachsen. */
-.genrebox-merge { margin-top:12px; padding:0 10px 0 0; max-height:240px; overflow-y:auto; }
-
+.genrebox-merge { margin-top:12px; padding:0 10px 0 0; max-height:500px; overflow-y:auto; }
 /* Bubbles selbst -- neutrale Farbe wie .chip -- anders als .fltag sind
    Genre/Album/Interpret keine benutzerfarbigen Entitaeten. Dieselbe Optik
    traegt auch der Bearbeiten-Knopf im Gruppenkopf der drei
