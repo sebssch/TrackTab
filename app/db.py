@@ -136,6 +136,15 @@ CREATE TABLE IF NOT EXISTS rekordbox (
     ts   REAL
 );
 
+-- Tracks, deren Tags (Genre/Interpret/Album) beim Zusammenfuehren geaendert
+-- wurden und in Rekordbox noch auf dem alten Stand stehen. Der Abgleich laeuft
+-- gebuendelt ueber den Knopf "Rekordbox abgleichen" (ein Oeffnen, ein Backup
+-- von master.db), nicht je Zusammenfuehrung.
+CREATE TABLE IF NOT EXISTS rekordbox_pending (
+    path TEXT PRIMARY KEY,
+    ts   REAL
+);
+
 -- Datum, an dem ein Track laut Music.app zur Bibliothek hinzugefuegt wurde.
 -- Eigener Cache wie 'rekordbox', bewusst getrennt davon (kein gemeinsamer
 -- Abgleich): music_added_dates() liest die ganze Music.app-Bibliothek in
@@ -571,8 +580,8 @@ def delete_cached_cover(conn: sqlite3.Connection, path: str) -> None:
 # Delete-vor-Update auf: dort ist der Pfad allein der Schluessel-Anteil, der
 # wandert, die zweite Haelfte (playlist_id) bleibt.
 _PATH_TABLES = ("files", "ignored", "corrected", "waveform",
-                "rekordbox", "music_added", "cover_cache", "playlist_items",
-                "dup_dismissed")
+                "rekordbox", "rekordbox_pending", "music_added", "cover_cache",
+                "playlist_items", "dup_dismissed")
 
 
 def move_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> bool:
@@ -688,7 +697,8 @@ def reconcile_case_renames(conn: sqlite3.Connection,
 # Tabellen, die beim Aufraeumen mit abgeraeumt werden: rein abgeleitete
 # Daten. Ohne 'files'-Zeile sind sie unerreichbarer Ballast, und sie lassen
 # sich jederzeit neu berechnen bzw. abgleichen.
-_PRUNE_TABLES = ("files", "waveform", "rekordbox", "music_added")
+_PRUNE_TABLES = ("files", "waveform", "rekordbox", "rekordbox_pending",
+                  "music_added")
 
 
 def prune_missing(conn: sqlite3.Connection, existing: set[str]) -> list[str]:
@@ -1079,6 +1089,31 @@ def mark_rekordbox_present(conn: sqlite3.Connection, paths: list[str]) -> None:
         "INSERT OR REPLACE INTO rekordbox (path, ts) VALUES (?, ?)",
         [(p, now) for p in paths],
     )
+    conn.commit()
+
+
+def rekordbox_pending_add(conn: sqlite3.Connection, paths: list[str]) -> None:
+    """Merkt Tracks fuer den naechsten gebuendelten Tag-Abgleich mit Rekordbox vor."""
+    now = time.time()
+    conn.executemany(
+        "INSERT OR REPLACE INTO rekordbox_pending (path, ts) VALUES (?, ?)",
+        [(p, now) for p in paths],
+    )
+    conn.commit()
+
+
+def rekordbox_pending_list(conn: sqlite3.Connection) -> list[str]:
+    return [r["path"] for r in conn.execute(
+        "SELECT path FROM rekordbox_pending ORDER BY ts, path")]
+
+
+def rekordbox_pending_count(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM rekordbox_pending").fetchone()[0]
+
+
+def rekordbox_pending_clear(conn: sqlite3.Connection, paths: list[str]) -> None:
+    conn.executemany("DELETE FROM rekordbox_pending WHERE path = ?",
+                     [(p,) for p in paths])
     conn.commit()
 
 

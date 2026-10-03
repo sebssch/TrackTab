@@ -231,6 +231,7 @@ Für die verlässlichste Wiedergabe aller unterstützten Formate empfiehlt sich 
 ## Rekordbox abgleichen
 
    **„Rekordbox abgleichen"** prüft, welche Tracks bereits in Rekordbox' Sammlung liegen, und sucht wahlweise nach Rekordbox-Einträgen, deren Datei fehlt, unter den eigenen Bibliothekspfaden wieder (mit Vorschau vor dem Schreiben).
+   Genre-, Interpret- und Album-Änderungen aus dem **Zusammenführen** werden nicht sofort nach Rekordbox geschrieben, sondern vorgemerkt; die Zahl steht als Zähler am Knopf. Im Abgleich-Dialog überträgt die Option **„Vorgemerkte Tags übertragen"** alle gesammelt in einem Durchlauf (Rekordbox muss dafür geschlossen sein; es entsteht nur ein Backup der Rekordbox-Datenbank).
 
    > [!tip] 
 >Damit dieser Button angezeigt wird, muss in den Einstellungen "Rekordbox" als Programm ausgewählt sein.

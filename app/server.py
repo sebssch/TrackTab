@@ -1020,6 +1020,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_rekordbox()
         elif route == "/api/rekordbox-status":
             self._get_rekordbox_status()
+        elif route == "/api/rekordbox-pending":
+            self._get_rekordbox_pending()
         elif route == "/api/rekordbox-extras":
             self._get_rekordbox_extras()
         elif route == "/api/music-added":
@@ -1283,6 +1285,17 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
         self._json({"paths": paths})
+
+    def _get_rekordbox_pending(self) -> None:
+        """Anzahl der fuer Rekordbox vorgemerkten Tag-Aenderungen (Zaehler am
+        Knopf "Rekordbox abgleichen")."""
+        with self.lock:
+            conn = db_mod.connect(cfgmod.load())
+            try:
+                count = db_mod.rekordbox_pending_count(conn)
+            finally:
+                conn.close()
+        self._json({"count": count})
 
     def _get_rekordbox_status(self) -> None:
         """
@@ -1769,6 +1782,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_rekordbox_membership()
         elif route == "/api/rekordbox-sync":
             self._post_rekordbox_sync()
+        elif route == "/api/rekordbox-pending-apply":
+            self._post_rekordbox_pending_apply()
         elif route == "/api/rekordbox-scan":
             self._post_rekordbox_scan()
         elif route == "/api/rekordbox-fix-paths":
@@ -2564,6 +2579,47 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
         self._json({"ok": True, "matched": matched, "checked": total})
+
+    def _post_rekordbox_pending_apply(self) -> None:
+        """Schreibt alle vorgemerkten Tag-Aenderungen (siehe
+        _rename_tag_value()) in EINEM Durchlauf nach master.db -- ein Oeffnen,
+        ein Backup, ein Commit. Rekordbox laeuft -> sticky-Fehler, die
+        Vormerkungen bleiben erhalten. Bearbeitete Pfade (auch 'nicht
+        gefunden') werden abgeraeumt, nur Einzelfehler bleiben stehen."""
+        cfg = cfgmod.load()
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                paths = db_mod.rekordbox_pending_list(conn)
+                metadata = {p: db_mod.row_for_path(conn, p) for p in paths}
+            finally:
+                conn.close()
+        metadata = {k: v for k, v in metadata.items() if v is not None}
+        if not paths:
+            self._json({"ok": True, "updated": [], "not_found": [], "errors": {},
+                        "pending": 0})
+            return
+        try:
+            with self._rekordbox_lock:
+                result = rekordbox_mod.update_relocated_tracks(
+                    [{"path": p, "prior_path": p} for p in paths], metadata)
+        except rekordbox_mod.RekordboxRunning as exc:
+            self._json({"ok": False, "error": str(exc), "sticky": True}, 500)
+            return
+        except Exception as exc:                      # noqa: BLE001
+            self._fail(str(exc), 500)
+            return
+        done = list(result["updated"]) + list(result["not_found"])
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                db_mod.rekordbox_pending_clear(conn, done)
+                remaining = db_mod.rekordbox_pending_count(conn)
+            finally:
+                conn.close()
+        for p in result["updated"]:
+            audit_log.log("rekordbox-tags", p, "ueber Abgleich (vorgemerkt)")
+        self._json({"ok": True, **result, "pending": remaining})
 
     def _post_rekordbox_scan(self) -> None:
         """Erster Schritt der Pfad-Korrektur: findet DjmdContent-Zeilen, deren
@@ -3397,30 +3453,24 @@ class _Handler(BaseHTTPRequestHandler):
             music_result["attempted"] = len(to_sync_music)
             try:
                 music_result["matched"] = media_setter(
-                    [(p, titles.get(p, "")) for p in to_sync_music], new)
+                    [(p, titles.get(p, "")) for p in to_sync_music], new,
+                    old_label)
             except Exception as exc:                       # noqa: BLE001
                 music_result["error"] = str(exc)
 
-        # Rekordbox: dasselbe Muster wie _post_convert()'s Tag-Korrektur nach
-        # einer Verschiebung -- update_relocated_tracks() mit gleichem
-        # path/prior_path (kein echter Umzug) loest nur den Tag-Abgleich aus.
-        rekordbox_result = {"running": False, "updated": [], "not_found": [], "errors": {}}
+        # Rekordbox: nur vormerken. Der Schreibzugriff (master.db oeffnen +
+        # Backup) laeuft gebuendelt ueber "Rekordbox abgleichen", nicht je
+        # Zusammenfuehrung.
         to_sync_rb = [p for p in updated if p in rb_paths]
-        if to_sync_rb:
+        rekordbox_result = {"pending": 0, "queued": len(to_sync_rb)}
+        with self.lock:
+            conn = db_mod.connect(cfg)
             try:
-                conn = db_mod.connect(cfg)
-                try:
-                    metadata = {p: db_mod.row_for_path(conn, p) for p in to_sync_rb}
-                finally:
-                    conn.close()
-                with self._rekordbox_lock:
-                    rb_result = rekordbox_mod.update_relocated_tracks(
-                        [{"path": p, "prior_path": p} for p in to_sync_rb], metadata)
-                rekordbox_result.update(rb_result)
-                for p in rb_result["updated"]:
-                    audit_log.log(f"rekordbox-{field}", p, new)
-            except rekordbox_mod.RekordboxRunning:
-                rekordbox_result["running"] = True
+                if to_sync_rb:
+                    db_mod.rekordbox_pending_add(conn, to_sync_rb)
+                rekordbox_result["pending"] = db_mod.rekordbox_pending_count(conn)
+            finally:
+                conn.close()
 
         self._json({"ok": True, "updated": len(updated), "failed": failed,
                      "music": music_result, "rekordbox": rekordbox_result})

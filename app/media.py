@@ -1605,7 +1605,65 @@ def set_track_artwork(path: str, title: str, data: bytes, mime: str) -> int:
         return 0
 
 
-def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str) -> int:
+def _set_tracks_field_by_old(items: list[tuple[str, str]], value: str, prop: str,
+                             old_value: str) -> int:
+    """
+    Schneller Weg fuer _set_tracks_field(): EINE Abfrage "alle Tracks, deren
+    <prop> noch der alte Wert ist" statt einer 'whose name is'-Abfrage ueber
+    die ganze Bibliothek je Track (O(Bibliothek) mal Trackzahl -- bei grossen
+    Bibliotheken der Hauptgrund fuer minutenlanges Warten nach dem Klick auf
+    "Zusammenfuehren"). Pfad-Abgleich ueber 'location' bleibt, die Koerzierung
+    nach POSIX path liegt ausserhalb des tell-Blocks (siehe
+    add_to_music_library()). Liefert die Zahl gesetzter Tracks.
+    """
+    paths_text = "\n".join(p for p, _ in items)
+    script = (
+        'on run argv\n'
+        '  set theValue to item 1 of argv\n'
+        '  set theOld to item 2 of argv\n'
+        '  set thePathsText to item 3 of argv\n'
+        '  set AppleScript\'s text item delimiters to linefeed\n'
+        '  set thePaths to text items of thePathsText\n'
+        '  set AppleScript\'s text item delimiters to ""\n'
+        '  set cands to {}\n'
+        '  set locs to {}\n'
+        '  tell application "Music"\n'
+        '    try\n'
+        f'      set cands to (every track of library playlist 1 whose {prop} is theOld)\n'
+        f'      set locs to (location of every track of library playlist 1 whose {prop} is theOld)\n'
+        '    end try\n'
+        '  end tell\n'
+        '  set matchedCount to 0\n'
+        '  repeat with i from 1 to (count of locs)\n'
+        '    set locPath to ""\n'
+        '    try\n'
+        '      set locPath to POSIX path of (item i of locs)\n'
+        '    end try\n'
+        '    if locPath is in thePaths then\n'
+        '      tell application "Music"\n'
+        '        try\n'
+        f'          set {prop} of (item i of cands) to theValue\n'
+        '          set matchedCount to matchedCount + 1\n'
+        '        end try\n'
+        '      end tell\n'
+        '    end if\n'
+        '  end repeat\n'
+        '  return (matchedCount as text)\n'
+        'end run'
+    )
+    result = subprocess.run(
+        ["osascript", "-e", script, str(value), str(old_value), paths_text],
+        capture_output=True, timeout=120)
+    if result.returncode != 0:
+        return 0
+    try:
+        return int(result.stdout.decode("utf-8", "replace").strip())
+    except ValueError:
+        return 0
+
+
+def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str,
+                      old_value: str | None = None) -> int:
     """
     Setzt eine Music.app-Track-Eigenschaft (genre/album/artist) bereits
     importierter Tracks direkt -- gemeinsame Grundlage fuer
@@ -1626,6 +1684,12 @@ def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str) -> in
     items = [(p, t) for p, t in items if t]
     if not items:
         return 0
+    if old_value:
+        # Schnellweg zuerst; trifft er nichts (Music.app fuehrt den Wert
+        # anders als die Datei), greift der Titel-Abgleich unten wie bisher.
+        fast = _set_tracks_field_by_old(items, value, prop, old_value)
+        if fast:
+            return fast
     paths_text = "\n".join(p for p, _ in items)
     titles_text = "\n".join(t for _, t in items)
     script = (
@@ -1685,16 +1749,19 @@ def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str) -> in
         return 0
 
 
-def set_tracks_genre(items: list[tuple[str, str]], genre: str) -> int:
-    return _set_tracks_field(items, genre, "genre")
+def set_tracks_genre(items: list[tuple[str, str]], genre: str,
+                      old: str | None = None) -> int:
+    return _set_tracks_field(items, genre, "genre", old)
 
 
-def set_tracks_album(items: list[tuple[str, str]], album: str) -> int:
-    return _set_tracks_field(items, album, "album")
+def set_tracks_album(items: list[tuple[str, str]], album: str,
+                      old: str | None = None) -> int:
+    return _set_tracks_field(items, album, "album", old)
 
 
-def set_tracks_artist(items: list[tuple[str, str]], artist: str) -> int:
-    return _set_tracks_field(items, artist, "artist")
+def set_tracks_artist(items: list[tuple[str, str]], artist: str,
+                      old: str | None = None) -> int:
+    return _set_tracks_field(items, artist, "artist", old)
 
 
 def clear_track_artwork(path: str, title: str) -> int:

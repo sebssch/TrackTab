@@ -3,6 +3,14 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.5.0] - 2026-10-03
+
+### Added
+- Rekordbox: Tag-Änderungen aus dem Zusammenführen (Genre/Interpret/Album) werden nicht mehr sofort nach Rekordbox geschrieben, sondern vorgemerkt. Der Knopf „Rekordbox abgleichen" zeigt die Anzahl als Zähler; die neue Option „Vorgemerkte Tags übertragen" schreibt alle gesammelt in einem Durchlauf (ein Backup der `master.db` statt eines je Zusammenführung).
+
+### Changed
+- Zusammenführen: Der Music.app-Abgleich fragt nur noch einmal alle Tracks mit dem alten Wert ab, statt je Track die ganze Bibliothek nach dem Titel zu durchsuchen (deutlich schneller bei großen Bibliotheken; Titel-Abgleich bleibt als Rückfall).
+
 ## [1.4.4] - 2026-10-03
 
 ### Changed

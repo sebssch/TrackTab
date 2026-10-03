@@ -170,6 +170,8 @@
   /* Standard-Suchfilter (aus den Einstellungen) -- eigene Farbe, damit sie
      sich von den getippten Suchfiltern (accent-Blau) unterscheiden. */
   .chip.searchchip.defaultchip { background:var(--susp-bg); color:var(--susp); }
+  .countbadge { display:inline-block; min-width:18px; padding:0 6px; border-radius:9px;
+    background:var(--accent); color:#fff; font-size:11px; line-height:18px; text-align:center; }
   button.act { display:inline-flex; align-items:center; gap:6px;
           border:1px solid var(--line); background:var(--card); color:var(--fg);
           border-radius:7px; padding:7px 12px; cursor:pointer; font-size:13px; }

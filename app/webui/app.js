@@ -3591,6 +3591,7 @@ let MERGE_DISMISSED = {genre: new Set(), artist: new Set(), album: new Set()};
 function mergePairKey(a, b) { return [a, b].sort().join("\u0000"); }
 
 async function syncMarks() {
+  refreshRekordboxPending();
   try {
     const [ign, cor, ddm, rbx, mad, pls, mgd] = await Promise.all([
       fetch("/api/ignored", {cache: "no-store"}).then(r => r.json()),
@@ -12433,6 +12434,22 @@ document.addEventListener("keydown", ev => {
 // Knopfbeschriftungen mit Icon -- als Funktion statt Top-Level-Zuweisung,
 // damit refreshI18nCache() sie nach einer expliziten Sprachwahl in den
 // Einstellungen (siehe initStorage()) neu setzen kann.
+// Anzahl der fuer Rekordbox vorgemerkten Tag-Aenderungen (Zusammenfuehren
+// schreibt nicht mehr sofort nach master.db, siehe server._rename_tag_value()).
+let RB_PENDING = 0;
+function renderRekordboxSyncButton() {
+  const badge = RB_PENDING > 0 ? ` <span class="countbadge">${RB_PENDING}</span>` : "";
+  document.getElementById("btnRekordboxSync").innerHTML =
+    `<span class="btnicon">${ICONS.update}</span> ${esc(t("toolbar.rekordbox_sync"))}${badge}`;
+}
+async function refreshRekordboxPending() {
+  try {
+    const d = await fetch("/api/rekordbox-pending", {cache: "no-store"}).then(r => r.json());
+    RB_PENDING = d.count || 0;
+  } catch { /* Zaehler bleibt auf dem letzten Stand */ }
+  renderRekordboxSyncButton();
+}
+
 function applyToolbarLabels() {
   document.getElementById("btnCloseSettings").innerHTML =
     `<span class="btnicon-lg">${ICONS.squareX}</span> ${esc(t("action.cancel"))}`;
@@ -12440,8 +12457,7 @@ function applyToolbarLabels() {
     `<span class="btnicon-lg">${ICONS.save}</span> ${esc(t("action.save"))}`;
   document.getElementById("btnScan").innerHTML =
     `<span class="btnicon">${ICONS.listRestart}</span> ${esc(t("toolbar.scan"))}`;
-  document.getElementById("btnRekordboxSync").innerHTML =
-    `<span class="btnicon">${ICONS.update}</span> ${esc(t("toolbar.rekordbox_sync"))}`;
+  renderRekordboxSyncButton();
   document.getElementById("btnMusicAddedSync").innerHTML =
     `<span class="btnicon">${ICONS.update}</span> ${esc(t("toolbar.music_sync"))}`;
   document.getElementById("btnQuit").innerHTML =
@@ -12849,14 +12865,14 @@ function renameResultToast(data) {
   if (data.music && data.music.attempted) {
     parts.push(t("genres.toast_music", {matched: data.music.matched, attempted: data.music.attempted}));
   }
-  if (data.rekordbox && (data.rekordbox.updated || []).length) {
-    parts.push(t("genres.toast_rekordbox", {count: data.rekordbox.updated.length}));
+  if (data.rekordbox && data.rekordbox.queued) {
+    parts.push(t("genres.toast_rekordbox_queued", {count: data.rekordbox.queued}));
+  }
+  if (data.rekordbox) {
+    RB_PENDING = data.rekordbox.pending || 0;
+    renderRekordboxSyncButton();
   }
   let soft = false;
-  if (data.rekordbox && data.rekordbox.running) {
-    parts.push(t("genres.toast_rekordbox_running"));
-    soft = true;
-  }
   const failedCount = Object.keys(data.failed || {}).length;
   if (failedCount) {
     parts.push(t("genres.toast_failed", {count: failedCount}));
@@ -13403,11 +13419,17 @@ function askRekordboxSyncOptions() {
     const ov = document.getElementById("rbSyncOverlay");
     const presenceEl = document.getElementById("rbSyncPresence");
     const fixEl = document.getElementById("rbSyncFixPaths");
+    const pendEl = document.getElementById("rbSyncPending");
+    document.getElementById("rbSyncPendingLabel").textContent =
+      t("rbsync.pending_label", {count: RB_PENDING});
+    pendEl.checked = RB_PENDING > 0;
+    pendEl.disabled = RB_PENDING === 0;
     ov.style.display = "flex";
     const done = answer => { ov.style.display = "none"; resolve(answer); };
     document.getElementById("rbSyncCancel").onclick = () => done(null);
     document.getElementById("rbSyncStart").onclick = () =>
-      done({presence: presenceEl.checked, fixPaths: fixEl.checked});
+      done({presence: presenceEl.checked, fixPaths: fixEl.checked,
+            pending: pendEl.checked});
   });
 }
 
@@ -13424,6 +13446,20 @@ async function runRekordboxPresenceSync() {
     pt.done(t("sync.rekordbox.done", {matched: data.matched, checked: data.checked}));
   } catch (err) {
     pt.fail(t("sync.rekordbox.failed", {error: err.message}));
+  }
+}
+
+async function runRekordboxPendingApply() {
+  const pt = progressToast(t("sync.rekordbox_pending.running"), {indeterminate: true});
+  try {
+    const res = await fetch("/api/rekordbox-pending-apply", {method: "POST"});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    RB_PENDING = data.pending || 0;
+    renderRekordboxSyncButton();
+    pt.done(t("sync.rekordbox_pending.done", {count: (data.updated || []).length}));
+  } catch (err) {
+    pt.fail(t("sync.rekordbox_pending.failed", {error: err.message}));
   }
 }
 
@@ -13578,17 +13614,18 @@ async function runRekordboxFixPathsFlow() {
 
 async function openRekordboxSyncFlow() {
   const choice = await askRekordboxSyncOptions();
-  if (!choice || (!choice.presence && !choice.fixPaths)) return;
+  if (!choice || (!choice.presence && !choice.fixPaths && !choice.pending)) return;
   const btn = document.getElementById("btnRekordboxSync");
   const orig = btn.innerHTML;
   btn.disabled = true;
   btn.innerHTML = t("sync.button_busy");
   try {
+    if (choice.pending) await runRekordboxPendingApply();
     if (choice.presence) await runRekordboxPresenceSync();
     if (choice.fixPaths) await runRekordboxFixPathsFlow();
   } finally {
     btn.disabled = false;
-    btn.innerHTML = orig;
+    renderRekordboxSyncButton();
   }
 }
 
