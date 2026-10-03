@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.6.1] - 2026-10-03
+
+### Fixed
+- Warteschlange: Mehrere Fassungen desselben Liedes (z. B. „Replay“, „Replay (Remix)“, „Replay - … Edit“ vom selben Interpreten) landen nicht mehr direkt hintereinander. Der Titelvergleich ignoriert jetzt Klammer- und „ - “-Zusätze, und die automatisch gefüllte Warteschlange nimmt nur eine Fassung auf (auch ohne Zufallswiedergabe). Weitere Fassungen rücken nur nach, wenn sonst zu wenige Titel übrig bleiben. Von Hand eingereihte Titel bleiben unberührt.
+
 ## [1.6.0] - 2026-10-03
 
 ### Added

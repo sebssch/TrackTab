@@ -10740,7 +10740,7 @@ function startQueueFrom(r) {
   const idx = rows.findIndex(x => x.i === r.i);
   if (idx === -1) return;
   if (queueState.current) pushQueueHistory(queueState.current);
-  queueState.tracks = rows.slice(idx + 1, idx + QUEUE_AUTO_LIMIT);
+  queueState.tracks = pickDistinct(rows.slice(idx + 1), QUEUE_AUTO_LIMIT - 1, [r, ...recentQueueTracks()]);
   queueState.manual = false;
   loadQueueTrack(r);
   // Gleiche visuelle Markierung wie bei Pfeiltasten-Navigation (Klasse
@@ -10833,13 +10833,44 @@ function titleSimilarity(a, b) {
   }
   return (2 * matches) / (ba.length + bb.length);
 }
+// Titelkern ohne Fassungs-Zusaetze: alles ab der ersten Klammer, ab " - "
+// und ein angehaengtes "feat."/"ft." faellt weg ("Replay - Sir Gio My Girl
+// Edit" und "Replay (Kees Sjansen 2017 Remix)" -> "replay"). Bleibt dabei
+// nichts uebrig (Titel besteht nur aus Klammer), gilt der ganze Titel.
+function baseTitle(title) {
+  const full = (title || "").trim().toLowerCase();
+  const core = full.replace(/\s*[(\[].*$/, "").replace(/\s+-\s+.*$/, "")
+    .replace(/\s+(?:feat|ft)\.?\s.*$/, "").trim();
+  return core || full;
+}
 function isNearDuplicateTrack(a, b) {
   const artistA = (a.a || "").trim().toLowerCase();
   const artistB = (b.a || "").trim().toLowerCase();
   if (!artistA || artistA !== artistB) return false;
   const titleA = (a.t || "").trim().toLowerCase();
   const titleB = (b.t || "").trim().toLowerCase();
-  return titleA === titleB || titleSimilarity(titleA, titleB) >= QUEUE_TITLE_SIMILARITY_THRESHOLD;
+  if (titleA === titleB || titleSimilarity(titleA, titleB) >= QUEUE_TITLE_SIMILARITY_THRESHOLD) return true;
+  const baseA = baseTitle(titleA), baseB = baseTitle(titleB);
+  return baseA === baseB || titleSimilarity(baseA, baseB) >= QUEUE_TITLE_SIMILARITY_THRESHOLD;
+}
+
+// Waehlt aus rows der Reihe nach bis zu limit Tracks, die weder zu einem
+// Eintrag aus avoid noch untereinander quasi identisch sind. Uebersprungene
+// Fassungen werden nicht verworfen, sondern hinten als Reserve angehaengt,
+// falls sonst weniger als limit zusammenkaemen (kleine Ansicht, viele
+// Remixe) -- lieber eine Fassung spaeter als gar kein Nachschub.
+function pickDistinct(rows, limit, avoid) {
+  const picked = [], skipped = [], seen = [...avoid];
+  for (const r of rows) {
+    if (picked.length >= limit) break;
+    if (seen.some(x => isNearDuplicateTrack(x, r))) {
+      if (skipped.length < limit) skipped.push(r);
+      continue;
+    }
+    picked.push(r);
+    seen.push(r);
+  }
+  return picked.concat(skipped.slice(0, limit - picked.length));
 }
 
 // Die letzten QUEUE_ANTI_REPEAT_WINDOW gespielten Tracks (aktueller +
@@ -10900,17 +10931,10 @@ function extendQueueAutomatically() {
   const recent = new Set(queueState.history.map(x => x.i));
   if (queueState.current) recent.add(queueState.current.i);
   const fresh = candidates.filter(x => !recent.has(x.i));
-  queueState.tracks = pickRandom(fresh.length ? fresh : candidates, QUEUE_AUTO_LIMIT);
-  // Sicherheitsnetz fuer den Fall, dass advanceFromPool() den neuen Pool
-  // (z.B. bei ausgeschalteter Zufallswiedergabe) vorne abgreift: Position 0
-  // darf zu keinem der letzten QUEUE_ANTI_REPEAT_WINDOW gespielten Tracks "quasi identisch" sein
-  // (siehe recentQueueTracks()/isNearDuplicateTrack()) -- Tausch mit dem
-  // ersten passenden spaeteren Eintrag.
-  const recentTracks = recentQueueTracks();
-  if (recentTracks.length && queueState.tracks.length > 1 && recentTracks.some(rt => isNearDuplicateTrack(rt, queueState.tracks[0]))) {
-    const swapIdx = queueState.tracks.findIndex((r, i) => i > 0 && !recentTracks.some(rt => isNearDuplicateTrack(rt, r)));
-    if (swapIdx > 0) [queueState.tracks[0], queueState.tracks[swapIdx]] = [queueState.tracks[swapIdx], queueState.tracks[0]];
-  }
+  // Keine zwei Fassungen desselben Liedes im Pool und keine, die zu einem der
+  // zuletzt gespielten Tracks quasi identisch ist (siehe pickDistinct()).
+  const source = fresh.length ? fresh : candidates;
+  queueState.tracks = pickDistinct(pickRandom(source, source.length), QUEUE_AUTO_LIMIT, recentQueueTracks());
   queueState.manual = false;
   return true;
 }
