@@ -677,6 +677,18 @@ const I18N_DE = {
   "search.help.hidden.token": "/Ausgeblendet",
   "search.help.hidden.desc": "Schalter ohne Wert — zeigt nur ausgeblendete Tracks, mit „/No“ nur die eingeblendeten",
   "search.help.hidden.example": "/AUSGEBLENDET  ·  /NO /AUSGEBLENDET",
+  "search.help.cover.token": "/Cover",
+  "search.help.cover.desc": "Schalter ohne Wert — zeigt nur Tracks mit eingebettetem Cover, mit „/No“ nur die ohne",
+  "search.help.cover.example": "/COVER  ·  /NO /COVER",
+  "search.help.music.token": "/Music",
+  "search.help.music.desc": "Schalter ohne Wert — zeigt nur Tracks, die in der Music.app-Bibliothek sind, mit „/No“ nur die übrigen",
+  "search.help.music.example": "/MUSIC  ·  /NO /MUSIC",
+  "search.help.rekordbox.token": "/Rekordbox",
+  "search.help.rekordbox.desc": "Schalter ohne Wert — zeigt nur Tracks, die in Rekordbox sind, mit „/No“ nur die übrigen",
+  "search.help.rekordbox.example": "/REKORDBOX  ·  /NO /REKORDBOX",
+  "search.help.exact.token": "=",
+  "search.help.exact.desc": "Hinter einem Textfeld: ganzer Feldwert muss gleich sein (kein Teilstring); „=“ allein oder =\"\" findet leere Felder",
+  "search.help.exact.example": "/ALBUM =Pop  ·  /ALBUM =\"Pop Hits\"  ·  /GENRE =  ·  /JAHR =\"\"",
   "tree.sys_verdicts": "Prüflisten",
 
   // ── Spaltenmenue ──────────────────────────────────────────────────────

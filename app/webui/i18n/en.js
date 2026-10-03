@@ -661,6 +661,18 @@ const I18N_EN = {
   "search.help.hidden.token": "/Hidden",
   "search.help.hidden.desc": "Switch without a value — shows hidden tracks only, with \"/No\" only the visible ones",
   "search.help.hidden.example": "/HIDDEN  ·  /NO /HIDDEN",
+  "search.help.cover.token": "/Cover",
+  "search.help.cover.desc": "Switch without a value — shows tracks with an embedded cover only, with \"/No\" only those without",
+  "search.help.cover.example": "/COVER  ·  /NO /COVER",
+  "search.help.music.token": "/Music",
+  "search.help.music.desc": "Switch without a value — shows tracks that are in the Music.app library only, with \"/No\" only the others",
+  "search.help.music.example": "/MUSIC  ·  /NO /MUSIC",
+  "search.help.rekordbox.token": "/Rekordbox",
+  "search.help.rekordbox.desc": "Switch without a value — shows tracks that are in Rekordbox only, with \"/No\" only the others",
+  "search.help.rekordbox.example": "/REKORDBOX  ·  /NO /REKORDBOX",
+  "search.help.exact.token": "=",
+  "search.help.exact.desc": "After a text field: the whole field value must be equal (no substring); \"=\" alone or =\"\" finds empty fields",
+  "search.help.exact.example": "/ALBUM =Pop  ·  /ALBUM =\"Pop Hits\"  ·  /GENRE =  ·  /YEAR =\"\"",
   "tree.sys_verdicts": "Review lists",
 
   // ── Column menu ─────────────────────────────────────────────────────────

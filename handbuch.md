@@ -378,7 +378,7 @@ Einzelne Rekordbox-Smart-Playlists verwenden Zeitregeln, die nur Rekordbox selbs
 
 ## Suchen und filtern
 
-Das Suchfeld über der Tabelle durchsucht standardmäßig Künstler, Titel und Pfad — und zwar tippfehlertolerant (wie stark, stellst du unter „⚙ Einstellungen → Suche" ein). Es kann aber deutlich mehr. Der Button **ⓘ Suchhilfe** listet jederzeit alle Parameter mit Beispielen auf.
+Das Suchfeld über der Tabelle durchsucht standardmäßig Künstler, Titel, Album und Pfad — und zwar tippfehlertolerant (wie stark, stellst du unter „⚙ Einstellungen → Suche" ein). Es kann aber deutlich mehr. Der Button **ⓘ Suchhilfe** listet jederzeit alle Parameter mit Beispielen auf.
 
 ![Suche mit Parametern](docs/016-suchparameter.png)
 
@@ -394,6 +394,13 @@ Das Suchfeld über der Tabelle durchsucht standardmäßig Künstler, Titel und P
 | `/Genre "Deep House"` | mehrwortige Werte gehören in Anführungszeichen |
 | `/Genre (House OR Dance)` | eins von beidem genügt |
 | `/Genre House /BPM 124-128` | beides zusammen |
+| `/Album =Pop` | **exakt**: nur das Album „Pop", nicht „King of Pop" (Groß-/Kleinschreibung egal) |
+| `/Album ="Pop Hits"` | exakt, mehrwortig |
+| `/Album (=Pop OR =Rock)` | eines von beiden exakt |
+| `/Album =` oder `/Album =""` | Feld ist **leer** — geht ebenso bei `/Genre`, `/Jahr`, `/BPM`, `/Komponist` … |
+| `/Cover` · `/No /Cover` | nur Tracks mit bzw. ohne eingebettetes Cover |
+| `/Music` · `/No /Music` | nur Tracks, die in der Music.app-Bibliothek sind bzw. nicht |
+| `/Rekordbox` · `/No /Rekordbox` | nur Tracks, die in Rekordbox sind bzw. nicht |
 | `/No Acapella` | schließt „Acapella" aus |
 | `/No /Genre (Acapella OR Instrumental)` | schließt beide Genres aus |
 

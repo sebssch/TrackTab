@@ -3825,6 +3825,10 @@ let SEARCH_HELP_ENTRIES = [
   [t("search.help.added.token"), t("search.help.added.desc"), t("search.help.added.example")],
   [t("search.help.status.token"), t("search.help.status.desc"), t("search.help.status.example")],
   [t("search.help.hidden.token"), t("search.help.hidden.desc"), t("search.help.hidden.example")],
+  [t("search.help.cover.token"), t("search.help.cover.desc"), t("search.help.cover.example")],
+  [t("search.help.music.token"), t("search.help.music.desc"), t("search.help.music.example")],
+  [t("search.help.rekordbox.token"), t("search.help.rekordbox.desc"), t("search.help.rekordbox.example")],
+  [t("search.help.exact.token"), t("search.help.exact.desc"), t("search.help.exact.example")],
 ];
 
 // ── "/" in der Suche -> Vorschlagsliste der Filterparameter ─────────────
@@ -3833,7 +3837,7 @@ let SEARCH_HELP_ENTRIES = [
 // mit mehreren Alias-Schreibweisen ("/Dauer, /Länge") wird zu je einem
 // eigenen Vorschlag aufgespalten.
 let SEARCH_FILTER_SUGGESTIONS = SEARCH_HELP_ENTRIES.flatMap(([p, desc]) =>
-  p.split(",").map(tok => ({token: tok.trim(), desc})));
+  p.split(",").map(tok => ({token: tok.trim(), desc}))).filter(s => s.token.startsWith("/"));
 
 // Holt fuer ein Feld (Zeilenschluessel wie bei SEARCH_FIELD_ALIASES, z.B.
 // "al" fuer Album) alle in DATA tatsaechlich vorkommenden, unterschiedlichen
@@ -3910,10 +3914,11 @@ function attachSearchFilterAutocomplete(el, list) {
   const currentValueToken = () => {
     const {pos, last, prev} = tokensBeforeCaret();
     if (!last) return null;
-    let param = null, text = "", start = pos;
+    let param = null, text = "", start = pos, exact = false;
     if (last.type === "param" && last.end < pos) param = last;
     else if (last.type === "value" && prev && prev.type === "param") {
       param = prev; text = last.values.map(v => v.text).join(" "); start = last.start;
+      exact = !!(last.values[0] && last.values[0].exact);
     }
     if (!param) return null;
     // "/No" und "/Ausgeblendet" haben keine Werteliste; numerische und
@@ -3921,7 +3926,7 @@ function attachSearchFilterAutocomplete(el, list) {
     if (NEGATE_ALIASES.has(param.word) || FLAG_ALIASES.has(param.word)) return null;
     const field = EXT_ALIASES.has(param.word) ? "__ext" : SEARCH_FIELD_ALIASES[param.word];
     if (NUMERIC_OP_FIELDS.has(field) || DATE_OP_FIELDS.has(field)) return null;
-    return {field, text, start, end: pos};
+    return {field, text, start, end: pos, exact};
   };
 
   // Freies Suchwort an der Schreibmarke -- anders als frueher an jeder Stelle
@@ -3981,26 +3986,37 @@ function attachSearchFilterAutocomplete(el, list) {
       if (!q || lv.startsWith(q)) starts.push(v);
       else if (lv.includes(q)) contains.push(v);
     }
-    items = [...starts, ...contains].slice(0, 10).map(v => ({insert: insertText(v), html: esc(v)}));
+    // Ein begonnener "=Wert" bleibt exakt: der Vorschlag ersetzt nur den Wert.
+    const pre = val.exact ? "=" : "";
+    items = [...starts, ...contains].slice(0, 10).map(v => ({insert: pre + insertText(v), html: esc(v)}));
     if (!items.length) { close(); return; }
     renderList();
   };
 
-  // Freitext-Vorschlaege ohne "/Parameter": Pool aus Interpret + Titel (dem
+  // Freitext-Vorschlaege ohne "/Parameter": Pool aus Interpret + Titel + Album (dem
   // Kern von defaultScope() -- Pfad bleibt bewusst aussen vor, sonst waere
   // die Liste von langen Dateipfaden dominiert statt von brauchbaren
   // Vorschlaegen).
   const showFreeTextSuggestions = free => {
     tokStart = free.start; tokEnd = free.end;
     const q = free.text.toLowerCase();
-    const pool = new Set([...fieldValuesForAutocomplete("a"), ...fieldValuesForAutocomplete("t")]);
+    // Wert -> Felder, in denen er vorkommt; die Liste zeigt dahinter, worum
+    // es sich beim Treffer handelt (Interpret/Titel/Album).
+    const pool = new Map();
+    for (const f of ["a", "t", "al"]) {
+      for (const v of fieldValuesForAutocomplete(f)) {
+        if (!pool.has(v)) pool.set(v, []);
+        pool.get(v).push(FIELD_LABELS[f]);
+      }
+    }
     const starts = [], contains = [];
-    for (const v of pool) {
+    for (const v of pool.keys()) {
       const lv = v.toLowerCase();
       if (lv.startsWith(q)) starts.push(v);
       else if (lv.includes(q)) contains.push(v);
     }
-    items = [...starts, ...contains].slice(0, 10).map(v => ({insert: insertText(v), html: esc(v)}));
+    items = [...starts, ...contains].slice(0, 10).map(v => ({insert: insertText(v),
+      html: `${esc(v)} <span class="acfield">${esc(pool.get(v).join(", "))}</span>`}));
     if (!items.length) { close(); return; }
     renderList();
   };
@@ -4568,8 +4584,13 @@ const currentView = () => VIEWS.find(v => v.id === state.view) || VIEWS[0];
 //  - "/no" ist die einzige Verneinung und wirkt nur auf das unmittelbar
 //    folgende Element -- ein Wort, eine Phrase, eine Gruppe oder einen
 //    ganzen "/Parameter Wert"-Ausdruck.
-//  - "/datei" filtert nur die Dateiendung, "/ausgeblendet" ist ein Schalter
-//    ohne Wert (nur ausgeblendete Tracks; mit "/no" nur eingeblendete),
+//  - Nach einem Textfeld-Parameter steht "=" fuer einen exakten Vergleich
+//    des ganzen Feldwerts ("/album =Pop", "/album =\"Pop Hits\""); "=" allein
+//    oder =\"\" heisst "Feld leer" (bei Zahlen/Datum: Wert 0). Siehe
+//    matchesFieldValue().
+//  - "/datei" filtert nur die Dateiendung, "/ausgeblendet", "/cover",
+//    "/music", "/rekordbox" sind Schalter ohne Wert (FLAG_ALIASES; mit
+//    "/no" verneint). "/ausgeblendet": nur ausgeblendete Tracks,
 //    "/dauer"/"/deklariert"/"/konfidenz" akzeptieren ">", "<" und Bereiche
 //    ("3:00-5:00") ueber parseOperatorRange(), "/add" akzeptiert ">"/"<" vor
 //    einem Datum (TT-MM-JJJJ) oder Jahr ueber parseDateRange().
@@ -4599,7 +4620,15 @@ const EXT_ALIASES = new Set(["datei", "file"]);
 // (r.ig), "/no /ausgeblendet" nur die eingeblendeten. Ein Wert waere hier
 // sinnlos -- deshalb schluckt der Parser nach diesem Parameter kein
 // Element, das naechste Wort bleibt normaler Suchtext.
-const FLAG_ALIASES = new Set(["ausgeblendet", "hidden"]);
+// Alias -> Zeilenfeld (compact-Format). "/ausgeblendet" = r.ig, "/cover" = r.cv
+// (Cover eingebettet), "/music" = r.im (in Music.app), "/rekordbox" = r.rb.
+// Mit "/No" verneinbar; aeltere Zeilen ohne das Feld zaehlen als "nein".
+const FLAG_ALIASES = new Map([
+  ["ausgeblendet", "ig"], ["hidden", "ig"],
+  ["cover", "cv"],
+  ["music", "im"],
+  ["rekordbox", "rb"],
+]);
 // Zahlenfelder: ">", "<" und Bereiche ("120-128") ueber
 // parseOperatorRange(). Jahr und BPM stehen hier mit drin, obwohl sie aus
 // den Datei-Tags kommen -- als reiner Textvergleich waere "/Jahr >2020"
@@ -4613,7 +4642,7 @@ const NUMERIC_OP_FIELDS = new Set(["du", "kb", "cf", "yr", "bp"]);
 const VERDICT_OP_FIELDS = new Set(["v"]);
 const DATE_OP_FIELDS = new Set(["da"]);
 const ALIAS_LOOKUP = new Set([...Object.keys(SEARCH_FIELD_ALIASES), ...NEGATE_ALIASES,
-  ...EXT_ALIASES, ...FLAG_ALIASES]);
+  ...EXT_ALIASES, ...FLAG_ALIASES.keys()]);
 let FIELD_LABELS = {a:t("field.artist"), t:t("field.title"), al:t("field.album"), aa:t("field.album_artist"),
   cp:t("field.composer"), ge:t("field.genre"), cm:t("field.comment"), p:t("field.path"), yr:t("field.year"),
   bp:t("field.bpm"), du:t("field.duration"), kb:t("field.declared"),
@@ -4646,9 +4675,13 @@ function refreshI18nCache() {
     [t("search.help.added.token"), t("search.help.added.desc"), t("search.help.added.example")],
     [t("search.help.status.token"), t("search.help.status.desc"), t("search.help.status.example")],
     [t("search.help.hidden.token"), t("search.help.hidden.desc"), t("search.help.hidden.example")],
+    [t("search.help.cover.token"), t("search.help.cover.desc"), t("search.help.cover.example")],
+    [t("search.help.music.token"), t("search.help.music.desc"), t("search.help.music.example")],
+    [t("search.help.rekordbox.token"), t("search.help.rekordbox.desc"), t("search.help.rekordbox.example")],
+    [t("search.help.exact.token"), t("search.help.exact.desc"), t("search.help.exact.example")],
   ];
   SEARCH_FILTER_SUGGESTIONS = SEARCH_HELP_ENTRIES.flatMap(([p, desc]) =>
-    p.split(",").map(tok => ({token: tok.trim(), desc})));
+    p.split(",").map(tok => ({token: tok.trim(), desc}))).filter(s => s.token.startsWith("/"));
   FIELD_LABELS = {a:t("field.artist"), t:t("field.title"), al:t("field.album"), aa:t("field.album_artist"),
     cp:t("field.composer"), ge:t("field.genre"), cm:t("field.comment"), p:t("field.path"), yr:t("field.year"),
     bp:t("field.bpm"), du:t("field.duration"), kb:t("field.declared"),
@@ -4705,7 +4738,8 @@ function tokenizeSearch(q) {
       const close = q.indexOf(")", i + 1);
       const inner = q.slice(i + 1, close === -1 ? q.length : close);
       i = close === -1 ? q.length : close + 1;
-      const values = splitOrGroup(inner);
+      const pt = toks[toks.length - 1];
+      const values = splitOrGroup(inner, !!(pt && pt.type === "param" && SEARCH_FIELD_ALIASES[pt.word]));
       if (values.length) toks.push({type: "value", start, end: i, values});
       continue;
     }
@@ -4713,6 +4747,32 @@ function tokenizeSearch(q) {
     while (j < q.length && !/\s/.test(q[j]) && !isQuote(q[j]) && q[j] !== "(" && q[j] !== ")") j++;
     const word = q.slice(i, j);
     i = j;
+    // "=" direkt nach einem Feld-Parameter: exakter Vergleich des ganzen
+    // Feldwerts statt Teilstring ("/album =Pop"). "=" allein (oder =\"\")
+    // heisst "Feld ist leer". Nur nach einem Feld-Parameter -- als freier
+    // Text bleibt "=Pop" ein ganz normales Wort.
+    const prevTok = toks[toks.length - 1];
+    if (word[0] === "=" && prevTok && prevTok.type === "param" && SEARCH_FIELD_ALIASES[prevTok.word]) {
+      if (word.length > 1) {
+        toks.push({type: "value", start, end: j, values: [{text: word.slice(1), phrase: false, exact: true}]});
+        continue;
+      }
+      if (isQuote(q[j])) {
+        let close = j + 1;
+        while (close < q.length && !isQuote(q[close])) close++;
+        const closed = close < q.length;
+        const text = q.slice(j + 1, close).trim();
+        i = closed ? close + 1 : q.length;
+        // Noch nicht geschlossenes ="" waehrend des Tippens filtert nicht
+        // schon auf "leer".
+        if (closed || text) toks.push({type: "value", start, end: i, values: [{text, phrase: true, exact: true}]});
+        continue;
+      }
+      if (j >= q.length || /\s/.test(q[j])) {
+        toks.push({type: "value", start, end: j, values: [{text: "", phrase: false, exact: true}]});
+        continue;
+      }
+    }
     if (word[0] === "/") {
       const name = word.slice(1).replace(/ü/g, "ue");
       if (ALIAS_LOOKUP.has(name)) { toks.push({type: "param", word: name, start, end: j}); continue; }
@@ -4726,16 +4786,25 @@ function tokenizeSearch(q) {
 // ohne "OR" dazwischen gehoeren zu EINER Alternative ("(deep house OR
 // trance)") -- innerhalb einer Gruppe ist "OR" der einzige Operator, das
 // implizite UND der obersten Ebene gilt hier nicht.
-function splitOrGroup(inner) {
+function splitOrGroup(inner, allowExact) {
   const alts = [];
   const re = new RegExp(`[${QUOTE_CHARS}]([^${QUOTE_CHARS}]*)[${QUOTE_CHARS}]|([^\\s${QUOTE_CHARS}]+)`, "g");
-  let m, cur = null;
+  let m, cur = null, pendingExact = false;
   while ((m = re.exec(inner))) {
     const phrase = m[1] !== undefined;
-    const text = (phrase ? m[1] : m[2]).trim();
+    let text = (phrase ? m[1] : m[2]).trim();
     if (!phrase && text.toLowerCase() === "or") { if (cur) alts.push(cur); cur = null; continue; }
-    if (!text) continue;
-    cur = cur ? {text: (cur.text + " " + text), phrase: false} : {text, phrase};
+    // "=" (auch "=Wert") nur in Feldfiltern: exakte Alternative.
+    let exact = false;
+    if (allowExact && !phrase && text[0] === "=") {
+      text = text.slice(1);
+      if (!text) { pendingExact = true; continue; }
+      exact = true;
+    } else if (pendingExact) { exact = true; }
+    pendingExact = false;
+    if (!text && !(exact && phrase)) continue;
+    cur = cur ? {text: (cur.text + " " + text), phrase: false, exact: cur.exact}
+              : {text, phrase, exact};
   }
   if (cur) alts.push(cur);
   return alts;
@@ -4755,7 +4824,7 @@ function splitOrGroup(inner) {
 //    "/No /No X" kollabiert absichtlich zu einem einzelnen Ausschluss statt
 //    zu einer doppelten Verneinung.
 //  - Alles Uebrige ist freier Suchtext; mehrere freie Elemente sind
-//    UND-verknuepft (jedes muss in Interpret+Titel+Pfad vorkommen).
+//    UND-verknuepft (jedes muss in Interpret+Titel+Album+Pfad vorkommen).
 let _cacheQ = null, _cacheParsed = null;
 function parseSearchQuery(q) {
   if (q === _cacheQ) return _cacheParsed;
@@ -4770,7 +4839,8 @@ function parseSearchQuery(q) {
     if (!tok) break;  // "/No" am Textende: verfaellt
     if (tok.type === "param") {
       if (FLAG_ALIASES.has(tok.word)) {
-        parsed.filters.push({kind: "hidden", values: [], raw: "", start, end: tok.end, negate});
+        parsed.filters.push({kind: "flag", field: FLAG_ALIASES.get(tok.word), flagWord: tok.word,
+          values: [], raw: "", start, end: tok.end, negate});
         continue;
       }
       const val = toks[i + 1];
@@ -4786,7 +4856,10 @@ function parseSearchQuery(q) {
 }
 // Anzeigetext eines Filterwerts fuer die Chips unter der Suchleiste --
 // mehrere ODER-Alternativen werden mit dem uebersetzten "oder" verbunden.
-function valuesLabel(values) { return values.map(v => v.text).join(` ${t("search.chip.or")} `); }
+// Exakte Werte erscheinen mit "=" ("=Pop", ="Pop Hits", =""), damit der Chip
+// sich von der Teilstring-Suche unterscheidet.
+const valueLabel = v => !v.exact ? v.text : (v.phrase || !v.text) ? `="${v.text}"` : `=${v.text}`;
+function valuesLabel(values) { return values.map(valueLabel).join(` ${t("search.chip.or")} `); }
 function pushFieldFilter(filters, word, values, start, end, negate) {
   const f = {values, raw: valuesLabel(values), start, end, negate};
   if (EXT_ALIASES.has(word)) { filters.push({...f, kind: "ext"}); return; }
@@ -4823,7 +4896,8 @@ function parseOperatorRange(value, toNumber) {
   const n = toNumber(value);
   return n === null ? null : v => v === n;
 }
-function matchesNumericFilter(rowValue, rawValue, field) {
+function matchesNumericFilter(rowValue, rawValue, field, exactEmpty) {
+  if (exactEmpty) return !rowValue;  // =\"\" : kein Wert (0 = kein Tag)
   const toNumber = field === "du" ? parseDurationToken : toPlainNumber;
   const test = parseOperatorRange(rawValue, toNumber);
   return test ? test(rowValue) : true;  // unparsbar -> Filter wirkungslos statt Absturz
@@ -4853,7 +4927,8 @@ function parseDateRange(tok) {
   }
   return null;
 }
-function matchesDateFilter(rowValue, rawValue) {
+function matchesDateFilter(rowValue, rawValue, exactEmpty) {
+  if (exactEmpty) return !rowValue;
   if (!rowValue) return false;  // 0 = nie hinzugefuegt, zaehlt bei keinem Datumsfilter als Treffer
   rawValue = rawValue.trim();
   const op = rawValue.startsWith(">") ? ">" : rawValue.startsWith("<") ? "<" : null;
@@ -4923,9 +4998,9 @@ function fuzzyIncludes(haystack, needle, scope) {
   return needleWords.every(nw => hayWords.some(hw => wordsSimilarEnough(nw, hw, tolerance)));
 }
 
-// Suchbereich einer Zeile: Interpret + Titel + Pfad, kleingeschrieben und
+// Suchbereich einer Zeile: Interpret + Titel + Album + Pfad, kleingeschrieben und
 // apostroph-bereinigt. Wird bei JEDEM Tastendruck fuer JEDE Zeile gebraucht
-// (10.822 mal, teils dreifach) und haengt nur an r.a/r.t/r.p -- deshalb je
+// (10.822 mal, teils dreifach) und haengt nur an r.a/r.t/r.al/r.p -- deshalb je
 // Zeile einmal gebildet und behalten. Im Browser gemessen: 34 -> 21 ms je
 // Tastendruck bei 10.822 Zeilen.
 //
@@ -4938,7 +5013,7 @@ function scopeEntry(r) {
   let e = _scopeCache.get(r);
   if (e === undefined) {
     // words bleibt null, bis der Fuzzy-Zweig es wirklich braucht.
-    e = {text: stripApostrophes((r.a + " " + r.t + " " + r.p).toLowerCase()), words: null};
+    e = {text: stripApostrophes((r.a + " " + r.t + " " + (r.al || "") + " " + r.p).toLowerCase()), words: null};
     _scopeCache.set(r, e);
   }
   return e;
@@ -4994,6 +5069,12 @@ function matchesValue(hay, v, scope) {
 }
 // Mehrere Werte eines Filters stammen immer aus einer Klammergruppe und sind
 // deshalb ODER-verknuepft (das implizite UND wirkt nur zwischen Elementen).
+// Feldvergleich: "=Wert" verlangt Gleichheit des ganzen (getrimmten)
+// Feldwerts, "=\"\"" ein leeres Feld; sonst wie matchesValue().
+function matchesFieldValue(hay, v) {
+  if (!v.exact) return matchesValue(hay, v);
+  return stripApostrophes(hay).trim() === stripApostrophes(v.text.toLowerCase());
+}
 const matchesAnyValue = (hay, values, scope) =>
   !values.length || values.some(v => matchesValue(hay, v, scope));
 
@@ -5005,12 +5086,13 @@ function applyFilters(r, filters) {
       // kein hit/negate-Vergleich wie bei den uebrigen.
       case "exclude": { const sc = scopeEntry(r);
         if (matchesAnyValue(sc.text, f.values, sc)) return false; continue; }
-      case "field": hit = matchesAnyValue(String(r[f.field] ?? "").toLowerCase(), f.values); break;
+      case "field": { const fv = String(r[f.field] ?? "").toLowerCase();
+        hit = !f.values.length || f.values.some(v => matchesFieldValue(fv, v)); break; }
       case "ext": hit = f.values.some(v => fileExt(r.p) === v.text.replace(/^\./, "").toUpperCase()); break;
-      case "numeric": hit = f.values.some(v => matchesNumericFilter(r[f.field], v.text, f.field)); break;
-      case "date": hit = f.values.some(v => matchesDateFilter(r[f.field], v.text)); break;
+      case "numeric": hit = f.values.some(v => matchesNumericFilter(r[f.field], v.text, f.field, v.exact && !v.text)); break;
+      case "date": hit = f.values.some(v => matchesDateFilter(r[f.field], v.text, v.exact && !v.text)); break;
       case "verdict": hit = f.values.some(v => matchesVerdictFilter(r, v.text)); break;
-      case "hidden": hit = !!r.ig; break;
+      case "flag": hit = !!r[f.field]; break;
       // Nur von refreshDefaultFilters() erzeugt (Standard-Suchfilter-Zeile
       // ohne "/Parameter", reiner Freitext) -- der getippte Suchtext selbst
       // laeuft weiter ueber "free" in matchesSearch(), nicht ueber diesen Zweig.
@@ -5027,21 +5109,22 @@ function matchesSearch(r, q) {
   if (!q) return true;
   const {free, filters} = parseSearchQuery(q);
   // Mehrere freie Elemente sind UND-verknuepft -- jedes muss fuer sich in
-  // Interpret+Titel+Pfad vorkommen (Reihenfolge egal).
+  // Interpret+Titel+Album+Pfad vorkommen (Reihenfolge egal).
   const sc = scopeEntry(r);
   for (const el of free) if (!matchesAnyValue(sc.text, el.values, sc)) return false;
   return applyFilters(r, filters);
 }
 
+const FLAG_CHIP_KEYS = {ig: "views.ignored", cv: "col.cover", im: "col.in_music", rb: "col.rekordbox"};
 function chipLabel(f) {
   const name = f.kind === "exclude" ? t("search.chip.exclude")
     : f.kind === "ext" ? t("field.file")
     : f.kind === "contains" ? t("search.chip.contains")
-    : f.kind === "hidden" ? t("views.ignored")
+    : f.kind === "flag" ? t(FLAG_CHIP_KEYS[f.field])
     : FIELD_LABELS[f.field];
   // "/Ausgeblendet" ist ein Schalter ohne Wert -- ein ": " mit nichts
   // dahinter waere nur Rauschen im Chip.
-  const label = f.kind === "hidden" ? name : `${name}: ${f.raw}`;
+  const label = f.kind === "flag" ? name : `${name}: ${f.raw}`;
   return f.negate ? `${t("search.chip.negate_prefix")} ${label}` : label;
 }
 // Zeigt erkannte Suchparameter als entfernbare Chips unter der Suchleiste --
@@ -6731,7 +6814,7 @@ function stopPlayerFor(path) {
 function applyRowUpdate(i, row) {
   Object.assign(DATA[i], row, {i});
   invalidateFieldValueCache();
-  // Interpret/Titel/Pfad koennen sich hier geaendert haben -- der gemerkte
+  // Interpret/Titel/Album/Pfad koennen sich hier geaendert haben -- der gemerkte
   // Suchbereich der Zeile ist damit hinfaellig (siehe scopeEntry()).
   dropScopeCache(DATA[i]);
 }
@@ -12855,7 +12938,7 @@ function patchRenamedRows(field, rowKey, oldValue, newValue, groupArtist) {
     if (r[rowKey] !== oldValue) continue;
     if (field === "album" && (r.aa || r.a || "") !== groupArtist) continue;
     r[rowKey] = newValue;
-    if (field === "artist") dropScopeCache(r);
+    if (field === "artist" || field === "album") dropScopeCache(r);
   }
   invalidateFieldValueCache();
 }

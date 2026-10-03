@@ -3,6 +3,17 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.6.0] - 2026-10-03
+
+### Added
+- Suche: Exakter Vergleich mit `=` hinter einem Textfeld (`/Album =Pop` findet nur das Album „Pop", nicht „King of Pop"; auch `="Pop Hits"` und Gruppen wie `(=Pop OR =Rock)`).
+- Suche: Leere Felder finden mit `=` allein oder `=""` (z. B. `/Album =`, `/Genre =""`, `/Jahr =""`).
+- Suche: Neue Schalter `/Cover`, `/Music` und `/Rekordbox` (mit `/No` verneinbar) für Tracks mit/ohne Cover bzw. in Music.app/Rekordbox.
+- Suche: Die Autovervollständigung zeigt hinter jedem Vorschlag, ob es ein Künstler, Titel oder Album ist.
+
+### Changed
+- Suche: Der Freitext durchsucht jetzt auch das Album (bisher nur Künstler, Titel und Pfad); Albumnamen erscheinen auch in den Vorschlägen.
+
 ## [1.5.2] - 2026-10-03
 
 ### Changed
