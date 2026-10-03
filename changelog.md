@@ -3,6 +3,14 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.5.2] - 2026-10-03
+
+### Changed
+- Statistik: Die Umbenennungen heißen jetzt „Ansicht Künstler/Album/Genre: … umbenannt" (statt „Interpret"/„Album"/„Genre umbenannt").
+
+### Fixed
+- Statistik: „Auffälligkeiten-Fix" und „Rekordbox-Tags übertragen" zeigten den rohen Schlüssel statt eines Anzeigenamens.
+
 ## [1.5.1] - 2026-10-03
 
 ### Fixed

@@ -906,12 +906,14 @@ const I18N_DE = {
   "stats.action.rekordbox": "Zu Rekordbox-Playlist hinzugefügt",
   "stats.action.rekordbox_korrigiert": "Rekordbox-Pfad korrigiert (nach Verschiebung/Konvertierung)",
   "stats.action.rekordbox_pfad_korrigiert": "Rekordbox-Pfad korrigiert (über Abgleich-Popup)",
-  "stats.action.genre_rename": "Genre umbenannt",
-  "stats.action.artist_rename": "Interpret umbenannt",
-  "stats.action.album_rename": "Album umbenannt",
+  "stats.action.genre_rename": "Ansicht Genre: Genre umbenannt",
+  "stats.action.artist_rename": "Ansicht Künstler: Künstler umbenannt",
+  "stats.action.album_rename": "Ansicht Album: Album umbenannt",
   "stats.action.rekordbox_genre": "Rekordbox-Genre nach Umbenennung aktualisiert",
-  "stats.action.rekordbox_artist": "Rekordbox-Interpret nach Umbenennung aktualisiert",
+  "stats.action.rekordbox_artist": "Rekordbox-Künstler nach Umbenennung aktualisiert",
   "stats.action.rekordbox_album": "Rekordbox-Album nach Umbenennung aktualisiert",
+  "stats.action.rekordbox_tags": "Rekordbox-Tags übertragen",
+  "stats.action.auffaelligkeiten_fix": "Tag-Auffälligkeiten behoben",
 
   // ── Seitenleiste: Genre/Album/Interpret (auf Ebene von "Alle") ─────────
   "views.grp_genre": "Genre",

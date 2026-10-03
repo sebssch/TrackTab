@@ -893,6 +893,8 @@ const I18N_EN = {
   "stats.action.rekordbox_genre": "Rekordbox genre updated after rename",
   "stats.action.rekordbox_artist": "Rekordbox artist updated after rename",
   "stats.action.rekordbox_album": "Rekordbox album updated after rename",
+  "stats.action.rekordbox_tags": "Rekordbox tags transferred",
+  "stats.action.auffaelligkeiten_fix": "Tag anomalies fixed",
 
   // ── Sidebar: Genre/Album/Artist (same level as "All") ──────────────────
   "views.grp_genre": "Genre",
