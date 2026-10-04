@@ -16,6 +16,7 @@ from pathlib import Path
 from . import __version__
 from . import classify as classify_mod
 from . import config as cfgmod
+from . import tags as tags_mod
 
 _FLAGGED = (classify_mod.VERDICT_FAKE, classify_mod.VERDICT_SUSPECT)
 
@@ -91,6 +92,8 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
             "ge": r["genre"] or "",
             "yr": int(r["year"] or 0),
             "bp": round(r["bpm"] or 0.0, 1),
+            "ky": r["key"] or "",
+            "kr": r["key_raw"] or "",
             "cm": r["comment"] or "",
             "tn": int(r["track_no"] or 0),
             "tt": int(r["track_total"] or 0),
@@ -218,6 +221,12 @@ def build_html(rows, cfg: dict, ignored: set[str] | None = None,
         # einen Rebuild -- siehe server._get_playlists().
         "playlists": playlists or [],
         "playlistItems": playlist_items or {},
+        # Tonart: Camelot -> [Camelot, Open Key, Notennamen] und
+        # Schreibweise -> Camelot (Suche/Eingabe), siehe tags.KEY_TABLE.
+        # Eine einzige Quelle fuer Server und Oberflaeche.
+        "keyTable": {k: list(v) for k, v in tags_mod.KEY_TABLE.items()},
+        "keyAliases": tags_mod.key_aliases(),
+        "keyNotation": cfg.get("key_notation", "camelot"),
     }
 
     html = (

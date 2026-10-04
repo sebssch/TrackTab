@@ -3247,7 +3247,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _post_tags(self) -> None:
         """Titel/Interpret/Album/Albumkuenstler/Komponist/Genre/Jahr/BPM/
-        Kommentar/Tracknummer/-gesamtzahl in die Datei UND die DB schreiben.
+        Tonart/Kommentar/Tracknummer/-gesamtzahl in die Datei UND die DB schreiben.
         Fuer einen noch nicht
         gescannten, aber ueber _authorize_path autorisierten Pfad (siehe
         _post_open_file_pick) nur in die Datei -- es gibt noch keine
@@ -3274,6 +3274,13 @@ class _Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 self._fail("Ungültiger BPM-Wert")
                 return
+        # Tonart: in die Datei geht sie in der gewaehlten Schreibweise
+        # (Einstellung key_notation), in der DB bleibt sie Camelot.
+        key_canon = None
+        if "key" in payload:
+            key_canon = tags_mod.normalize_key(str(payload["key"] or ""))
+            fields["key"] = tags_mod.format_key(
+                key_canon, cfgmod.load().get("key_notation", "camelot"))
         if "year" in payload:
             try:
                 fields["year"] = int(payload["year"]) if payload["year"] else 0
@@ -3314,7 +3321,10 @@ class _Handler(BaseHTTPRequestHandler):
         with self.lock:
             conn = db_mod.connect(cfg)
             try:
-                db_mod.update_tags(conn, path, fields)
+                db_mod.update_tags(
+                    conn, path,
+                    {**fields, "key": key_canon, "key_raw": fields["key"]}
+                    if key_canon is not None else fields)
                 db_mod.update_tag_issues(conn, path, new_issues)
                 db_mod.refresh_stat(conn, path)
                 row = db_mod.row_for_path(conn, path)

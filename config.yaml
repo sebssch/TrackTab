@@ -149,6 +149,10 @@ font_size: "mittel"
 # Farbschema: auto (folgt dem System), light oder dark.
 theme: "auto"
 
+# Schreibweise der Tonart: camelot (8A), openkey (1m) oder notes (Am).
+# Wirkt auf Anzeige, geschriebene Datei-Tags und den Rekordbox-Uebertrag.
+key_notation: "camelot"
+
 # Akzentfarbe der Oberflaeche (aktive Knoepfe, Player-Fortschritt, ...).
 # Eine von: blue, cyan, teal, indigo, violet, purple, fuchsia, pink.
 accent_color: "blue"

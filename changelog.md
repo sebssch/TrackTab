@@ -3,6 +3,23 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.7.0] - 2026-10-04
+
+### Added
+- Tonart: Neue Spalte „Tonart“ mit farbigen Bubbles in den Farben des Camelot-Rads. Die Tonart wird beim Scannen aus dem Datei-Tag gelesen (ID3 `TKEY`, MP4-Freiform-Atom, Vorbis `INITIALKEY`) und für bestehende Bibliotheken beim nächsten Scan ohne `--force` nachgetragen.
+- Tonart: Neuer Einstellungsabschnitt „Tonart“ mit der Schreibweise Camelot, Open Key oder Notennamen. Sie gilt für Tabelle, Tags-Dialog, geschriebene Datei-Tags und den Übertrag nach Rekordbox; gelesen werden immer alle drei Schreibweisen.
+- Tonart: Weicht der Wert in der Datei von der Darstellung in TrackTab ab, hat die Bubble einen gestrichelten Rahmen; der Hinweistext nennt den Datei-Wert.
+- Tonart: Im Tags-Dialog bearbeitbar (einzeln und für mehrere Tracks) mit Vorschlägen für alle 24 Tonarten in der gewählten Schreibweise.
+- Tonart: „Key in Datei schreiben“ im Zeilenmenü ⋮ und in der Sammelleiste schreibt die in TrackTab geführte Tonart in den Datei-Tag (Tracks ohne Tonart und mit schon identischem Wert werden übersprungen).
+- Tonart: Suche mit `/Key` bzw. `/Tonart` in jeder Schreibweise (eine reine Zahl trifft Moll und Dur), sortierbar nach der Position auf dem Rad, und als Regelfeld in Smart Playlists.
+- Rekordbox: Beim Übertragen neuer Tracks wird die Tonart mit gesetzt (bestehende Rekordbox-Einträge bleiben unberührt).
+- Neues Icon `clef-treble` im vendorten Lucide-Satz.
+
+### Changed
+- BPM-Spalte: Ganze Werte erscheinen ohne „,0“ (`130` statt `130,0`), echte Nachkommastellen bleiben (`127,5`).
+- Tags-Dialog: BPM beginnt eine neue Zeile, die Tonart steht dahinter.
+- Einstellungen → Darstellung: Designfarbe über die volle Breite, danach die beiden Schalter je zur Hälfte, dann der Browser für die Web-UI.
+
 ## [1.6.1] - 2026-10-03
 
 ### Fixed

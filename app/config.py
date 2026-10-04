@@ -394,6 +394,13 @@ def defaults() -> dict:
         # als CSS-Variablen (--dc-*) in app.css.
         "accent_color": "blue",
 
+        # Schreibweise der Tonart: camelot ("8A"), openkey ("1m") oder notes
+        # ("Am"). Intern steht sie immer als Camelot in der DB; die Einstellung
+        # bestimmt Anzeige, den in Dateien geschriebenen Wert (Tag "Initial
+        # Key") und den Wert beim Uebertrag nach Rekordbox. Siehe
+        # tags.format_key() und app.js::keyLabel().
+        "key_notation": "camelot",
+
         # Oberflaechen-Sprache: auto (folgt navigator.language im Browser)
         # oder ein fester Sprachcode. de/en uebersetzt (siehe app/webui/
         # i18n/de.js, en.js) -- resolveLang() in app.js faellt auf "de"

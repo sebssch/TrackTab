@@ -117,6 +117,56 @@ const VIEWS = [
 const VIEW_TABS = ["all", "ignored", "gone"];
 
 
+// ── Tonart ────────────────────────────────────────────────────────────────
+// Intern (r.ky, DB) immer Camelot ("8A"); angezeigt wird sie in der
+// Schreibweise aus den Einstellungen (key_notation). Tabelle und Aliase
+// kommen aus tags.py (META) -- eine einzige Quelle fuer Server und Oberflaeche.
+const KEY_TABLE = META.keyTable || {};
+const KEY_ALIASES = META.keyAliases || {};
+const KEY_NOTATION_INDEX = {camelot: 0, openkey: 1, notes: 2};
+let KEY_NOTATION = KEY_NOTATION_INDEX[META.keyNotation] !== undefined ? META.keyNotation : "camelot";
+function setKeyNotation(value) {
+  KEY_NOTATION = KEY_NOTATION_INDEX[value] !== undefined ? value : "camelot";
+}
+// Beliebige Schreibweise -> Camelot; Unbekanntes bleibt (getrimmt) stehen.
+function keyCanon(text) {
+  const s = String(text ?? "").trim().replace(/^0+(?=\d)/, "");
+  return s ? (KEY_ALIASES[s.toLowerCase()] || s) : "";
+}
+// Camelot -> Beschriftung in der gewaehlten Schreibweise.
+function keyLabel(camelot) {
+  const row = KEY_TABLE[camelot];
+  return row ? row[KEY_NOTATION_INDEX[KEY_NOTATION]] : String(camelot || "");
+}
+// Sortierung nach Kreisposition (1A, 1B, 2A, ...). Unbekanntes und Leeres
+// stehen in beiden Richtungen hinten (dir = 1 aufsteigend, -1 absteigend).
+function keyRank(camelot, dir = 1) {
+  const m = /^(\d{1,2})([AB])$/.exec(camelot || "");
+  if (m) return Number(m[1]) * 2 + (m[2] === "B" ? 1 : 0);
+  return (camelot ? 999 : 1000) * dir;
+}
+// In welcher Schreibweise steht der Datei-Wert? Index wie KEY_NOTATION_INDEX,
+// -1 wenn er keiner der drei entspricht (z.B. Freitext). Gross-/Kleinschreibung
+// und fuehrende Null zaehlen nicht ("8a", "08A" sind Camelot).
+function keyNotationOf(raw) {
+  const camelot = keyCanon(raw);
+  const row = KEY_TABLE[camelot];
+  if (!row) return -1;
+  const norm = s => String(s).trim().replace(/^0+(?=\d)/, "").toLowerCase();
+  return row.findIndex(name => norm(name) === norm(raw));
+}
+// Farbe immer aus dem Camelot-Rad (--key-1a ... --key-12b in app.css). Steht
+// in der Datei eine andere Schreibweise als eingestellt, bekommt die Bubble
+// einen gestrichelten Rahmen und der Tooltip nennt den Datei-Wert.
+function keyBubble(camelot, raw) {
+  if (!camelot) return "";
+  if (!KEY_TABLE[camelot]) return esc(camelot);
+  const at = raw ? keyNotationOf(raw) : -1;
+  const mismatch = at >= 0 && at !== KEY_NOTATION_INDEX[KEY_NOTATION];
+  const tip = mismatch ? ` title="${esc(t("key.in_file", {value: raw}))}"` : "";
+  return `<span class="keybubble${mismatch ? " keymis" : ""}"${tip} style="background:var(--key-${camelot.toLowerCase()})">${esc(keyLabel(camelot))}</span>`;
+}
+
 // ── Eigene Playlisten und Ordner ──────────────────────────────────────────
 // Definitionen und Zuordnungen kommen beim Laden aus dem gebackenen META
 // (report.build_html), damit Baum und zuletzt geoeffneter Knoten sofort
@@ -250,6 +300,7 @@ const OPTIONAL_COLUMNS = [
   {key: "ge", label: t("field.genre"), numeric: false},
   {key: "yr", label: t("field.year"), numeric: true},
   {key: "bp", label: t("field.bpm"), numeric: true},
+  {key: "ky", label: t("field.key"), numeric: false},
   {key: "cm", label: t("field.comment"), numeric: false},
   {key: "a", label: t("field.artist"), numeric: false},
   {key: "t", label: t("field.title"), numeric: false},
@@ -263,7 +314,7 @@ const OPTIONAL_COLUMNS = [
 // liesse sich die Spalte nicht anpassen (sie wuerde jede Aenderung sofort
 // wieder mit dem freien Platz ausgleichen).
 const DEFAULT_COL_WIDTHS = {po:50, v:105, co:90, kb:105, mk:75, cf:110, st:75, lu:90, tp:60, du:70, rb:105,
-  im:85, da:115, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, cm:180, a:150, t:200, n:340,
+  im:85, da:115, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, ky:70, cm:180, a:150, t:200, n:340,
   ti:280};
 
 let state = {
@@ -939,6 +990,7 @@ const ICONS = {
   editor: SVG('<line x1="4" y1="20" x2="4" y2="12"/><line x1="9" y1="20" x2="9" y2="6"/>' +
               '<line x1="14" y1="20" x2="14" y2="15"/><line x1="19" y1="20" x2="19" y2="9"/>'),
   edit: SVG(LUCIDE_ICONS["square-pen"]),
+  clefTreble: SVG(LUCIDE_ICONS["clef-treble"]),
   pencil: SVG(LUCIDE_ICONS["pencil"]),
   sparkles: SVG(LUCIDE_ICONS["sparkles"]),
   pencilRuler: SVG(LUCIDE_ICONS["pencil-ruler"]),
@@ -1897,7 +1949,7 @@ function ensureExtRow(source, track) {
   const row = {
     i: DATA.length, p: track.path || "", ext: 1, gone: 1,
     a: track.artist || "", t: track.name || track.title || "",
-    al: "", aa: "", cp: "", ge: "", cm: "", yr: 0, bp: 0, tn: 0, tt: 0, cv: 0,
+    al: "", aa: "", cp: "", ge: "", cm: "", yr: 0, bp: 0, ky: "", tn: 0, tt: 0, cv: 0,
     v: "UNKLAR", fam: "", cd: "", kb: 0, mk: 0, co: 0, st: 0, bw: 0, cf: 0,
     du: 0, sr: 0, mo: "", en: "", lp: 0, lu: 0, tp: 0, lra: 0, sz: 0, hs: "",
     ig: 0, f1: 0, f2: 0, f3: 0, mc: 0, rb: 0, im: 0, da: 0,
@@ -2034,6 +2086,12 @@ function smartFields() {
     {key: "p",  type: SMART_TYPES.TEXT, label: FIELD_LABELS.p},
     {key: "yr", type: SMART_TYPES.NUM,  label: FIELD_LABELS.yr},
     {key: "bp", type: SMART_TYPES.NUM,  label: FIELD_LABELS.bp},
+    // Tonart: Auswahl der 24 Tonarten in der eingestellten Schreibweise; die
+    // Regel speichert den Camelot-Wert (v), damit sie nach einem Wechsel der
+    // Schreibweise weiter greift.
+    {key: "ky", type: SMART_TYPES.ENUM, label: FIELD_LABELS.ky,
+     options: () => Object.keys(KEY_TABLE).sort((a, b) => keyRank(a) - keyRank(b))
+       .map(k => ({v: k, l: keyLabel(k)}))},
     {key: "du", type: SMART_TYPES.NUM,  label: FIELD_LABELS.du, unit: t("smart.unit_seconds")},
     {key: "kb", type: SMART_TYPES.NUM,  label: FIELD_LABELS.kb, unit: "kbps"},
     {key: "mk", type: SMART_TYPES.NUM,  label: t("smart.field_measured"), unit: "kbps"},
@@ -3717,6 +3775,7 @@ async function initStorage() {
         applyFontSize(s.values.font_size);
         applyTheme(s.values.theme);
         applyAccentColor(s.values.accent_color);
+        setKeyNotation(s.values.key_notation);
         state.infiniteScroll = !!s.values.infinite_scroll;
         state.searchTolerance = typeof s.values.search_typo_tolerance === "number"
           ? s.values.search_typo_tolerance : 0.8;
@@ -3852,6 +3911,10 @@ function fieldValuesForAutocomplete(field) {
   // internen Schluessel aus r.v -- getippt wird ja ebenfalls die Beschriftung.
   if (field === "v") {
     return [...order.map(k => labels[k]), t("chip.manual_corrected")];
+  }
+  // Tonart: feste Liste der 24 Tonarten in der eingestellten Schreibweise.
+  if (field === "ky") {
+    return Object.keys(KEY_TABLE).sort((a, b) => keyRank(a) - keyRank(b)).map(keyLabel);
   }
   const set = new Set();
   for (const r of DATA) {
@@ -4605,6 +4668,7 @@ const SEARCH_FIELD_ALIASES = {
   pfad: "p", path: "p",
   jahr: "yr", year: "yr",
   bpm: "bp",
+  key: "ky", tonart: "ky",
   dauer: "du", laenge: "du", length: "du",
   deklariert: "kb", declared: "kb",
   konfidenz: "cf", confidence: "cf",
@@ -4645,7 +4709,7 @@ const ALIAS_LOOKUP = new Set([...Object.keys(SEARCH_FIELD_ALIASES), ...NEGATE_AL
   ...EXT_ALIASES, ...FLAG_ALIASES.keys()]);
 let FIELD_LABELS = {a:t("field.artist"), t:t("field.title"), al:t("field.album"), aa:t("field.album_artist"),
   cp:t("field.composer"), ge:t("field.genre"), cm:t("field.comment"), p:t("field.path"), yr:t("field.year"),
-  bp:t("field.bpm"), du:t("field.duration"), kb:t("field.declared"),
+  bp:t("field.bpm"), ky:t("field.key"), du:t("field.duration"), kb:t("field.declared"),
   cf:t("field.confidence"), da:t("field.added"), v:t("col.status")};
 
 // Holt labels/FIELD_LABELS/SEARCH_HELP_ENTRIES/... nach, die oben als
@@ -4663,6 +4727,7 @@ function refreshI18nCache() {
     [t("search.help.genre.token"), t("field.genre"), t("search.help.genre.example")],
     [t("search.help.year.token"), t("search.help.year.desc"), t("search.help.year.example")],
     [t("search.help.bpm.token"), t("search.help.bpm.desc"), t("search.help.bpm.example")],
+    [t("search.help.key.token"), t("search.help.key.desc"), t("search.help.key.example")],
     [t("search.help.composer.token"), t("field.composer"), t("search.help.composer.example")],
     [t("search.help.album_artist.token"), t("field.album_artist"), t("search.help.album_artist.example")],
     [t("search.help.comment.token"), t("search.help.comment.desc"), t("search.help.comment.example")],
@@ -4684,7 +4749,7 @@ function refreshI18nCache() {
     p.split(",").map(tok => ({token: tok.trim(), desc}))).filter(s => s.token.startsWith("/"));
   FIELD_LABELS = {a:t("field.artist"), t:t("field.title"), al:t("field.album"), aa:t("field.album_artist"),
     cp:t("field.composer"), ge:t("field.genre"), cm:t("field.comment"), p:t("field.path"), yr:t("field.year"),
-    bp:t("field.bpm"), du:t("field.duration"), kb:t("field.declared"),
+    bp:t("field.bpm"), ky:t("field.key"), du:t("field.duration"), kb:t("field.declared"),
     cf:t("field.confidence"), da:t("field.added"), v:t("col.status")};
   // Gleiche Schluessel wie beim urspruenglichen Aufbau von OPTIONAL_COLUMNS
   // oben (Zeile ~81) -- Objekte werden hier nur umbenannt, nicht ersetzt,
@@ -4693,7 +4758,7 @@ function refreshI18nCache() {
   const columnKeyToI18n = {po:"col.position", v:"col.status", co:"col.cutoff", kb:"field.declared", mk:"col.class", cf:"field.confidence",
     st:"col.steepness", lu:"col.loudness", tp:"col.clip", du:"field.duration", rb:"col.rekordbox",
     im:"col.in_music", da:"field.added", cv:"col.cover", al:"field.album", tn:"col.track_no",
-    aa:"field.album_artist", cp:"field.composer", ge:"field.genre", yr:"field.year", bp:"field.bpm",
+    aa:"field.album_artist", cp:"field.composer", ge:"field.genre", yr:"field.year", bp:"field.bpm", ky:"field.key",
     cm:"field.comment", a:"field.artist", t:"field.title", n:"field.file",
     ti:"col.tag_issues"};
   for (const col of OPTIONAL_COLUMNS) col.label = t(columnKeyToI18n[col.key]);
@@ -5078,6 +5143,13 @@ function matchesFieldValue(hay, v) {
 const matchesAnyValue = (hay, values, scope) =>
   !values.length || values.some(v => matchesValue(hay, v, scope));
 
+function keyMatches(camelot, text) {
+  const q = String(text || "").trim();
+  if (!q) return !camelot;
+  if (/^\d{1,2}$/.test(q)) return (camelot || "").replace(/[AB]$/, "") === String(Number(q));
+  return keyCanon(q) === camelot || (camelot || "").toLowerCase() === q.toLowerCase();
+}
+
 function applyFilters(r, filters) {
   for (const f of filters) {
     let hit;
@@ -5086,7 +5158,11 @@ function applyFilters(r, filters) {
       // kein hit/negate-Vergleich wie bei den uebrigen.
       case "exclude": { const sc = scopeEntry(r);
         if (matchesAnyValue(sc.text, f.values, sc)) return false; continue; }
-      case "field": { const fv = String(r[f.field] ?? "").toLowerCase();
+      // Tonart: in jeder Schreibweise suchbar ("8A", "1m", "Am"); eine reine
+      // Zahl trifft Moll und Dur dieser Kreisposition ("8" -> 8A und 8B).
+      case "field": if (f.field === "ky") {
+        hit = !f.values.length || f.values.some(v => keyMatches(r.ky, v.text)); break;
+      } { const fv = String(r[f.field] ?? "").toLowerCase();
         hit = !f.values.length || f.values.some(v => matchesFieldValue(fv, v)); break; }
       case "ext": hit = f.values.some(v => fileExt(r.p) === v.text.replace(/^\./, "").toUpperCase()); break;
       case "numeric": hit = f.values.some(v => matchesNumericFilter(r[f.field], v.text, f.field, v.exact && !v.text)); break;
@@ -5443,7 +5519,8 @@ function filtered() {
     const k = state.sort;
     // "n" (Datei) ist die einzige Spalte ohne gleichnamiges Datenfeld --
     // sortiert wird nach dem angezeigten Text.
-    const val = k === "n" ? (r => displayName(r).toLowerCase()) : (r => r[k]);
+    const val = k === "n" ? (r => displayName(r).toLowerCase())
+      : k === "ky" ? (r => keyRank(r.ky, state.dir)) : (r => r[k]);
     // Auch hier den Schluessel je Zeile einmal bilden: bei k === "n" steckt
     // darin displayName() + toLowerCase(), das sonst in jedem Vergleich neu
     // liefe. Ob textlich oder numerisch verglichen wird, entscheidet ein
@@ -5573,7 +5650,9 @@ const CELL_RENDERERS = {
   cp: r => `<td>${esc(r.cp || "")}</td>`,
   ge: r => `<td>${esc(r.ge || "")}</td>`,
   yr: r => `<td class="num">${r.yr || ""}</td>`,
-  bp: r => `<td class="num">${r.bp ? r.bp.toFixed(1).replace(".",",") : ""}</td>`,
+  // Ganze Werte ohne ",0" ("130"), echte Nachkommastellen bleiben ("127,5").
+  bp: r => `<td class="num">${r.bp ? String(Math.round(r.bp * 10) / 10).replace(".", ",") : ""}</td>`,
+  ky: r => `<td>${keyBubble(r.ky, r.kr)}</td>`,
   cm: r => `<td>${esc(r.cm || "")}</td>`,
   // Eigenstaendige Spalte neben dem Badge in der Namenszelle -- zeigt jede
   // gefundene Auffaelligkeit als Zeile plus zwei Aktionsknoepfe direkt in
@@ -5707,6 +5786,12 @@ function rowMoreMenuItems(r) {
     items.push({
       icon: ICONS.fix, cls: "", title: t("action.fix_bitrate", {kbps: r.mk}),
       label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r),
+    });
+  }
+  if (!r.gone && apiMode && KEY_TABLE[r.ky]) {
+    items.push({
+      icon: ICONS.clefTreble, cls: "", title: t("action.write_key_title"),
+      label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r]),
     });
   }
   if (!r.gone) {
@@ -6442,6 +6527,7 @@ function renderBulkBar() {
     ${selRows.some(hasAutoFixableTagIssues) ? `<button class="iconbtn plain" id="bulkFixTags"
         title="${esc(t("bulk.action_fix_tag_issues"))}">${TREE_ICONS.tag_issues}</button>` : ""}
     <button class="iconbtn plain" id="bulkConvert" title="${esc(t("bulk.convert_title"))}">${ICONS.convert}</button>
+    ${apiMode && selRows.some(r => !r.gone && KEY_TABLE[r.ky]) ? `<button class="iconbtn plain" id="bulkWriteKey" title="${esc(t("action.write_key_title"))}">${ICONS.clefTreble}</button>` : ""}
     <span class="sep"></span>
     ${!MIK_NAME ? "" : `<button class="iconbtn plain" id="bulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
     <span class="sep"></span>
@@ -6499,6 +6585,9 @@ function renderBulkBar() {
   document.getElementById("bulkFix").onclick = () => bulkApply("fix");
   const bulkFixTagsBtn = document.getElementById("bulkFixTags");
   if (bulkFixTagsBtn) bulkFixTagsBtn.onclick = () => bulkApply("fixtags");
+  const bulkWriteKeyBtn = document.getElementById("bulkWriteKey");
+  if (bulkWriteKeyBtn) bulkWriteKeyBtn.onclick = () =>
+    writeKeyToFiles([...state.selected].map(i => DATA[i]).filter(Boolean));
   const bulkConvertBtn = document.getElementById("bulkConvert");
   if (bulkConvertBtn) bulkConvertBtn.onclick = () => bulkApply("convert");
   document.getElementById("bulkRescan").onclick = () => bulkApply("rescan");
@@ -6601,6 +6690,51 @@ function askFixTagIssuesBulk(rows) {
     yesBtn.onclick = () => done(true);
     document.onkeydown = e => { if (e.key === "Escape") done(false); };
   });
+}
+
+// "Key in Datei schreiben": schreibt die in TrackTab gefuehrte Tonart (r.ky,
+// Camelot) in der eingestellten Schreibweise in den Datei-Tag -- fuer eine
+// oder mehrere Zeilen. Nutzt denselben Endpunkt wie der Tags-Dialog
+// (/api/tags: Datei + DB + key_raw), also gibt es danach keinen Rahmen mehr.
+// Zeilen ohne bekannte Tonart und solche, in deren Datei bereits genau dieser
+// Wert steht, werden uebersprungen (kein Schreibzugriff ohne Wirkung).
+async function writeKeyToFiles(rows) {
+  const known = rows.filter(r => !r.gone && KEY_TABLE[r.ky]);
+  const todo = known.filter(r => r.kr !== keyLabel(r.ky));
+  const noKey = rows.length - known.length, same = known.length - todo.length;
+  if (!todo.length) {
+    note(t(known.length ? "toast.write_key_nothing" : "toast.write_key_none"), "soft");
+    return;
+  }
+  const pt = progressToast(t("toast.write_key_running", {count: todo.length}));
+  const queue = todo.slice();
+  let done = 0, failed = 0, lastError = "";
+  const worker = async () => {
+    while (queue.length) {
+      const r = queue.shift();
+      try {
+        stopPlayerFor(r.p);
+        const res = await fetch("/api/tags", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({path: r.p, key: keyLabel(r.ky)})});
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || t("error.unknown"));
+        applyRowUpdate(r.i, data.row);
+        done++;
+      } catch (err) {
+        failed++; lastError = `${baseName(r.p)}: ${err.message}`;
+      }
+      pt.update(100 * (done + failed) / todo.length,
+                t("toast.write_key_progress", {done: done + failed, total: todo.length}));
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  const skipped = noKey + same;
+  const text = t("toast.write_key_done", {done, skipped});
+  if (failed) pt.fail(t("toast.write_key_failed", {failed, error: lastError}));
+  else pt.done(text);
+  state.selected.clear();
+  render();
 }
 
 async function bulkApply(kind) {
@@ -7267,6 +7401,12 @@ function groupCounts(key) {
 }
 
 function fieldValues(key) {
+  // Tonart: feste Liste aller 24 Tonarten in der gewaehlten Schreibweise,
+  // nach Kreisposition (1A, 1B, 2A ...) -- nicht aus den Daten abgeleitet und
+  // deshalb nie zwischengespeichert (die Schreibweise laesst sich umstellen).
+  if (key === "ky") {
+    return Object.keys(KEY_TABLE).sort((a, b) => keyRank(a) - keyRank(b)).map(keyLabel);
+  }
   if (fieldValueCache[key]) return fieldValueCache[key];
   const set = new Set();
   for (const r of DATA) {
@@ -7360,7 +7500,7 @@ function attachAutocomplete(el, key, {openOnFocus = true} = {}) {
 const AUTOCOMPLETE_FIELDS = [
   {id: "tagsTitle", key: "t"}, {id: "tagsArtist", key: "a"}, {id: "tagsAlbum", key: "al"},
   {id: "tagsAlbumArtist", key: "aa"}, {id: "tagsComposer", key: "cp"}, {id: "tagsGenre", key: "ge"},
-  {id: "tagsComment", key: "cm"},
+  {id: "tagsComment", key: "cm"}, {id: "tagsKey", key: "ky"},
 ];
 
 // HTML-Attribute aus dataTransfer("text/html") sind entity-kodiert (z.B.
@@ -7517,6 +7657,7 @@ function openTagsPopup(r, isDrop) {
   document.getElementById("tagsGenre").value = r.ge || "";
   document.getElementById("tagsYear").value = r.yr || "";
   document.getElementById("tagsBpm").value = r.bp || "";
+  document.getElementById("tagsKey").value = keyLabel(r.ky);
   document.getElementById("tagsComment").value = r.cm || "";
 
   // Schnappschuss der befuellten Werte -- beim Speichern wird nur verschickt,
@@ -7867,6 +8008,7 @@ const TAGS_BULK_FIELD_MAP = [
   ["tagsAlbumArtist", "aa", "album_artist"],
   ["tagsComposer", "cp", "composer"], ["tagsGenre", "ge", "genre"],
   ["tagsYear", "yr", "year"], ["tagsBpm", "bp", "bpm"],
+  ["tagsKey", "ky", "key"],
   ["tagsComment", "cm", "comment"],
 ];
 
@@ -7878,6 +8020,9 @@ function fieldsToDropRow(fields) {
   for (const [, key, payloadKey] of TAGS_BULK_FIELD_MAP) {
     if (payloadKey in fields) out[key] = fields[payloadKey];
   }
+  // Der Server legt die Tonart als Camelot ab; die Zeile hier genauso.
+  // kr = Datei-Wert: genau das, was gerade geschrieben wurde.
+  if ("ky" in out) { out.ky = keyCanon(out.ky); out.kr = KEY_TABLE[out.ky] ? keyLabel(out.ky) : out.ky; }
   return out;
 }
 
@@ -7890,7 +8035,7 @@ function openTagsPopupBulk(rows, isDrop) {
 
   const initial = {};
   for (const [id, key] of TAGS_BULK_FIELD_MAP) {
-    const values = new Set(rows.map(r => String(r[key] ?? "")));
+    const values = new Set(rows.map(r => key === "ky" ? keyLabel(r.ky) : String(r[key] ?? "")));
     const common = values.size === 1 ? [...values][0] : "";
     const el = document.getElementById(id);
     el.value = common;
@@ -8996,7 +9141,7 @@ function subGroupHTML(g, v, d) {
 // sind kein eigener Block mehr -- eine Playlist wird ueber ihren eigenen
 // Bearbeiten-Dialog markiert (askPlaylistProps()).
 const SETTINGS_LAYOUT = [
-  "library", "search", "display", "columnviews",
+  "library", "search", "display", "key", "columnviews",
   "rekordbox", "tools", "shops", "rename", "analysis", "loudness",
   "performance", "backup", "logs",
 ];
@@ -9803,6 +9948,7 @@ async function postSettings(url, body) {
     applyFontSize(data.values.font_size);
     applyTheme(data.values.theme);
     applyAccentColor(data.values.accent_color);
+    setKeyNotation(data.values.key_notation);
     state.infiniteScroll = !!data.values.infinite_scroll;
     state.searchTolerance = typeof data.values.search_typo_tolerance === "number"
       ? data.values.search_typo_tolerance : 0.8;
@@ -11603,7 +11749,7 @@ function fromServerRow(row, file) {
     _id: ++dropIdSeq,
     p: row.path, a: row.artist || "", t: row.title || "",
     al: row.album || "", aa: row.album_artist || "", cp: row.composer || "",
-    ge: row.genre || "", yr: row.year || 0, bp: row.bpm || 0, cm: row.comment || "",
+    ge: row.genre || "", yr: row.year || 0, bp: row.bpm || 0, ky: row.key || "", kr: row.key_raw || "", cm: row.comment || "",
     tn: row.track_no || 0, tt: row.track_total || 0,
     v: row.verdict, fam: row.codec_family || "lossy_mp3", cd: row.codec || "",
     kb: row.declared_kbps || 0, mk: row.measured_kbps || 0,

@@ -127,6 +127,7 @@ Die zwölf Gruppen im Überblick:
 | **Bibliothek** | Musikordner, Dateiendungen, ausgeschlossene Ordner, Mindestdauer |
 | **Suche** | Tippfehler-Toleranz, Mindestzeichen für Autovervollständigung, Standard-Suchfilter (siehe [Suchen und filtern](#suchen-und-filtern)) |
 | **Darstellung** | Sprache, Farbschema, Schriftgröße, Designfarbe |
+| **Tonart** | Schreibweise der Tonart (Camelot, Open Key, Notennamen) |
 | **Spaltenansichten** | Standard-Spaltenansicht für Listen ohne eigene Zuordnung (siehe [Spalten anpassen](#spalten-anpassen)) |
 | **Rekordbox** | Rekordbox-App, Ziel-Playlist für den Schnellzugriff, Waveform-Stil (siehe [Bibliothek scannen](#bibliothek-scannen)) |
 | **Externe Programme** | Audio-Editor, DAW, Mixed In Key, Music App, AAC-Encoder (siehe [Die Buttonleiste](#die-buttonleiste)) |
@@ -342,7 +343,7 @@ Bis zu vier eigene Playlisten lassen sich als Merkliste markieren — zum Beispi
 
 ## Smart Playlists
 
-Eine Smart Playlist hat keinen festen Inhalt, sondern Regeln. Im Regel-Editor legst du fest, ob **allen** oder **beliebigen** Regeln entsprochen werden muss, und baust die Zeilen mit **+** und **−** auf. Das Wertfeld richtet sich nach dem gewählten Feld: bei „Status" bekommst du die Verdikte zur Auswahl, bei „BPM" ein Zahlenfeld, bei „In Music.app" ja/nein.
+Eine Smart Playlist hat keinen festen Inhalt, sondern Regeln. Im Regel-Editor legst du fest, ob **allen** oder **beliebigen** Regeln entsprochen werden muss, und baust die Zeilen mit **+** und **−** auf. Das Wertfeld richtet sich nach dem gewählten Feld: bei „Status" bekommst du die Verdikte zur Auswahl, bei „BPM" ein Zahlenfeld, bei „Tonart" die 24 Tonarten in deiner gewählten Schreibweise (die Regel bleibt auch nach einem Wechsel der Schreibweise gültig), bei „In Music.app" ja/nein.
 
 ![Regel-Editor einer Smart Playlist](docs/007-playlist-smart-regeln.png)
 
@@ -398,6 +399,7 @@ Das Suchfeld über der Tabelle durchsucht standardmäßig Künstler, Titel, Albu
 | `/Album ="Pop Hits"` | exakt, mehrwortig |
 | `/Album (=Pop OR =Rock)` | eines von beiden exakt |
 | `/Album =` oder `/Album =""` | Feld ist **leer** — geht ebenso bei `/Genre`, `/Jahr`, `/BPM`, `/Komponist` … |
+| `/Key 8A` · `/Key Am` · `/Key 8` | Tonart in **jeder** Schreibweise (Camelot, Open Key, Notennamen); eine reine Zahl trifft Moll und Dur dieser Position (`8` → 8A und 8B) |
 | `/Cover` · `/No /Cover` | nur Tracks mit bzw. ohne eingebettetes Cover |
 | `/Music` · `/No /Music` | nur Tracks, die in der Music.app-Bibliothek sind bzw. nicht |
 | `/Rekordbox` · `/No /Rekordbox` | nur Tracks, die in Rekordbox sind bzw. nicht |
@@ -416,7 +418,7 @@ Jeder erkannte Parameter erscheint als **Chip** unter dem Suchfeld — ein Klick
 
 ## Spalten anpassen
 
-Jede Spalte lässt sich in der Breite ziehen und in der Reihenfolge verschieben (Überschrift greifen und ziehen). Über „Spalten ▾" blendest du weitere Informationen ein oder aus — z. B. Titel, Künstler, Cover, Album, Genre, Jahr oder BPM.
+Jede Spalte lässt sich in der Breite ziehen und in der Reihenfolge verschieben (Überschrift greifen und ziehen). Über „Spalten ▾" blendest du weitere Informationen ein oder aus — z. B. Titel, Künstler, Cover, Album, Genre, Jahr, BPM oder Tonart.
 
 ![Spalten-Menü](docs/022-spalten-anbpassen.png)
 
@@ -501,9 +503,21 @@ Die Pfeiltasten ↑/↓ bewegen unabhängig davon eine Markierung zeilenweise du
 
 Welche Formate sich dabei tatsächlich hörbar abspielen lassen, hängt vom verwendeten Browser ab (AIFF und ALAC z. B. nur in Safari) — die vollständige Tabelle steht in der [README](readme.md#unterstützte-dateiformate). Analyse, Tags und Umbenennen sind davon nicht betroffen.
 
+## Tonart
+
+Die Spalte **Tonart** zeigt jede Tonart als farbige Bubble. Die Farben folgen dem Camelot-Rad von Mixed In Key: gleiche Tonart, gleiche Farbe — außen (Dur, kräftig) und innen (Moll, heller) je zwölf Töne. Passende Tonarten stehen auf dem Rad nebeneinander und haben damit auch ähnliche Farben.
+
+- **Woher sie kommt:** TrackTab liest die Tonart beim Scannen aus dem Datei-Tag „Initial Key“. Angezeigt wird ausschließlich, was in der Datei steht — Rekordbox spielt dafür keine Rolle, auch nicht als Ersatz.
+- **Schreibweise:** Unter ⚙ Einstellungen → Tonart wählst du Camelot (`8A`), Open Key (`1m`) oder Notennamen (`Am`). Das gilt für die Tabelle, den Tags-Dialog, den in die Datei geschriebenen Wert und den Übertrag nach Rekordbox. Gelesen werden immer alle drei Schreibweisen; ein Wechsel der Einstellung ändert nur die Anzeige, die Dateien selbst bleiben unverändert.
+- **Gestrichelter Rahmen:** Unterscheidet sich der Wert in der Datei von der Darstellung in TrackTab (z. B. steht in der Datei `8A`, eingestellt ist Open Key), wird die Bubble mit einem gestrichelten Rahmen angezeigt. Der Hinweistext darüber nennt den Wert aus der Datei („In der Datei: 8A“). Speicherst du die Tonart im Tags-Dialog neu, wird sie in der gewählten Schreibweise geschrieben und der Rahmen verschwindet.
+- **Key in Datei schreiben:** Über das Menü ⋮ einer Zeile oder die Sammelleiste (mehrere Tracks markiert, Notenschlüssel-Symbol) schreibst du die in TrackTab geführte Tonart in der gewählten Schreibweise in den Datei-Tag. Tracks ohne Tonart und solche, in deren Datei schon genau dieser Wert steht, werden übersprungen. So lassen sich Dateien nach einem Wechsel der Schreibweise gezielt angleichen; ein Knopf für die ganze Bibliothek ist bewusst nicht vorgesehen (bei vielen tausend Dateien dauert das sehr lange und wird selten gebraucht).
+- **Ändern:** im Tags-Dialog (Stift-Symbol), einzeln oder für mehrere Tracks zugleich. Tippen kannst du in jeder Schreibweise. Die Änderung steht danach in der Datei und in TrackTab.
+- **Sortieren und Suchen:** Die Spalte sortiert nach der Position auf dem Rad (1A, 1B, 2A …), Tracks ohne Tonart stehen immer am Ende. Suche: `/Key 8A`, `/Key Am` oder `/Key 8`.
+- **Rekordbox:** Beim Übertragen **neuer** Tracks nach Rekordbox wird die Tonart mit gesetzt. Tracks, die schon in Rekordbox stehen, bleiben unberührt — Rekordbox kann ihre Daten über „Track-ID abrufen“ jederzeit selbst aus der Datei neu einlesen.
+
 ## Tags bearbeiten
 
-Über das Stift-Symbol öffnest du einen Dialog für Titel, Interpret, Album, Albumkünstler, Komponist, Genre, Jahr, BPM, Cover und Kommentar. Änderungen werden direkt in die Datei geschrieben, unter demselben Namen am selben Ort. Beim Tippen schlägt das Feld bereits in der Bibliothek vorhandene Werte vor, damit keine Mehrfachschreibweisen entstehen (z. B. „Rock" und „rock").
+Über das Stift-Symbol öffnest du einen Dialog für Titel, Interpret, Album, Albumkünstler, Komponist, Genre, Jahr, BPM, Tonart, Cover und Kommentar. Änderungen werden direkt in die Datei geschrieben, unter demselben Namen am selben Ort. Beim Tippen schlägt das Feld bereits in der Bibliothek vorhandene Werte vor, damit keine Mehrfachschreibweisen entstehen (z. B. „Rock" und „rock").
 
 ![Dialog zum Bearbeiten der Metadaten](docs/006-metadaten-edit.png)
 

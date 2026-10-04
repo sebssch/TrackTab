@@ -1280,6 +1280,7 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 .tagsmain .setfields { flex:1; min-width:0; grid-template-columns:repeat(4, 1fr); }
 .tagsmain .setfield.full { grid-column:1/-1; }
 .tagsmain .setfield.half { grid-column:span 2; }
+.tagsmain .setfield.newrow { grid-column-start:1; }
 .tagslookup { margin-top:16px; border-top:1px solid var(--line); padding-top:14px; }
 /* Bewusst KEINE farbige Box wie #tagsStatus: zeigt nur einen Suchstatus/
    die Trefferzahl an, keinen laufenden oder abgeschlossenen Schreibvorgang
@@ -1334,6 +1335,29 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 .fltag { display:inline-flex; align-items:center; gap:4px; white-space:nowrap;
          margin-left:6px; padding:1px 7px; border-radius:999px;
          font-size:11px; font-weight:600; }
+/* ── Tonart-Bubble ── Palette = Camelot-Rad von Mixed In Key (aus dem Rad der
+   App ausgelesen; B = aussen/Dur, satt; A = innen/Moll, heller). Gilt fuer
+   alle drei Schreibweisen -- die Farbe haengt an der Tonart, nicht am Namen.
+   Eine Palette fuer Hell und Dunkel: die Toene sind durchweg hell, der Text
+   darin bleibt deshalb immer dunkel. */
+:root {
+  --key-1b:#21ECBE; --key-1a:#7AF4D8;
+  --key-2b:#3AEF6D; --key-2a:#89F5A7;
+  --key-3b:#7AF53F; --key-3a:#AFF98C;
+  --key-4b:#FEC138; --key-4a:#FEDA88;
+  --key-5b:#FD8D69; --key-5a:#FEBBA5;
+  --key-6b:#FC7182; --key-6a:#FDAAB4;
+  --key-7b:#FC67A5; --key-7a:#FDA4C9;
+  --key-8b:#E768D1; --key-8a:#F1A4E3;
+  --key-9b:#C074FF; --key-9a:#D9ACFF;
+  --key-10b:#8EA5FF; --key-10a:#BBC9FF;
+  --key-11b:#4BD1F7; --key-11a:#93E3FA;
+  --key-12b:#20EAE6; --key-12a:#79F2F0;
+}
+.keybubble.keymis { border:1.5px dashed rgba(27,27,31,.6); padding:0 6.5px; cursor:help; }
+.keybubble { display:inline-block; min-width:34px; text-align:center; white-space:nowrap;
+             padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600;
+             color:#1b1b1f; line-height:1.5; }
 .flbtn { background:var(--dim); border-radius:6px; width:19px; height:19px;
          display:inline-flex; align-items:center; justify-content:center;
          opacity:.4; position:relative; }

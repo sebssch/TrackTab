@@ -829,6 +829,26 @@ def _get_or_create_album(db, name: str, artist_id: str | None):
     return db.add_album(name=name, artist=artist_id)
 
 
+def _get_or_create_key(db, name: str):
+    """Tonart-Zeile (DjmdKey.ScaleName) zu einem Namen wie "8A", "1m" oder
+    "Am". Rekordbox pflegt diese Tabelle bei Bedarf selbst (an echtem
+    Material: genau die genutzten Schreibweisen leben, alle anderen stehen als
+    Soft-Delete) -- eine lebende Zeile wird wiederverwendet, sonst entsteht
+    eine neue, nie ein Namensdoppelgaenger. Tote Zeilen zaehlen nicht (_live())."""
+    live = [k for k in db.get_key(ScaleName=name) if _live(k)]
+    if live:
+        return min(live, key=lambda k: k.Seq if k.Seq is not None else 1 << 30)
+    from uuid import uuid4
+    from pyrekordbox.db6 import tables
+    seqs = [k.Seq for k in db.get_key() if _live(k) and k.Seq is not None]
+    key = tables.DjmdKey.create(
+        ID=db.generate_unused_id(tables.DjmdKey), ScaleName=name,
+        Seq=(max(seqs) + 1) if seqs else 1, UUID=str(uuid4()))
+    db.add(key)
+    db.flush()
+    return key
+
+
 # pyrekordbox' add_content() legt nur Struktur-Felder an (Pfad, Dateigroesse,
 # Dateityp, IDs, Datum) -- Titel/Interpret/Album/Genre/BPM/Komponist/Jahr/
 # Kommentar bleiben leer, wenn man sie nicht explizit mitgibt (steht so im
@@ -854,6 +874,7 @@ def _get_or_create_album(db, name: str, artist_id: str | None):
 # anlz/tags.py: "BPM is saved as 100 * BPM") -- ohne die Skalierung wuerde
 # z.B. 128.3 BPM als 128 statt 12830 abgelegt und in Rekordbox als 1.28 BPM
 # angezeigt.
+# Tonart: siehe unten (KeyID, nur bei neuen Tracks).
 # Kommentar: Commnt ist reiner Text, keine eigene Tabelle -- aber ein
 # technisches Hex-Feld (z.B. ein beim Encodieren verschlepptes
 # iTunSMPB/iTunNORM-Gapless-Tag, siehe tags.is_junk_comment()) soll dort
@@ -861,7 +882,7 @@ def _get_or_create_album(db, name: str, artist_id: str | None):
 # fehlendem Tag 0 (siehe tags._parse_year()), kein echtes Jahr -- wie bei
 # BPM nur bei einem wahren Wert setzen, sonst stuende in Rekordbox ueberall
 # "1" statt eines leeren Feldes.
-def _content_tag_kwargs(db, row) -> dict:
+def _content_tag_kwargs(db, row, with_key: bool = True) -> dict:
     if row is None:
         return {}
     kwargs: dict = {}
@@ -891,6 +912,15 @@ def _content_tag_kwargs(db, row) -> dict:
     year = row["year"]
     if year:
         kwargs["ReleaseYear"] = year
+    # Tonart (KeyID): nur beim ERSTEN Anlegen eines Tracks -- bestehende
+    # Rekordbox-Zeilen behalten ihren Wert (with_key=False in
+    # update_relocated_tracks()), Rekordbox liest ihn dort bei Bedarf selbst
+    # neu aus der Datei ein. Der Name folgt der Einstellung key_notation, in
+    # der DB steht er als Camelot.
+    key = (row["key"] or "").strip()
+    if with_key and key:
+        name = tags_mod.format_key(key, cfgmod.load().get("key_notation", "camelot"))
+        kwargs["KeyID"] = _get_or_create_key(db, name).ID
     return kwargs
 
 
@@ -1430,7 +1460,8 @@ def update_relocated_tracks(moves: list[dict], metadata: dict) -> dict:
                 if content.FolderPath != path:
                     content.FolderPath = path
                     content.FileNameL = Path(path).name
-                for key, value in _content_tag_kwargs(db, metadata.get(path)).items():
+                for key, value in _content_tag_kwargs(
+                        db, metadata.get(path), with_key=False).items():
                     setattr(content, key, value)
                 updated.append(path)
             except Exception as exc:                      # noqa: BLE001

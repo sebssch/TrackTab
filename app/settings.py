@@ -85,6 +85,7 @@ GROUPS = [
                          {"value": "gross", "label": "Groß"}],
              "help": "Wirkt sofort auf die gesamte Oberfläche."},
             {"key": "accent_color", "type": "color", "label": "Designfarbe",
+             "break": True, "width": "full",
              "options": [
                  {"value": "red", "label": "Rot"},
                  {"value": "orange", "label": "Orange"},
@@ -146,6 +147,24 @@ GROUPS = [
                      "Chips unter der Suchleiste angezeigt. Ein Klick auf × "
                      "dort blendet einen Filter nur für die aktuelle Sitzung "
                      "aus — dauerhaft entfernen geht nur hier."},
+        ],
+    },
+    {
+        "id": "key", "title": "Tonart",
+        "note": "Angezeigt wird die Tonart aus der Datei. Unterscheidet sich "
+                "der Wert in der Datei von der Darstellung in TrackTab, "
+                "wird die Bubble mit einem gestrichelten Rahmen angezeigt.",
+        "fields": [
+            {"key": "key_notation", "type": "select", "label": "Tonart-Schreibweise",
+             "width": "half",
+             "options": [{"value": "camelot", "label": "Camelot (8A)"},
+                         {"value": "openkey", "label": "Open Key (1m)"},
+                         {"value": "notes", "label": "Notennamen (Am)"}],
+             "help": "Schreibweise der Tonart in der Tabelle, im Tags-Dialog, "
+                     "in den Dateien (Tag „Initial Key“) und beim Übertrag "
+                     "nach Rekordbox. Beim Einlesen werden alle drei "
+                     "Schreibweisen erkannt. Die Farben der Tonart-Bubbles "
+                     "folgen immer dem Camelot-Rad."},
         ],
     },
     {
@@ -805,7 +824,7 @@ _APPLE_MUSIC_COLUMNS = ["n", "cv", "a", "t"]
 # dupliziert.
 _APPLE_MUSIC_HIDDEN_COLUMNS = ["v", "co", "kb", "mk", "cf", "st", "lu", "tp", "du",
                                "rb", "im", "da", "al", "tn", "aa", "cp", "ge", "yr",
-                               "bp", "cm"]
+                               "bp", "ky", "cm"]
 
 
 def ensure_apple_music_column_view() -> None:

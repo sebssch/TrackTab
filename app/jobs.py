@@ -14,6 +14,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from . import config as cfgmod
 from . import db as db_mod
 from . import scanner
+from . import tags as tags_mod
 from .analyzer import analyse_file
 
 _BATCH = 200
@@ -81,6 +82,7 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
             if prune and not limit and not paths:
                 result["removed"] = len(db_mod.prune_missing(
                     conn, {p for p, _, _ in all_files}))
+            _backfill_keys(conn, result)
             _fill_covers(conn, cfg, result, force=force_cover_fill)
             _recheck_tag_issues(conn, cfg, result, enabled=recheck_tag_issues)
             return result
@@ -116,11 +118,30 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
         if prune and not limit and not paths and not result["cancelled"]:
             result["removed"] = len(db_mod.prune_missing(
                 conn, {p for p, _, _ in all_files}))
+        _backfill_keys(conn, result)
         _fill_covers(conn, cfg, result, force=force_cover_fill)
         _recheck_tag_issues(conn, cfg, result, enabled=recheck_tag_issues)
         return result
     finally:
         conn.close()
+
+
+def _backfill_keys(conn, result: dict) -> None:
+    """Tonart fuer Zeilen nachtragen, die vor diesem Feature gescannt wurden
+    (key_raw IS NULL) -- reiner Tag-Read (mutagen, ~1 ms je Datei), kein
+    --force-Rescan mit voller Spektralanalyse noetig. Eine Datei ohne Tonart
+    bekommt '' statt NULL und faellt damit beim naechsten Lauf heraus. Best
+    effort wie _fill_covers(): ein Fehler darf den Scan nicht kippen."""
+    result["keys_filled"] = 0
+    try:
+        keys = {}
+        for p in db_mod.paths_without_key(conn):
+            raw = tags_mod.read_key(p).strip()
+            keys[p] = (tags_mod.normalize_key(raw), raw)
+        db_mod.set_keys(conn, keys)
+    except Exception:                                      # noqa: BLE001
+        return
+    result["keys_filled"] = sum(1 for k, _ in keys.values() if k)
 
 
 def _fill_covers(conn, cfg: dict, result: dict, force: bool = False) -> None:

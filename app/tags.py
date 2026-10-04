@@ -1,6 +1,6 @@
 """
 Tags lesen und schreiben: Titel, Interpret, Album, Albumkuenstler, Komponist,
-Genre, Jahr, BPM, Kommentar, Cover, Tracknummer/-gesamtzahl.
+Genre, Jahr, BPM, Tonart, Kommentar, Cover, Tracknummer/-gesamtzahl.
 
 mutagen ist bereits Pflicht-Dependency (siehe rewrite.py, das beim
 Neukodieren denselben Weg fuer den Tag-Erhalt nutzt). Fuer MP3/WAV/AIFF wird
@@ -31,6 +31,98 @@ def is_junk_comment(text: str) -> bool:
     """True, wenn 'text' wie ein technisches Hex-Feld statt wie ein
     Kommentar aussieht (siehe _JUNK_COMMENT_RE)."""
     return bool(_JUNK_COMMENT_RE.match((text or "").strip()))
+
+
+# ── Tonart ───────────────────────────────────────────────────────────────────
+# Intern (DB, Report) steht die Tonart immer in Camelot-Schreibweise ("8A").
+# Ob Camelot, Open Key oder Notennamen angezeigt/geschrieben wird, entscheidet
+# allein die Einstellung "key_notation" (format_key()). Eingelesen wird jede
+# der drei Schreibweisen (normalize_key()).
+# Notennamen in der Schreibweise von Mixed In Key (b statt #, ausser 2B/11A/12A).
+_KEY_NOTES = {
+    "1A": "Abm", "2A": "Ebm", "3A": "Bbm", "4A": "Fm", "5A": "Cm", "6A": "Gm",
+    "7A": "Dm", "8A": "Am", "9A": "Em", "10A": "Bm", "11A": "F#m", "12A": "C#m",
+    "1B": "B", "2B": "F#", "3B": "Db", "4B": "Ab", "5B": "Eb", "6B": "Bb",
+    "7B": "F", "8B": "C", "9B": "G", "10B": "D", "11B": "A", "12B": "E",
+}
+KEY_NOTATIONS = ("camelot", "openkey", "notes")
+_NOTE_PC = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+
+
+def _camelot_to_open(camelot: str) -> str:
+    """8A -> 1m, 8B -> 1d (Open Key beginnt bei C-Dur/A-Moll mit 1)."""
+    num = int(camelot[:-1])
+    return f"{(num - 8) % 12 + 1}{'m' if camelot.endswith('A') else 'd'}"
+
+
+KEY_CAMELOT = tuple(f"{n}{m}" for m in "AB" for n in range(1, 13))
+# camelot -> (camelot, openkey, notes); Reihenfolge des Tupels = KEY_NOTATIONS
+KEY_TABLE = {c: (c, _camelot_to_open(c), _KEY_NOTES[c]) for c in KEY_CAMELOT}
+
+
+def _pc_to_camelot(pc: int, minor: bool) -> str:
+    """Grundton (Halbtonklasse 0-11) -> Camelot. Dur: C=8B, je Quinte +1;
+    Moll: Parallel-Dur (3 Halbtoene hoeher) uebernehmen."""
+    major_pc = (pc + 3) % 12 if minor else pc
+    num = (8 + 7 * major_pc - 1) % 12 + 1
+    return f"{num}{'A' if minor else 'B'}"
+
+
+def normalize_key(raw: str) -> str:
+    """Tonart in beliebiger Schreibweise (Camelot "8a"/"08A", Open Key
+    "1m"/"2d", Notennamen "Am"/"A minor"/"F#"/"Gb major") -> Camelot ("8A").
+    Nicht Erkennbares bleibt unveraendert (nur getrimmt) -- nicht raten."""
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    m = re.fullmatch(r"0?(\d{1,2})\s*([ABab])", text)
+    if m and 1 <= int(m.group(1)) <= 12:
+        return f"{int(m.group(1))}{m.group(2).upper()}"
+    m = re.fullmatch(r"0?(\d{1,2})\s*([dDmM])", text)
+    if m and 1 <= int(m.group(1)) <= 12:
+        num = int(m.group(1))
+        # Open Key 1 = Camelot 8
+        return f"{(num + 6) % 12 + 1}{'A' if m.group(2).lower() == 'm' else 'B'}"
+    m = re.fullmatch(r"([A-Ga-g])\s*([#♯b♭]?)\s*(.*)", text)
+    if m:
+        pc = _NOTE_PC[m.group(1).upper()]
+        acc = m.group(2)
+        if acc in ("#", "♯"):
+            pc += 1
+        elif acc in ("b", "♭"):
+            pc -= 1
+        mode = m.group(3).strip().lower()
+        if mode in ("", "maj", "major", "dur"):
+            return _pc_to_camelot(pc % 12, False)
+        if mode in ("m", "min", "minor", "moll"):
+            return _pc_to_camelot(pc % 12, True)
+    return text
+
+
+def format_key(camelot: str, notation: str = "camelot") -> str:
+    """Camelot-Wert (siehe normalize_key) in die gewaehlte Schreibweise
+    umsetzen. Unbekannte Werte und unbekannte Schreibweisen bleiben stehen."""
+    row = KEY_TABLE.get(normalize_key(camelot))
+    if row is None or notation not in KEY_NOTATIONS:
+        return str(camelot or "").strip()
+    return row[KEY_NOTATIONS.index(notation)]
+
+
+def key_aliases() -> dict[str, str]:
+    """Kleingeschriebene Schreibweise -> Camelot, fuer den Client (Suche und
+    Eingabefeld): alle drei Schreibweisen plus gaengige Varianten."""
+    out: dict[str, str] = {}
+    for camelot, names in KEY_TABLE.items():
+        for name in names:
+            out[name.lower()] = camelot
+    for letter, base in _NOTE_PC.items():
+        for acc, delta in (("", 0), ("#", 1), ("b", -1)):
+            pc = (base + delta) % 12
+            for suffix, minor in (("", False), ("m", True), (" minor", True),
+                                  (" major", False), ("min", True), ("maj", False)):
+                out.setdefault(f"{letter}{acc}{suffix}".lower(),
+                               _pc_to_camelot(pc, minor))
+    return out
 
 
 _MP3_SUFFIXES = (".mp3",)
@@ -104,6 +196,10 @@ def _id3_tags(path: str, suffix: str):
     raise TagError(f"Kein ID3-Container fuer '{suffix}'.")
 
 
+def _raw_id3(tags) -> str:
+    return str(tags.getall("TKEY")[0]).strip() if tags.getall("TKEY") else ""
+
+
 def _read_extra_id3(path: str, suffix: str) -> dict:
     tags, _ = _id3_tags(path, suffix)
     genre = ""
@@ -132,11 +228,12 @@ def _read_extra_id3(path: str, suffix: str) -> dict:
     return {"genre": genre, "bpm": bpm, "has_cover": has_cover,
             "album_artist": album_artist, "composer": composer,
             "year": year, "comment": comment,
-            "track_no": track_no, "track_total": track_total}
+            "track_no": track_no, "track_total": track_total,
+            "key": normalize_key(_raw_id3(tags)), "key_raw": _raw_id3(tags)}
 
 
 def _write_tags_id3(path: str, suffix: str, fields: dict) -> None:
-    from mutagen.id3 import TPE1, TIT2, TALB, TPE2, TCOM, TCON, TYER, TBPM, COMM, TRCK
+    from mutagen.id3 import TPE1, TIT2, TALB, TPE2, TCOM, TCON, TYER, TBPM, TKEY, COMM, TRCK
     tags, save = _id3_tags(path, suffix)
     if "artist" in fields:
         tags.setall("TPE1", [TPE1(encoding=3, text=[fields["artist"] or ""])])
@@ -163,6 +260,12 @@ def _write_tags_id3(path: str, suffix: str, fields: dict) -> None:
             tags.setall("TBPM", [TBPM(encoding=3, text=[str(int(round(float(bpm))))])])
         else:
             tags.delall("TBPM")
+    if "key" in fields:
+        key = (fields["key"] or "").strip()
+        if key:
+            tags.setall("TKEY", [TKEY(encoding=3, text=[key])])
+        else:
+            tags.delall("TKEY")
     if "comment" in fields:
         comment = fields["comment"] or ""
         if is_junk_comment(comment):
@@ -228,7 +331,24 @@ def _read_extra_mp4(path: str) -> dict:
     return {"genre": genre, "bpm": bpm, "has_cover": has_cover,
             "album_artist": album_artist, "composer": composer,
             "year": year, "comment": comment,
-            "track_no": track_no, "track_total": track_total}
+            "track_no": track_no, "track_total": track_total,
+            "key": normalize_key(_key_from_mp4(tags)),
+            "key_raw": _key_from_mp4(tags).strip()}
+
+
+# Es gibt kein Standard-Atom fuer die Tonart: iTunes/Mixed In Key schreiben ein
+# Freiform-Atom, manche Konverter das (nicht offizielle) '\xa9key'.
+_MP4_KEY_ATOM = "----:com.apple.iTunes:initialkey"
+_MP4_KEY_ATOMS = (_MP4_KEY_ATOM, "----:com.apple.iTunes:KEY", "\xa9key")
+
+
+def _key_from_mp4(tags) -> str:
+    for name in _MP4_KEY_ATOMS:
+        value = tags.get(name)
+        if value:
+            raw = value[0]
+            return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
+    return ""
 
 
 def _write_tags_mp4(path: str, fields: dict) -> None:
@@ -255,6 +375,13 @@ def _write_tags_mp4(path: str, fields: dict) -> None:
     if "bpm" in fields:
         bpm = fields["bpm"]
         tags["tmpo"] = [int(round(float(bpm)))] if bpm else [0]
+    if "key" in fields:
+        from mutagen.mp4 import MP4FreeForm
+        key = (fields["key"] or "").strip()
+        if key:
+            tags[_MP4_KEY_ATOM] = [MP4FreeForm(key.encode("utf-8"))]
+        elif _MP4_KEY_ATOM in tags:
+            del tags[_MP4_KEY_ATOM]
     if "comment" in fields:
         comment = fields["comment"] or ""
         if is_junk_comment(comment):
@@ -321,7 +448,16 @@ def _read_extra_flac(path: str) -> dict:
     return {"genre": genre, "bpm": bpm, "has_cover": has_cover,
             "album_artist": album_artist, "composer": composer,
             "year": year, "comment": comment,
-            "track_no": track_no, "track_total": track_total}
+            "track_no": track_no, "track_total": track_total,
+            "key": normalize_key(_key_from_flac(audio)),
+            "key_raw": _key_from_flac(audio).strip()}
+
+
+def _key_from_flac(audio) -> str:
+    for name in ("initialkey", "key"):
+        if audio.get(name):
+            return str(audio[name][0])
+    return ""
 
 
 def _write_tags_flac(path: str, fields: dict) -> None:
@@ -345,6 +481,12 @@ def _write_tags_flac(path: str, fields: dict) -> None:
     if "bpm" in fields:
         bpm = fields["bpm"]
         audio["bpm"] = str(int(round(float(bpm)))) if bpm else ""
+    if "key" in fields:
+        key = (fields["key"] or "").strip()
+        if key:
+            audio["initialkey"] = key
+        elif "initialkey" in audio:
+            del audio["initialkey"]
     if "comment" in fields:
         comment = fields["comment"] or ""
         if is_junk_comment(comment):
@@ -393,7 +535,8 @@ def _delete_cover_flac(path: str) -> None:
 
 # ── Oeffentliche Schnittstelle ───────────────────────────────────────────────
 def read_extra(path: str) -> dict:
-    """Albumkuenstler, Komponist, Genre, Jahr, BPM, Kommentar,
+    """Albumkuenstler, Komponist, Genre, Jahr, BPM, Tonart (als Camelot,
+    siehe normalize_key()), Kommentar,
     Cover-Vorhandensein und Tracknummer/-gesamtzahl -- fuer den Scan
     (Interpret/Titel/Album kommen weiterhin aus probe.py/ffprobe).
 
@@ -413,19 +556,17 @@ def read_extra(path: str) -> dict:
         pass
     return {"genre": "", "bpm": 0.0, "has_cover": 0,
             "album_artist": "", "composer": "", "year": 0, "comment": "",
-            "track_no": 0, "track_total": 0}
+            "track_no": 0, "track_total": 0, "key": "", "key_raw": ""}
 
 
 def read_key(path: str) -> str:
-    """Die Tonart ("initial key", z.B. "8A" oder "Abm") -- leer, wenn die
-    Datei keine hat.
+    """Die Tonart ("initial key") genau so, wie die Datei sie traegt (z.B.
+    "8A" oder "Abm") -- leer, wenn die Datei keine hat. Fuer den Platzhalter
+    {key} beim automatischen Umbenennen; der Scan nimmt stattdessen den
+    normalisierten Wert aus read_extra()["key"].
 
-    Bewusst NICHT Teil von read_extra() und damit auch keine eigene
-    Datenbankspalte: die Tonart wird nirgends angezeigt, bewertet oder
-    weitergegeben (auch nicht an Rekordbox), sie wird einzig fuer den
-    Platzhalter {key} beim automatischen Umbenennen gebraucht und dort direkt
-    aus der Datei gelesen. Geschrieben wird sie ohnehin von aussen -- in der
-    Regel von Mixed In Key, siehe media.open_in_mik().
+    Geschrieben wird die Tonart in der Regel von aussen (Mixed In Key, siehe
+    media.open_in_mik()) oder ueber den Tags-Dialog (write_tags()).
 
     Best effort wie read_extra(): bei jedem Fehler ein leerer Wert.
     """
@@ -436,25 +577,10 @@ def read_key(path: str) -> str:
             return str(tags.getall("TKEY")[0]) if tags.getall("TKEY") else ""
         if suffix in _MP4_SUFFIXES:
             from mutagen.mp4 import MP4
-            tags = MP4(path).tags or {}
-            # Es gibt kein Standard-Atom fuer die Tonart: iTunes/Mixed In Key
-            # schreiben ein Freiform-Atom, manche Konverter das
-            # (nicht offizielle) '\xa9key'.
-            for name in ("----:com.apple.iTunes:initialkey",
-                         "----:com.apple.iTunes:KEY",
-                         "\xa9key"):
-                value = tags.get(name)
-                if value:
-                    raw = value[0]
-                    return raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
-            return ""
+            return _key_from_mp4(MP4(path).tags or {})
         if suffix in _FLAC_SUFFIXES:
             from mutagen.flac import FLAC
-            audio = FLAC(path)
-            for name in ("initialkey", "key"):
-                if audio.get(name):
-                    return str(audio[name][0])
-            return ""
+            return _key_from_flac(FLAC(path))
     except Exception:                                  # noqa: BLE001
         pass
     return ""
@@ -462,7 +588,9 @@ def read_key(path: str) -> str:
 
 def write_tags(path: str, fields: dict) -> None:
     """Schreibt eine Teilmenge von Titel/Interpret/Album/Albumkuenstler/
-    Komponist/Genre/Jahr/BPM/Kommentar/Tracknummer/-gesamtzahl in die Datei.
+    Komponist/Genre/Jahr/BPM/Tonart/Kommentar/Tracknummer/-gesamtzahl in die
+    Datei (die Tonart so, wie sie uebergeben wird -- Umsetzen in die gewaehlte
+    Schreibweise ist Sache des Aufrufers, siehe format_key()).
 
     'fields' darf eine Teilmenge der Schluessel sein -- nur die angegebenen
     werden geaendert, alles andere (inkl. GEOB/PRIV bei ID3) bleibt

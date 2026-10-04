@@ -55,7 +55,9 @@ CREATE TABLE IF NOT EXISTS files (
     true_peak_dbtp  REAL,
     lra_lu          REAL,
     file_hash       TEXT,
-    tag_issues      TEXT
+    tag_issues      TEXT,
+    key             TEXT,
+    key_raw         TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_verdict ON files(verdict);
 CREATE INDEX IF NOT EXISTS idx_cutoff  ON files(cutoff_hz);
@@ -247,7 +249,7 @@ _COLUMNS = [
     "integrated_lufs", "true_peak_dbtp", "lra_lu",
     "genre", "bpm", "has_cover",
     "album_artist", "composer", "year", "comment", "track_no", "track_total",
-    "file_hash", "tag_issues",
+    "file_hash", "tag_issues", "key", "key_raw",
 ]
 
 # Spalten, die nach dem urspruenglichen Release der 'files'-Tabelle
@@ -272,6 +274,8 @@ _MIGRATIONS = [
     ("track_total", "INTEGER"),
     ("file_hash", "TEXT"),
     ("tag_issues", "TEXT"),
+    ("key", "TEXT"),
+    ("key_raw", "TEXT"),
 ]
 
 
@@ -461,7 +465,7 @@ def save(conn: sqlite3.Connection, rows: list[dict]) -> None:
 
 
 _TAG_FIELDS = ("artist", "title", "album", "album_artist", "composer",
-               "genre", "year", "bpm", "comment", "track_no", "track_total")
+               "genre", "year", "bpm", "key", "key_raw", "comment", "track_no", "track_total")
 
 
 def update_tags(conn: sqlite3.Connection, path: str, fields: dict) -> None:
@@ -476,6 +480,26 @@ def update_tags(conn: sqlite3.Connection, path: str, fields: dict) -> None:
         values,
     )
     conn.commit()
+
+
+def paths_without_key(conn: sqlite3.Connection) -> list[str]:
+    """Zeilen, bei denen die Tonart noch nie gelesen wurde (key_raw IS NULL,
+    z.B. vor diesem Feature gescannt). Ein leerer Text heisst "gelesen, keine
+    da"."""
+    return [r["path"] for r in conn.execute(
+        "SELECT path FROM files WHERE key_raw IS NULL")]
+
+
+def set_keys(conn: sqlite3.Connection, keys: dict[str, tuple[str, str]]) -> int:
+    """Tonart fuer mehrere Pfade schreiben: {pfad: (camelot, roh)}. 'roh' ist
+    der Tag-Wert, wie er in der Datei steht. Gibt die Zahl der Zeilen zurueck."""
+    changed = 0
+    for path, (key, raw) in keys.items():
+        changed += conn.execute(
+            "UPDATE files SET key = ?, key_raw = ? WHERE path = ?",
+            (key, raw, path)).rowcount
+    conn.commit()
+    return changed
 
 
 def update_tag_issues(conn: sqlite3.Connection, path: str, issues: list[dict]) -> None:

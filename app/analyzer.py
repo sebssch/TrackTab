@@ -46,7 +46,7 @@ def analyse_file(job: tuple) -> dict:
         "artist": "", "title": "", "album": "",
         "genre": "", "bpm": 0.0, "has_cover": 0,
         "album_artist": "", "composer": "", "year": 0, "comment": "",
-        "track_no": 0, "track_total": 0,
+        "track_no": 0, "track_total": 0, "key": "", "key_raw": "",
         "cutoff_hz": 0.0, "raw_cutoff_hz": 0.0, "steepness_db": 0.0,
         "is_brickwall": 0, "at_nyquist": 0,
         "gated_blocks": 0, "total_blocks": 0,
