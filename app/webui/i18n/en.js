@@ -156,8 +156,6 @@ const I18N_EN = {
   "smart.limit_mb": "MB",
   "smart.limit_by": "selected by",
   "smart.by_added": "recently added",
-  "smart.by_cutoff": "lowest cutoff",
-  "smart.by_artist": "artist",
   "smart.by_random": "random",
   "smart.preview": "Currently matches {count} {track_word}.",
   "smart.saved": "Rules for “{name}” saved",

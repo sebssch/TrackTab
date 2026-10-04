@@ -19,6 +19,7 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 - BPM-Spalte: Ganze Werte erscheinen ohne „,0“ (`130` statt `130,0`), echte Nachkommastellen bleiben (`127,5`).
 - Tags-Dialog: BPM beginnt eine neue Zeile, die Tonart steht dahinter.
 - Einstellungen → Darstellung: Designfarbe über die volle Breite, danach die beiden Schalter je zur Hälfte, dann der Browser für die Web-UI.
+- Smart Playlists: „Begrenzen auf“ im Regel-Dialog ist jetzt ein Schalter (bei „aus“ sind die zugehörigen Felder gesperrt); Zahlenfeld und Auswahlfelder passen optisch zu den übrigen Formularfeldern. Als Auswahlkriterium bleiben „zuletzt hinzugefügt“ und „Zufall“ (der niedrigste Cutoff und der Künstler entfallen; bereits so gespeicherte Listen behandeln das wie „zuletzt hinzugefügt“).
 
 ## [1.6.1] - 2026-10-03
 

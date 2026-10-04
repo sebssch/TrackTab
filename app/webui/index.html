@@ -391,8 +391,10 @@
     </div>
     <div id="rulesRows"></div>
     <div class="ruleslimit">
-      <label><input type="checkbox" id="rulesLimitOn"> <span data-i18n="smart.limit_label">Begrenzen auf</span></label>
-      <input type="number" id="rulesLimitValue" min="1" step="1" value="25" style="width:80px">
+      <label class="toggle"><input type="checkbox" id="rulesLimitOn">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span data-i18n="smart.limit_label">Begrenzen auf</span></label>
+      <input type="number" id="rulesLimitValue" class="rulelimitnum" min="1" step="1" value="25">
       <select id="rulesLimitKind">
         <option value="count" data-i18n="smart.limit_count">Objekte</option>
         <option value="minutes" data-i18n="smart.limit_minutes">Minuten</option>
@@ -401,8 +403,6 @@
       <span data-i18n="smart.limit_by">ausgewählt nach</span>
       <select id="rulesLimitBy">
         <option value="added" data-i18n="smart.by_added">zuletzt hinzugefügt</option>
-        <option value="cutoff" data-i18n="smart.by_cutoff">niedrigster Cutoff</option>
-        <option value="artist" data-i18n="smart.by_artist">Künstler</option>
         <option value="random" data-i18n="smart.by_random">Zufall</option>
       </select>
     </div>

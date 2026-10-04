@@ -349,7 +349,7 @@ Eine Smart Playlist hat keinen festen Inhalt, sondern Regeln. Im Regel-Editor le
 
 *Regeln einer Smart Playlist bearbeiten.*
 
-In der Fußzeile begrenzt du die Liste auf eine Anzahl Objekte, eine Spielzeit oder eine Speichergröße — ausgewählt nach zuletzt hinzugefügt, niedrigstem Cutoff, Künstler oder Zufall. Unter dem Dialog steht laufend, wie viele Tracks die Regeln gerade treffen.
+In der Fußzeile schaltest du „Begrenzen auf“ ein und begrenzt die Liste auf eine Anzahl Objekte, eine Spielzeit oder eine Speichergröße — ausgewählt nach zuletzt hinzugefügt oder Zufall. Unter dem Dialog steht laufend, wie viele Tracks die Regeln gerade treffen.
 
 Berechnet wird beim Start des Programms und jedes Mal, wenn du die Liste im Baum anklickst — nicht dauernd im Hintergrund.
 

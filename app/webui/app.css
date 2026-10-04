@@ -610,6 +610,20 @@
   .rulebtn:hover { border-color:var(--accent); color:var(--accent); }
   .ruleslimit { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
        margin:14px 0 4px; padding-top:12px; border-top:1px solid var(--line); }
+  /* Auswahlfelder und Zahlenfeld im Regel-Dialog in der Optik der uebrigen
+     Formularfelder (siehe .setfield select): ohne appearance:none zeichnet
+     macOS die native Select-Chrome, das Zahlenfeld bliebe weiss. Das Popup der
+     geoeffneten Liste ist nativ und per CSS nicht gestaltbar. */
+  .rulesbox select, .ruleslimit input[type=number] {
+       background:var(--bg); color:var(--fg); border:1px solid var(--line);
+       border-radius:7px; padding:7px 9px; font-size:14px; font-family:inherit; }
+  .rulesbox select { appearance:none; -webkit-appearance:none;
+       background-image:var(--select-arrow); background-repeat:no-repeat;
+       background-position:right 10px center; background-size:13px;
+       padding-right:30px; }
+  .ruleslimit .rulelimitnum { width:80px; }
+  /* Begrenzung aus: Zahl/Einheit/Kriterium gedimmt (zusaetzlich disabled). */
+  .ruleslimit.off > :not(.toggle) { opacity:.5; }
 
   /* Kopfzeile der geoeffneten Playlist. Steht ueber der Filterleiste und
      scrollt bewusst mit weg -- Rueckgaengig/Wiederherstellen gehoeren zum

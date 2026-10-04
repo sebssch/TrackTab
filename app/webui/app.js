@@ -2240,12 +2240,9 @@ function applySmartLimit(rows, limit) {
       const j = Math.floor(Math.random() * (i + 1));
       [sorted[i], sorted[j]] = [sorted[j], sorted[i]];
     }
-  } else if (limit.by === "added") {
+  } else {
+    // "added" und alles Unbekannte (frueher gespeichertes cutoff/artist).
     sorted.sort((a, b) => (b.da || 0) - (a.da || 0));
-  } else if (limit.by === "cutoff") {
-    sorted.sort((a, b) => (a.co || 0) - (b.co || 0));
-  } else if (limit.by === "artist") {
-    sorted.sort((a, b) => cmpText(String(a.a || ""), String(b.a || "")));
   }
   if (limit.kind === "count") return sorted.slice(0, Math.floor(value));
   const feld = limit.kind === "minutes" ? "du" : "sz";
@@ -2322,7 +2319,14 @@ function openRulesDialog(node) {
   document.getElementById("rulesLimitOn").checked = !!limit.enabled;
   document.getElementById("rulesLimitValue").value = limit.value;
   document.getElementById("rulesLimitKind").value = limit.kind;
-  document.getElementById("rulesLimitBy").value = limit.by;
+  document.getElementById("rulesLimitBy").value = limit.by === "random" ? "random" : "added";
+  const syncLimitEnabled = () => {
+    const on = document.getElementById("rulesLimitOn").checked;
+    ["rulesLimitValue", "rulesLimitKind", "rulesLimitBy"]
+      .forEach(id => { document.getElementById(id).disabled = !on; });
+    document.querySelector("#rulesOverlay .ruleslimit").classList.toggle("off", !on);
+  };
+  syncLimitEnabled();
 
   const currentSpec = () => ({
     match: document.getElementById("rulesMatch").value,
@@ -2396,7 +2400,7 @@ function openRulesDialog(node) {
   draw();
 
   ["rulesMatch", "rulesLimitOn", "rulesLimitValue", "rulesLimitKind", "rulesLimitBy"]
-    .forEach(id => { document.getElementById(id).onchange = drawPreview; });
+    .forEach(id => { document.getElementById(id).onchange = () => { syncLimitEnabled(); drawPreview(); }; });
 
   const close = () => {
     ov.style.display = "none";
