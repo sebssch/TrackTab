@@ -4050,10 +4050,10 @@ function attachSearchFilterAutocomplete(el, list) {
 
   const showValueSuggestions = val => {
     tokStart = val.start; tokEnd = val.end;
-    const q = val.text.trim().toLowerCase();
+    const q = foldDiacritics(val.text.trim().toLowerCase());
     const starts = [], contains = [];
     for (const v of fieldValuesForAutocomplete(val.field)) {
-      const lv = v.toLowerCase();
+      const lv = foldDiacritics(v.toLowerCase());
       if (!q || lv.startsWith(q)) starts.push(v);
       else if (lv.includes(q)) contains.push(v);
     }
@@ -4070,7 +4070,7 @@ function attachSearchFilterAutocomplete(el, list) {
   // Vorschlaegen).
   const showFreeTextSuggestions = free => {
     tokStart = free.start; tokEnd = free.end;
-    const q = free.text.toLowerCase();
+    const q = foldDiacritics(free.text.toLowerCase());
     // Wert -> Felder, in denen er vorkommt; die Liste zeigt dahinter, worum
     // es sich beim Treffer handelt (Interpret/Titel/Album).
     const pool = new Map();
@@ -4082,7 +4082,7 @@ function attachSearchFilterAutocomplete(el, list) {
     }
     const starts = [], contains = [];
     for (const v of pool.keys()) {
-      const lv = v.toLowerCase();
+      const lv = foldDiacritics(v.toLowerCase());
       if (lv.startsWith(q)) starts.push(v);
       else if (lv.includes(q)) contains.push(v);
     }
@@ -5042,7 +5042,11 @@ const getSearchTolerance = () => state.searchTolerance ?? 0.8;
 // Apostroph-Varianten (gerade/typografisch/Backtick) fallen komplett weg,
 // damit "dont" auch "don't"/"don’t" trifft und umgekehrt -- Tag-Daten und
 // Sucheingabe verwenden nie zuverlaessig dieselbe Variante.
-const stripApostrophes = s => s.replace(/['’‘`´]/g, "");
+// Ausserdem fallen Akzente/Umlaute weg ("Kölsch" == "Kolsch", "é" == "e"):
+// NFD zerlegt in Grundbuchstabe + Kombizeichen, die dann entfallen. Reines
+// ASCII (Regelfall) geht ohne normalize() durch.
+const foldDiacritics = s => /[^\x00-\x7f]/.test(s) ? s.normalize("NFD").replace(/[\u0300-\u036f]/g, "") : s;
+const stripApostrophes = s => foldDiacritics(s.replace(/['’‘`´]/g, ""));
 
 // Exakter Teilstring bleibt der schnelle Regelfall; Fuzzy ergaenzt nur bei
 // fehlgeschlagenem exaktem Treffer und arbeitet ausschliesslich wortweise

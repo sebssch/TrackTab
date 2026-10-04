@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.7.1] - 2026-10-04
+
+### Fixed
+- Suche: Umlaute und Akzente werden beim Vergleich ignoriert („Kolsch“ findet „Kölsch“ und umgekehrt, ebenso é/e, ñ/n, č/c). Gilt für die normale Suche, Feldfilter, exakte Vergleiche, die unscharfe Suche und die Vorschläge im Suchfeld. Nicht abgedeckt: ß, ø, æ, ł sowie „oe“/„ae“ für ö/ä.
+
 ## [1.7.0] - 2026-10-04
 
 ### Added
