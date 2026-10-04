@@ -3131,16 +3131,20 @@ function nodeMenuItems(node) {
         action: () => openRulesDialog(node),
       });
     }
-    if (node.kind === "playlist") {
+    if (node.kind === "playlist" || node.kind === "smart") {
       listeSelbst.push({
         icon: ICONS.stickyNotes, label: t("tree.duplicate"),
         action: async () => {
           try {
+            const isSmart = node.kind === "smart";
+            // Smart Playlists haben keine festen Eintraege -- die Kopie
+            // bekommt stattdessen Regelwerk, Symbol und Farbe des Originals.
             const copy = await playlistApi("/api/playlist", {
-              op: "create", kind: "playlist", parent_id: node.parent_id || null,
+              op: "create", kind: node.kind, parent_id: node.parent_id || null,
               name: t("tree.copy_name", {name: node.name}),
+              ...(isSmart ? {icon: node.icon, color: node.color, rules: node.rules} : {}),
             });
-            const paths = PLAYLIST_ITEMS[node.id] || [];
+            const paths = isSmart ? [] : (PLAYLIST_ITEMS[node.id] || []);
             if (paths.length) {
               await playlistApi("/api/playlist-items",
                 {op: "set", id: copy.node.id, paths: paths});
