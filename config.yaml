@@ -153,6 +153,22 @@ theme: "auto"
 # Wirkt auf Anzeige, geschriebene Datei-Tags und den Rekordbox-Uebertrag.
 key_notation: "camelot"
 
+# --- BPM-/Tonart-Analyse (libsonare) ---
+# Die Tonart wird in Feld und Kommentar in der Schreibweise von key_notation
+# geschrieben. Neue Einzelpruefungs-Dateien automatisch analysieren:
+bpmkey_auto_drops: true
+# Dateien laenger als diese Minuten werden nicht analysiert (DJ-Mixe).
+bpmkey_max_minutes: 10
+# Tonart ins Tonart-Feld schreiben: yes (ueberschreibt) | if_empty (nur wenn
+# dort noch keine Tonart steht) | no.
+bpmkey_write_key: "yes"
+# Dasselbe fuer die BPM im BPM-Feld.
+bpmkey_write_bpm: "yes"
+# Kommentar-Feld: none | key ("10A") | key_bpm ("10A - 126").
+bpmkey_comment_content: "none"
+# Bei vorhandenem Kommentar: if_empty | overwrite | prepend (voranstellen).
+bpmkey_comment_existing: "overwrite"
+
 # Akzentfarbe der Oberflaeche (aktive Knoepfe, Player-Fortschritt, ...).
 # Eine von: blue, cyan, teal, indigo, violet, purple, fuchsia, pink.
 accent_color: "blue"

@@ -25,13 +25,28 @@ from app import __version__ as _version
 from PyInstaller.utils.hooks import collect_submodules
 _encodings = collect_submodules("encodings")
 
+# libsonare (BPM-/Tonart-Analyse, app/bpmkey.py) ist optional und wird lazy
+# importiert -- PyInstaller sieht den Import deshalb nicht. Die native
+# libsonare.dylib liegt neben den Python-Modulen im Paket und wird von
+# libsonare/_ffi.py relativ zu seiner eigenen Datei gesucht; collect_dynamic_libs()
+# legt sie im Bundle wieder in denselben Ordner. Fehlt das Paket im Build-venv
+# (z. B. Intel-Mac), entsteht ein Bundle ohne die Funktion.
+_sonare_binaries, _sonare_hidden = [], []
+try:
+    import libsonare  # noqa: F401
+    from PyInstaller.utils.hooks import collect_dynamic_libs
+    _sonare_binaries = collect_dynamic_libs("libsonare")
+    _sonare_hidden = collect_submodules("libsonare")
+except Exception:
+    print("HINWEIS: libsonare nicht installiert -- Bundle ohne BPM-/Tonart-Analyse.")
+
 a = Analysis(
     ["desktop_main.py"],
     pathex=[],
-    binaries=[],
+    binaries=_sonare_binaries,
     datas=datas,
     hiddenimports=["app.analyzer", "app.classify", "app.spectral", "app.probe",
-                   "app.macapp"] + _encodings,
+                   "app.macapp", "app.bpmkey"] + _encodings + _sonare_hidden,
     hookspath=[],
     excludes=["tkinter", "matplotlib", "pytest", "PyInstaller"],
     noarchive=False,

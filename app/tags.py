@@ -108,6 +108,14 @@ def format_key(camelot: str, notation: str = "camelot") -> str:
     return row[KEY_NOTATIONS.index(notation)]
 
 
+def key_file_value(camelot: str, cfg: dict) -> str:
+    """Tonart so, wie sie in die Datei (Feld und Kommentar) geschrieben wird:
+    format_key() in der Schreibweise cfg["key_notation"]. Einzige Stelle, an
+    der Schreibweise und Einstellung zusammenkommen -- Tags-Dialog, "Schreibweise
+    angleichen" und BPM-/Tonart-Analyse gehen alle hier durch."""
+    return format_key(camelot, cfg.get("key_notation", "camelot"))
+
+
 def key_aliases() -> dict[str, str]:
     """Kleingeschriebene Schreibweise -> Camelot, fuer den Client (Suche und
     Eingabefeld): alle drei Schreibweisen plus gaengige Varianten."""

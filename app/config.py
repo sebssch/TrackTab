@@ -401,6 +401,23 @@ def defaults() -> dict:
         # tags.format_key() und app.js::keyLabel().
         "key_notation": "camelot",
 
+        # BPM-/Tonart-Analyse (libsonare, app/bpmkey.py). Die Tonart steht in
+        # Feld UND Kommentar in der Schreibweise von key_notation.
+        # Neue Einzelpruefungs-Dateien automatisch analysieren und schreiben:
+        "bpmkey_auto_drops": True,
+        # Laengere Dateien (DJ-Mixe) werden nicht analysiert, Minuten:
+        "bpmkey_max_minutes": 10,
+        # Erkannte Tonart in das Tonart-Feld schreiben: yes (immer, ueberschreibt)
+        # | if_empty (nur wenn dort noch keine Tonart steht) | no.
+        "bpmkey_write_key": "yes",
+        # Dasselbe fuer die BPM im BPM-Feld.
+        "bpmkey_write_bpm": "yes",
+        # Kommentar-Feld: none (nichts) | key ("10A") | key_bpm ("10A - 126");
+        # bei vorhandenem Kommentar: if_empty (nur wenn leer) | overwrite
+        # (ueberschreiben) | prepend (dem bestehenden voranstellen).
+        "bpmkey_comment_content": "none",
+        "bpmkey_comment_existing": "overwrite",
+
         # Oberflaechen-Sprache: auto (folgt navigator.language im Browser)
         # oder ein fester Sprachcode. de/en uebersetzt (siehe app/webui/
         # i18n/de.js, en.js) -- resolveLang() in app.js faellt auf "de"

@@ -1,7 +1,3 @@
-# ╔══════════════════════════════════════════════════════════════╗
-# ║  MP3 Quality Check — Python-Abhaengigkeiten                  ║
-# ╚══════════════════════════════════════════════════════════════╝
-#
 # System-Anforderungen:
 #   - macOS 13+ (Apple Silicon oder Intel)
 #   - Python 3.12+
@@ -18,6 +14,12 @@ rich>=13.0         # Terminal-Ausgabe, Fortschrittsbalken
 PyYAML>=6.0        # config.yaml
 pyrekordbox>=0.4.4 # Liest/schreibt Rekordbox' master.db (SQLCipher) fuer Playlist-Abgleich
 Pillow>=10.0        # Cover-Pruefung/-Verkleinerung bei Auffaelligkeiten (app/taganomaly.py)
+
+# BPM-/Tonart-Analyse (app/bpmkey.py). Optional: fehlt das Paket, blendet die
+# Oberflaeche die Funktion aus. Das PyPI-Wheel gibt es nur fuer macOS arm64
+# (Apple Silicon); es zieht numpy>=2.4.6 nach. Version bewusst gepinnt (junges
+# Projekt, haeufige Releases).
+libsonare==1.8.2 ; sys_platform == "darwin" and platform_machine == "arm64"
 
 # Nur fuer die Doppelklick-App: NSApplication-Huelle um den Server (app/macapp.py).
 # Erst damit beantwortet die App den Quit-Apple-Event, also Cmd+Q, "Beenden"

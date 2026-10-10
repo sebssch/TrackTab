@@ -14,6 +14,8 @@ Die einfachste Variante: eine fertig gepackte App, kein Terminal nötig. Vorauss
 
 ffmpeg/ffprobe sind in dieser Variante bereits enthalten — im Gegensatz zu Abschnitt 2 muss nichts zusätzlich installiert werden.
 
+Die BPM-/Tonart-Analyse ist in der App enthalten (libsonare).
+
 ---
 
 ## 2. Eigener App-Build (Kompilierung aus dem Quellcode)
@@ -55,6 +57,7 @@ Nach einer neuen Version des Quellcodes einfach `./build_app.sh` erneut ausführ
 - macOS 13 oder neuer
 - Python 3.12 oder neuer
 - `ffmpeg`/`ffprobe` im PATH
+- Optional: `libsonare` für die BPM-/Tonart-Analyse (kommt über `requirements.txt` automatisch mit; das PyPI-Wheel gibt es nur für Apple Silicon — auf einem Intel-Mac läuft TrackTab ohne diese Funktion)
 - `osascript` (in macOS bereits enthalten; wird für Papierkorb, Finder-Integration, externe Programme und Dialoge genutzt)
 
 ### Einrichtung

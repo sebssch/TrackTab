@@ -150,21 +150,85 @@ GROUPS = [
         ],
     },
     {
-        "id": "key", "title": "Tonart",
-        "note": "Angezeigt wird die Tonart aus der Datei. Unterscheidet sich "
-                "der Wert in der Datei von der Darstellung in TrackTab, "
-                "wird die Bubble mit einem gestrichelten Rahmen angezeigt.",
+        "id": "bpmkey", "title": "BPM & Tonart",
+        "note": "TrackTab misst Tempo und Tonart selbst und schreibt sie in "
+                "die Datei-Tags. Aufruf über „BPM/Tonart analysieren“ in der "
+                "Tabelle und in den Einzelprüfungen. Was in welches Feld "
+                "geschrieben wird, legst du in den Abschnitten darunter fest; "
+                "„Tonart-Feld“ bestimmt außerdem die Schreibweise, in der "
+                "bereits vorhandene Tonarten angeglichen werden.",
+        "fields": [
+            {"key": "bpmkey_auto_drops", "type": "bool", "width": "half",
+             "label": "Einzelprüfungen automatisch analysieren",
+             "help": "Neu hinzugefügte Dateien der Einzelprüfungen werden "
+                     "sofort analysiert und beschrieben."},
+            {"key": "bpmkey_max_minutes", "type": "number", "width": "half",
+             "label": "Längere Dateien überspringen", "unit": "min",
+             "min": 1, "max": 600, "step": 1,
+             "help": "Dateien über dieser Länge (z. B. DJ-Mixe) werden nicht "
+                     "analysiert."},
+        ],
+    },
+    {
+        "id": "bpmkey_key", "parent": "bpmkey", "title": "Tonart-Feld",
+        "note": "Hier steht alles zum Tonart-Tag der Dateien: in welcher "
+                "Schreibweise er steht und wann die Analyse ihn beschreibt. "
+                "Angezeigt wird die Tonart aus der Datei; weicht deren "
+                "Schreibweise von der gewählten ab, bekommt die Bubble einen "
+                "gestrichelten Rahmen.",
         "fields": [
             {"key": "key_notation", "type": "select", "label": "Tonart-Schreibweise",
              "width": "half",
              "options": [{"value": "camelot", "label": "Camelot (8A)"},
                          {"value": "openkey", "label": "Open Key (1m)"},
                          {"value": "notes", "label": "Notennamen (Am)"}],
-             "help": "Schreibweise der Tonart in der Tabelle, im Tags-Dialog, "
-                     "in den Dateien (Tag „Initial Key“) und beim Übertrag "
-                     "nach Rekordbox. Beim Einlesen werden alle drei "
-                     "Schreibweisen erkannt. Die Farben der Tonart-Bubbles "
-                     "folgen immer dem Camelot-Rad."},
+             "help": "Gilt für neu analysierte Tonarten und für „Tonart-"
+                     "Schreibweise angleichen“ (Dateien mit gestricheltem "
+                     "Rahmen, Notenschlüssel-Symbol in der Sammelleiste). Wirkt "
+                     "außerdem in der Tabelle, im Tags-Dialog, im Kommentar "
+                     "und beim Übertrag nach Rekordbox. Beim Einlesen werden "
+                     "alle drei Schreibweisen erkannt. Die Farben der "
+                     "Tonart-Bubbles folgen immer dem Camelot-Rad."},
+            {"key": "bpmkey_write_key", "type": "select", "width": "half",
+             "break": True,
+             "label": "In Tonart-Feld schreiben",
+             "options": [{"value": "yes", "label": "Ja"},
+                         {"value": "if_empty", "label": "Ja, nur wenn leer"},
+                         {"value": "no", "label": "Nein"}],
+             "help": "Tag „Initial Key“ (TKEY). „Nur wenn leer“ lässt eine "
+                     "vorhandene Tonart stehen, „Ja“ überschreibt sie."},
+        ],
+    },
+    {
+        "id": "bpmkey_bpm", "parent": "bpmkey", "title": "BPM-Feld",
+        "fields": [
+            {"key": "bpmkey_write_bpm", "type": "select", "width": "half",
+             "label": "In BPM-Feld schreiben",
+             "options": [{"value": "yes", "label": "Ja"},
+                         {"value": "if_empty", "label": "Ja, nur wenn leer"},
+                         {"value": "no", "label": "Nein"}],
+             "help": "Wird als ganze Zahl gespeichert. „Nur wenn leer“ lässt "
+                     "einen vorhandenen Wert stehen, „Ja“ überschreibt ihn."},
+        ],
+    },
+    {
+        "id": "bpmkey_comment", "parent": "bpmkey", "title": "Kommentar-Feld",
+        "fields": [
+            {"key": "bpmkey_comment_content", "type": "select", "width": "half",
+             "label": "In Kommentar-Feld schreiben",
+             "options": [{"value": "none", "label": "Nichts"},
+                         {"value": "key", "label": "Nur Tonart (z. B. 10A)"},
+                         {"value": "key_bpm", "label": "Tonart und Tempo (z. B. 10A - 126)"}],
+             "help": "Die Tonart folgt der Schreibweise unter „Tonart-Feld“, z. B. „1m - 126“ "
+                     "bei Open Key."},
+            {"key": "bpmkey_comment_existing", "type": "select", "width": "half",
+             "label": "Vorhandener Kommentar",
+             "show_if": {"key": "bpmkey_comment_content", "contains": "key"},
+             "options": [{"value": "if_empty", "label": "Nur wenn leer"},
+                         {"value": "overwrite", "label": "Überschreiben"},
+                         {"value": "prepend", "label": "Voranstellen (Eintrag - Kommentar)"}],
+             "help": "Beim Voranstellen bleibt ein schon vorangestellter, "
+                     "identischer Eintrag unverändert."},
         ],
     },
     {
@@ -405,7 +469,7 @@ def current(cfg: dict | None = None) -> dict:
 
 
 def describe() -> dict:
-    from . import media
+    from . import bpmkey, media
     ensure_apple_music_column_view()
     defaults = current(_defaults_cfg())
     detected = media.find_audio_editor()
@@ -416,6 +480,9 @@ def describe() -> dict:
             "detected_editor": detected or "",
             "detected_mik": detected_mik or "",
             "detected_rekordbox": detected_rekordbox or "",
+            # libsonare vorhanden? Ohne blendet die Oberflaeche die BPM-/Tonart-
+            # Analyse aus (siehe bpmkey.available()).
+            "bpmkey_available": bpmkey.available(),
             # Kein UI-Feld (kein Setting zum Editieren, nur Anzeige im
             # Backup-Block) -- deshalb hier separat statt ueber _FIELDS/current().
             "backup_keep": int(cfgmod.load().get("backup_keep", 10)),

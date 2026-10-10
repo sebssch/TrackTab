@@ -991,6 +991,7 @@ const ICONS = {
               '<line x1="14" y1="20" x2="14" y2="15"/><line x1="19" y1="20" x2="19" y2="9"/>'),
   edit: SVG(LUCIDE_ICONS["square-pen"]),
   clefTreble: SVG(LUCIDE_ICONS["clef-treble"]),
+  audioWaveform: SVG(LUCIDE_ICONS["audio-waveform"]),
   pencil: SVG(LUCIDE_ICONS["pencil"]),
   sparkles: SVG(LUCIDE_ICONS["sparkles"]),
   pencilRuler: SVG(LUCIDE_ICONS["pencil-ruler"]),
@@ -3752,6 +3753,9 @@ async function initStorage() {
         // MIK zeigte die Knoepfe sonst trotzdem an, obwohl die Einstellung
         // leer aussieht (Nutzer-Feedback).
         MIK_NAME = (s.values.external_mik || "").split("/").pop().replace(/\.app$/, "");
+        // BPM-/Tonart-Analyse (libsonare): Knoepfe nur, wenn die Bibliothek da ist.
+        BPMKEY_AVAILABLE = !!s.bpmkey_available;
+        BPMKEY_AUTO = !!s.values.bpmkey_auto_drops;
         // Kein Auto-detect wie bei MIK/Editor: Music.app ist auf jedem Mac
         // vorhanden, die Auswahl hier ist ein bewusstes Ein-/Ausschalten der
         // gesamten Integration (Baum, Knoepfe, Import, Sync, Cover-Autofill),
@@ -5802,10 +5806,16 @@ function rowMoreMenuItems(r) {
       label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r),
     });
   }
-  if (!r.gone && apiMode && KEY_TABLE[r.ky]) {
+  if (apiMode && keyNeedsSync(r)) {
     items.push({
-      icon: ICONS.clefTreble, cls: "", title: t("action.write_key_title"),
+      icon: ICONS.clefTreble, cls: "", title: t("action.write_key_title", {example: keyNotationExample()}),
       label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r]),
+    });
+  }
+  if (!r.gone && apiMode && BPMKEY_AVAILABLE) {
+    items.push({
+      icon: ICONS.audioWaveform, cls: "", title: t("action.bpmkey_title"),
+      label: t("rowmenu.bpmkey"), action: () => analyseBpmKey([r]),
     });
   }
   if (!r.gone) {
@@ -6541,7 +6551,8 @@ function renderBulkBar() {
     ${selRows.some(hasAutoFixableTagIssues) ? `<button class="iconbtn plain" id="bulkFixTags"
         title="${esc(t("bulk.action_fix_tag_issues"))}">${TREE_ICONS.tag_issues}</button>` : ""}
     <button class="iconbtn plain" id="bulkConvert" title="${esc(t("bulk.convert_title"))}">${ICONS.convert}</button>
-    ${apiMode && selRows.some(r => !r.gone && KEY_TABLE[r.ky]) ? `<button class="iconbtn plain" id="bulkWriteKey" title="${esc(t("action.write_key_title"))}">${ICONS.clefTreble}</button>` : ""}
+    ${bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.clefTreble}</button>` : ""}
+    ${bulkBpmKeyShown(selRows, false) ? `<button class="iconbtn plain" id="bulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.audioWaveform}</button>` : ""}
     <span class="sep"></span>
     ${!MIK_NAME ? "" : `<button class="iconbtn plain" id="bulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
     <span class="sep"></span>
@@ -6599,9 +6610,11 @@ function renderBulkBar() {
   document.getElementById("bulkFix").onclick = () => bulkApply("fix");
   const bulkFixTagsBtn = document.getElementById("bulkFixTags");
   if (bulkFixTagsBtn) bulkFixTagsBtn.onclick = () => bulkApply("fixtags");
-  const bulkWriteKeyBtn = document.getElementById("bulkWriteKey");
-  if (bulkWriteKeyBtn) bulkWriteKeyBtn.onclick = () =>
-    writeKeyToFiles([...state.selected].map(i => DATA[i]).filter(Boolean));
+  const bulkRows = () => [...state.selected].map(i => DATA[i]).filter(Boolean);
+  const bulkKeySyncBtn = document.getElementById("bulkKeySync");
+  if (bulkKeySyncBtn) bulkKeySyncBtn.onclick = () => writeKeyToFiles(bulkRows(), false);
+  const bulkBpmKeyBtn = document.getElementById("bulkBpmKey");
+  if (bulkBpmKeyBtn) bulkBpmKeyBtn.onclick = () => analyseBpmKey(bulkRows(), false);
   const bulkConvertBtn = document.getElementById("bulkConvert");
   if (bulkConvertBtn) bulkConvertBtn.onclick = () => bulkApply("convert");
   document.getElementById("bulkRescan").onclick = () => bulkApply("rescan");
@@ -6706,18 +6719,19 @@ function askFixTagIssuesBulk(rows) {
   });
 }
 
-// "Key in Datei schreiben": schreibt die in TrackTab gefuehrte Tonart (r.ky,
-// Camelot) in der eingestellten Schreibweise in den Datei-Tag -- fuer eine
-// oder mehrere Zeilen. Nutzt denselben Endpunkt wie der Tags-Dialog
-// (/api/tags: Datei + DB + key_raw), also gibt es danach keinen Rahmen mehr.
-// Zeilen ohne bekannte Tonart und solche, in deren Datei bereits genau dieser
-// Wert steht, werden uebersprungen (kein Schreibzugriff ohne Wirkung).
-async function writeKeyToFiles(rows) {
-  const known = rows.filter(r => !r.gone && KEY_TABLE[r.ky]);
-  const todo = known.filter(r => r.kr !== keyLabel(r.ky));
-  const noKey = rows.length - known.length, same = known.length - todo.length;
+// Tonart-Schreibweise angleichen: schreibt die in TrackTab gefuehrte Tonart in
+// der eingestellten Schreibweise (key_notation) in die Datei -- der Wert selbst
+// bleibt, nur die Schreibweise aendert sich. Gedacht fuer Dateien mit
+// gestricheltem Rahmen (.keymis), nachdem key_notation gewechselt wurde.
+// Nutzt denselben Endpunkt wie der Tags-Dialog (/api/tags: Datei + DB +
+// key_raw), also gibt es danach keinen Rahmen mehr. Angeboten wird die Aktion
+// nur fuer Zeilen mit Abweichung (keyNeedsSync()). isDrop=true: Zeilen aus den
+// Einzelpruefungen, deren Zeile der Server mangels DB-Eintrag nicht
+// zurueckliefern kann (fieldsToDropRow()).
+async function writeKeyToFiles(rows, isDrop) {
+  const todo = rows.filter(r => keyNeedsSync(r) && (!isDrop || r.nativePath));
   if (!todo.length) {
-    note(t(known.length ? "toast.write_key_nothing" : "toast.write_key_none"), "soft");
+    note(t("toast.write_key_nothing"), "soft");
     return;
   }
   const pt = progressToast(t("toast.write_key_running", {count: todo.length}));
@@ -6733,7 +6747,8 @@ async function writeKeyToFiles(rows) {
           body: JSON.stringify({path: r.p, key: keyLabel(r.ky)})});
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || t("error.unknown"));
-        applyRowUpdate(r.i, data.row);
+        if (isDrop) Object.assign(r, fieldsToDropRow({key: keyLabel(r.ky)}));
+        else applyRowUpdate(r.i, data.row);
         done++;
       } catch (err) {
         failed++; lastError = `${baseName(r.p)}: ${err.message}`;
@@ -6743,12 +6758,87 @@ async function writeKeyToFiles(rows) {
     }
   };
   await Promise.all([worker(), worker(), worker()]);
-  const skipped = noKey + same;
-  const text = t("toast.write_key_done", {done, skipped});
   if (failed) pt.fail(t("toast.write_key_failed", {failed, error: lastError}));
-  else pt.done(text);
-  state.selected.clear();
-  render();
+  else pt.done(t("toast.write_key_done", {done}));
+  if (isDrop) renderDrops();
+  else { state.selected.clear(); render(); }
+}
+
+// Weicht die Schreibweise des Datei-Werts von der eingestellten ab? Dieselbe
+// Pruefung wie in writeKeyToFiles() -- Sichtbarkeit der Aktion = was sie taete.
+function keyNeedsSync(r) {
+  return !r.gone && !!KEY_TABLE[r.ky] && r.kr !== keyLabel(r.ky);
+}
+
+// Beispiel der eingestellten Schreibweise ("8A", "1m", "Am") fuer Tooltips.
+function keyNotationExample() {
+  return keyLabel("8A");
+}
+
+// Zwei getrennte Sammel-Icons (Tabelle und Einzelpruefungen), kein Menue:
+// - Analyse (Wellenform): immer da, sobald die Analyse verfuegbar ist und die
+//   Auswahl eine analysierbare Zeile hat. Misst auch das Tempo neu.
+// - Schreibweise angleichen (Notenschluessel): nur, wenn mindestens eine
+//   Zeile der Auswahl abweicht (keyNeedsSync) -- schreibt nur die vorhandene
+//   Tonart um, ohne Messung.
+function bulkBpmKeyShown(rows, isDrop) {
+  return apiMode && BPMKEY_AVAILABLE && rows.some(r => !r.gone && (!isDrop || r.nativePath));
+}
+function bulkKeySyncShown(rows, isDrop) {
+  return apiMode && rows.some(r => keyNeedsSync(r) && (!isDrop || r.nativePath));
+}
+
+// BPM + Tonart messen (libsonare, Server) und nach den Einstellungen in die
+// Datei schreiben (/api/bpmkey, je Datei ein Aufruf -- nur so gibt es "x von y").
+// Bibliothekszeilen bekommen die frische Zeile vom Server (applyRowUpdate), Einzel-
+// pruefungen haben keine DB-Zeile und werden aus den geschriebenen Feldern
+// nachgezogen (fieldsToDropRow, wie beim Tags-Dialog). isDrop=true: Zeilen aus drops.
+// workers: Messen kostet je Datei 2-4 s CPU -- im Hintergrund (Auto-Lauf) nur eine
+// Datei gleichzeitig, auf Knopfdruck zwei. quiet: kein Fortschritts-/Fertig-Toast.
+async function analyseBpmKey(rows, isDrop, opts) {
+  const {workers = 2, quiet = false} = opts || {};
+  const todo = rows.filter(r => !r.gone && (!isDrop || r.nativePath));
+  if (!todo.length) return;
+  const pt = quiet ? null : progressToast(t("toast.bpmkey_running", {count: todo.length}));
+  const queue = todo.slice();
+  let written = 0, unchanged = 0, skipped = 0, skipMinutes = 0, failed = 0, lastError = "", missing = false;
+  const worker = async () => {
+    while (queue.length && !missing) {
+      const r = queue.shift();
+      try {
+        stopPlayerFor(r.p);
+        const res = await fetch("/api/bpmkey", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({path: r.p})});
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || t("error.unknown"));
+        if (data.status === "unavailable") { missing = true; continue; }
+        // Zu lange Datei (bpmkey_max_minutes): bewusst uebersprungen, kein Fehler.
+        if (data.status === "skipped") { skipped++; skipMinutes = data.minutes; continue; }
+        if (data.status === "written") {
+          if (isDrop) Object.assign(r, fieldsToDropRow(data.fields));
+          else if (data.row) applyRowUpdate(r.i, data.row);
+          written++;
+        } else unchanged++;
+        if (isDrop) renderDrops();
+      } catch (err) {
+        failed++; lastError = `${baseName(r.p)}: ${err.message}`;
+      }
+      if (pt) pt.update(100 * (written + unchanged + skipped + failed) / todo.length,
+        t("toast.bpmkey_progress", {done: written + unchanged + skipped + failed, total: todo.length}));
+    }
+  };
+  await Promise.all(Array.from({length: workers}, worker));
+  if (missing) {
+    if (pt) pt.fail(t("toast.bpmkey_missing")); else note(t("toast.bpmkey_missing"), "soft");
+  } else if (pt) {
+    const skipText = skipped ? " " + t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}) : "";
+    if (failed) pt.fail(t("toast.bpmkey_failed", {failed, error: lastError}) + skipText);
+    else if (!written && !unchanged && skipped) pt.done(skipText.trim(), true);
+    else pt.done((written ? t("toast.bpmkey_done", {written, unchanged}) : t("toast.bpmkey_nothing")) + skipText);
+  } else if (failed) note(t("toast.bpmkey_failed", {failed, error: lastError}), "soft");
+  else if (skipped) note(t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}), "soft");
+  if (!isDrop) { state.selected.clear(); render(); }
 }
 
 async function bulkApply(kind) {
@@ -8337,6 +8427,7 @@ document.getElementById("m3usel").onclick = () => {
 let EDITOR_NAME = "";
 let DAW_NAME = "";
 let MIK_NAME = "";
+let BPMKEY_AVAILABLE = false, BPMKEY_AUTO = false;
 let MUSIC_NAME = "";
 let REKORDBOX_NAME = "";
 let REKORDBOX_PLAYLIST = "";
@@ -9144,8 +9235,21 @@ function subGroupHTML(g, v, d) {
           ${fieldRows(g.fields).map(row => `<div class="setrow">${
             row.map(f => settingField(f, v[f.key], d[f.key])).join("")}</div>`).join("")}
         </div>
+        ${g.id === "bpmkey_key" ? keySyncHintHtml() : ""}
       </div>
     </div>`;
+}
+
+// Hinweiszeile im Abschnitt "Tonart-Feld": wie viele Bibliotheksdateien
+// weichen von der eingestellten Schreibweise ab (gestrichelter Rahmen in der
+// Tabelle). Bewusst nur ein Hinweis, kein Knopf fuer die ganze Bibliothek --
+// bei ~11k Dateien viel zu langsam; angeglichen wird ueber die Auswahl
+// (Notenschluessel-Symbol in der Sammelleiste).
+function keySyncHintHtml() {
+  const count = DATA.filter(r => !r.removed && !r.ext && keyNeedsSync(r)).length;
+  const text = count ? t("settings.key_sync_count", {count: count.toLocaleString("de-DE")})
+                     : t("settings.key_sync_none");
+  return `<div class="sethint" id="keySyncHint">${esc(text)}</div>`;
 }
 
 // Anzeigereihenfolge im Einstellungs-Dialog -- fest vorgegeben (nicht die
@@ -9155,7 +9259,7 @@ function subGroupHTML(g, v, d) {
 // sind kein eigener Block mehr -- eine Playlist wird ueber ihren eigenen
 // Bearbeiten-Dialog markiert (askPlaylistProps()).
 const SETTINGS_LAYOUT = [
-  "library", "search", "display", "key", "columnviews",
+  "library", "search", "display", "bpmkey", "columnviews",
   "rekordbox", "tools", "shops", "rename", "analysis", "loudness",
   "performance", "backup", "logs",
 ];
@@ -9947,6 +10051,7 @@ async function postSettings(url, body) {
       location.reload(); return;
     }
     schema.values = data.values;
+    BPMKEY_AUTO = !!data.values.bpmkey_auto_drops;
     // Nur der Shops-Reset liefert "shops" mit -- alle anderen Gruppen
     // aendern die Liste nicht, ALL_SHOPS/schema.shops sollen dann unberuehrt
     // bleiben statt auf einen fehlenden Wert zurueckzufallen.
@@ -12104,6 +12209,8 @@ function renderDropBulkBar() {
         : `<button class="iconbtn plain" id="dropBulkFix" disabled
                    title="${esc(t("drop.bulk_fix_disabled_hint"))}">${ICONS.fix}</button>`;
     })()}
+    ${bulkKeySyncShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.clefTreble}</button>` : ""}
+    ${bulkBpmKeyShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.audioWaveform}</button>` : ""}
     ${!MIK_NAME ? "" : `<button class="iconbtn plain" id="dropBulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
     <span class="sep"></span>
     <button class="iconbtn del" id="dropBulkRemove"
@@ -12120,6 +12227,10 @@ function renderDropBulkBar() {
     const sel = selectedDrops();
     if (sel.length === 1) openFixPopup(sel[0], true);
   };
+  const dropBulkKeySyncBtn = document.getElementById("dropBulkKeySync");
+  if (dropBulkKeySyncBtn) dropBulkKeySyncBtn.onclick = () => writeKeyToFiles(selectedDrops(), true);
+  const dropBulkBpmKeyBtn = document.getElementById("dropBulkBpmKey");
+  if (dropBulkBpmKeyBtn) dropBulkBpmKeyBtn.onclick = () => analyseBpmKey(selectedDrops(), true);
   const dropBulkMikBtn = document.getElementById("dropBulkMik");
   if (dropBulkMikBtn) dropBulkMikBtn.onclick = async () => {
     const sel = selectedDrops();
@@ -12425,6 +12536,13 @@ function initDropzone() {
         }
         pt.done(t("drop.pick.done", {ok, plural: ok === 1 ? "" : "s"}) +
           (failed ? t("drop.pick.done_failed_suffix", {failed}) : ""), !!failed && !ok);
+        // Auto-Lauf BPM/Tonart (Einstellung bpmkey_auto_drops) -- bewusst nicht
+        // abgewartet: der Auswahl-Knopf soll sofort wieder frei sein, die
+        // Analyse laeuft im Hintergrund weiter (eine Datei nach der anderen).
+        if (BPMKEY_AUTO && BPMKEY_AVAILABLE) {
+          const fresh = drops.filter(r => r.nativePath && rows.some(x => x.path === r.p));
+          analyseBpmKey(fresh.reverse(), true, {workers: 1}).catch(() => {});
+        }
       }
     } catch (err) {
       note(t("drop.pick.failed", {error: err.message}), true);

@@ -3,6 +3,20 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.8.0] - 2026-10-10
+
+### Added
+- BPM- und Tonart-Analyse: TrackTab misst Tempo und Tonart selbst (libsonare, lokal, ohne Netz) und schreibt sie in die Datei-Tags. Aufruf über „BPM/Tonart analysieren“ im Zeilenmenü und in der Sammelleiste der Tabelle sowie in der Sammelleiste der Einzelprüfungen; neu hinzugefügte Dateien der Einzelprüfungen werden auf Wunsch automatisch analysiert. Neuer Endpunkt `/api/bpmkey`, neues Modul `app/bpmkey.py`.
+- Einstellungen: Neue Gruppe „BPM- & Tonart-Analyse“ (Abschnitte Tonart-Feld, BPM-Feld und Kommentar-Feld: Tonart und BPM „Ja“ / „Ja, nur wenn leer“ / „Nein“, im Kommentar bei vorhandenem Text „nur wenn leer“, „überschreiben“ oder „voranstellen“). Die Tonart folgt der Einstellung „Tonart-Schreibweise“. Dateien über einer einstellbaren Länge (Standard 10 Minuten) werden nicht analysiert.
+- Einstellungen: Die „Tonart-Schreibweise“ steht jetzt im Abschnitt „Tonart-Feld“ der Gruppe „BPM- & Tonart-Analyse“; die eigene Gruppe „Tonart“ entfällt.
+- libsonare ist eine optionale Abhängigkeit (`requirements.txt`; PyPI-Wheel nur für macOS Apple Silicon). Fehlt sie, blendet die Oberfläche die Funktion aus. Die gebaute App wächst dadurch um rund 10 MB.
+
+### Changed
+- „Key in Datei schreiben“ heißt jetzt „Tonart-Schreibweise angleichen“ und wird nur noch für Dateien angeboten, deren Tonart-Schreibweise von der Einstellung abweicht (gestrichelter Rahmen). Es gibt sie jetzt auch in den Einzelprüfungen.
+- Sammelleisten (Tabelle und Einzelprüfungen): Zwei getrennte Icons ohne Menü: „BPM/Tonart analysieren“ (Wellenform) ist immer da, „Tonart-Schreibweise angleichen“ (Notenschlüssel) nur, wenn in der Auswahl mindestens ein Track abweicht.
+- Einstellungen: Die Gruppe heißt „BPM & Tonart“. Im Abschnitt „Tonart-Feld“ erklärt der Hilfetext, dass die Schreibweise sowohl für die Analyse als auch fürs Angleichen gilt, und eine Hinweiszeile nennt, wie viele Bibliotheksdateien abweichen.
+- Intern: `tags.key_file_value()` ist die einzige Stelle, die Tonart und `key_notation` zur Dateischreibweise verbindet (Tags-Dialog, Angleichen, Analyse).
+
 ## [1.7.4] - 2026-10-10
 
 ### Changed

@@ -41,6 +41,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 from . import __version__
 from . import audit_log
 from . import backup as backup_mod
+from . import bpmkey as bpmkey_mod
 from . import config as cfgmod
 from . import classify as classify_mod
 from . import convert as convert_mod
@@ -1780,6 +1781,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_open_file_pick()
         elif route == "/api/analyse-path":
             self._post_analyse_path()
+        elif route == "/api/bpmkey":
+            self._post_bpmkey()
         elif route == "/api/rename":
             self._post_rename()
         elif route == "/api/add-to-library":
@@ -3293,8 +3296,7 @@ class _Handler(BaseHTTPRequestHandler):
         key_canon = None
         if "key" in payload:
             key_canon = tags_mod.normalize_key(str(payload["key"] or ""))
-            fields["key"] = tags_mod.format_key(
-                key_canon, cfgmod.load().get("key_notation", "camelot"))
+            fields["key"] = tags_mod.key_file_value(key_canon, cfgmod.load())
         if "year" in payload:
             try:
                 fields["year"] = int(payload["year"]) if payload["year"] else 0
@@ -3355,6 +3357,79 @@ class _Handler(BaseHTTPRequestHandler):
             [row], cfg, ignored, corrected, rekordbox, music_added,
             dup_dismissed)[0]
         self._json({"ok": True, "row": compact})
+
+    def _post_bpmkey(self) -> None:
+        """BPM + Tonart per libsonare messen und nach den Einstellungen
+        (bpmkey_*) in die Datei schreiben -- fuer EINEN Pfad (der Client ruft je
+        Datei einmal auf, nur so gibt es "x von y"). Wie _post_tags(): DB-Zeile
+        optional, Einzelpruefungen haben keine (dann row=None, der Client baut
+        seine Zeile aus 'fields').
+
+        Messen (ffmpeg + libsonare, rund 2-4 s) laeuft AUSSERHALB von self.lock,
+        der Lock umschliesst nur das DB-Update (siehe CLAUDE.md, Lock-Regel)."""
+        try:
+            payload = json.loads(self._body(100_000).decode("utf-8"))
+            path = str(payload["path"])
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if not bpmkey_mod.available():
+            self._json({"ok": True, "status": "unavailable", "row": None})
+            return
+        row, ok, path = self._authorize_or_relocate(path)
+        if not ok:
+            self._reject_missing(path)
+            return
+
+        cfg = cfgmod.load()
+        minutes = int(cfg.get("bpmkey_max_minutes") or 10)
+        try:
+            result = bpmkey_mod.analyse(path, minutes * 60)
+        except bpmkey_mod.TooLongError:
+            # Kein Fehler: zu lange Dateien (DJ-Mixe) werden bewusst uebersprungen.
+            self._json({"ok": True, "status": "skipped", "reason": "too_long",
+                        "minutes": minutes, "row": None})
+            return
+        except Exception as exc:                       # noqa: BLE001
+            self._fail(f"Analyse fehlgeschlagen: {exc}", 500)
+            return
+        fields = bpmkey_mod.plan_fields(cfg, result, tags_mod.read_extra(path))
+        base = {"ok": True, "bpm": result["bpm"],
+                "key": tags_mod.key_file_value(result["camelot"], cfg),
+                "confidence": round(result["confidence"], 2)}
+        if not fields:
+            self._json({**base, "status": "unchanged", "fields": {}, "row": None})
+            return
+
+        try:
+            tags_mod.write_tags(path, fields)
+        except tags_mod.TagError as exc:
+            self._fail(str(exc), 500)
+            return
+        audit_log.log("bpmkey", path, ", ".join(sorted(fields)))
+        new_issues = taganomaly_mod.detect(
+            path, (row["codec_family"] if row else "") or "")
+
+        if row is None:
+            self._json({**base, "status": "written", "fields": fields,
+                        "row": None, "issues": new_issues})
+            return
+
+        db_fields = dict(fields)
+        if "key" in fields:
+            db_fields["key"] = result["camelot"]
+            db_fields["key_raw"] = fields["key"]
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                db_mod.update_tags(conn, path, db_fields)
+                db_mod.update_tag_issues(conn, path, new_issues)
+                db_mod.refresh_stat(conn, path)
+                compact = self._compact_rows(conn, cfg, [path])[0]
+            finally:
+                conn.close()
+            self._rebuild(cfg)
+        self._json({**base, "status": "written", "fields": fields, "row": compact})
 
     def _post_fix_tag_issues(self) -> None:
         """Sicher automatisch behebbare Auffaelligkeiten (Steuerzeichen,
