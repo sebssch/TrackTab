@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [Unveröffentlicht]
+
+### Changed
+- Genre-, Album- und Künstler-Liste: Die Werte im Listenkopf erscheinen als Buchstaben-Index mit A–Z-Leiste (Sprung zum Buchstaben), Abschnitten je Buchstabe samt Trennlinie und linksbündig angeordneten Bubbles; die Anzahl steht als Badge, auch bei ausgewähltem Eintrag gut lesbar.
+
 ## [1.7.1] - 2026-10-04
 
 ### Fixed

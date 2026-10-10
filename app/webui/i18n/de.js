@@ -947,6 +947,7 @@ const I18N_DE = {
 
   // ── Genre-/Album-/Interpret-Bubbleleiste, Umbenennen, Zusammenfuehren ──
   "genres.bubbles_expand_label": "ausklappen",
+  "genres.az_bar_title": "Zu Buchstabe springen",
   "genres.bubbles_collapse_label": "einklappen",
   "genres.merge_toggle_title": "Zusammenführungs-Vorschläge",
   "genres.merge_toggle_label": "Vorschläge",

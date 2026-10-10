@@ -928,6 +928,7 @@ const I18N_EN = {
 
   // ── Genre/Album/Artist bubble bar, renaming, merge suggestions ─────────
   "genres.bubbles_expand_label": "show more",
+  "genres.az_bar_title": "Jump to letter",
   "genres.bubbles_collapse_label": "show less",
   "genres.merge_toggle_title": "Merge suggestions",
   "genres.merge_toggle_label": "Suggestions",

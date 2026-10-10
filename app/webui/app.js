@@ -13262,6 +13262,15 @@ function wireValueBoxOnce() {
   };
 }
 
+// Anfangsbuchstabe fuer den Buchstaben-Index (Umlaute/Akzente -> Grundbuchstabe,
+// Ziffern, Sonderzeichen und leere Werte -> "#").
+const AZ_LETTERS = ["#", ..."ABCDEFGHIJKLMNOPQRSTUVWXYZ"];
+function valueInitial(value) {
+  const c = String(value || "").trim().normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .charAt(0).toUpperCase();
+  return c >= "A" && c <= "Z" ? c : "#";
+}
+
 function renderPlaylistHeaderValueBox() {
   wireValueBoxOnce();
   const field = GRP_VIEW_FIELD[state.view];
@@ -13289,16 +13298,38 @@ function renderPlaylistHeaderValueBox() {
 
   const values = valueEntriesFor(field);
   const vf = state.valueFilter;
-  bubblesRow.innerHTML = values.map((v, i) => {
+  // Buchstaben-Index: Gruppen nach Anfangsbuchstabe (values ist schon sortiert,
+  // data-i bleibt die Originalposition fuer die Handler weiter unten).
+  const groups = new Map();
+  values.forEach((v, i) => {
+    const L = valueInitial(v.value);
+    if (!groups.has(L)) groups.set(L, []);
+    groups.get(L).push({v, i});
+  });
+  const bubbleHtml = ({v, i}) => {
     const active = vf && vf.field === field && vf.entry.value === v.value &&
       (field !== "album" || vf.entry.groupArtist === v.groupArtist);
     return `<span class="genrebubble${active ? " active" : ""}" data-i="${i}">
       <span>${valueBubbleLabelHtml(field, v)}</span>
-      <span class="genrecount">(${v.count})</span>
+      <span class="genrecount">${v.count}</span>
       <button type="button" class="genrerename" data-bubbleedit="${i}"
               title="${esc(fieldEditTitle(field))}">${ICONS.edit}</button>
     </span>`;
-  }).join("");
+  };
+  const bar = AZ_LETTERS.map(L => groups.has(L)
+    ? `<button type="button" class="azbtn" data-azletter="${L}">${L}</button>`
+    : `<span class="azbtn off">${L}</span>`).join("");
+  bubblesRow.innerHTML = `<div class="azbar" title="${esc(t("genres.az_bar_title"))}">${bar}</div>` +
+    AZ_LETTERS.filter(L => groups.has(L)).map(L =>
+      `<div class="azsec" data-azsec="${L}"><div class="azletter">${L}</div>
+        <div class="azchips">${groups.get(L).map(bubbleHtml).join("")}</div></div>`).join("");
+  bubblesRow.querySelectorAll("[data-azletter]").forEach(b => b.onclick = () => {
+    const sec = bubblesRow.querySelector(`[data-azsec="${b.dataset.azletter}"]`);
+    if (!sec) return;
+    const bar = bubblesRow.querySelector(".azbar");
+    bubblesRow.scrollTo({top: sec.offsetTop - (bar ? bar.offsetHeight : 0),
+                         behavior: "auto"});
+  });
   // 550px bleibt Obergrenze (app.css .genrebox-bubbles.expanded), oeffnet
   // aber nur so weit wie der tatsaechliche Inhalt -- statt immer bis 550px.
   bubblesRow.style.maxHeight = st.expanded ? Math.min(bubblesRow.scrollHeight, 550) + "px" : "";
