@@ -2528,7 +2528,9 @@ function renderPlaylistHeader() {
     : node.kind === "view" ? node.count : playlistCount(node.id);
   document.getElementById("plHeadCount").textContent = t("tree.header_count", {
     count: n.toLocaleString("de-DE"),
-    track_word: n === 1 ? t("tree.track_singular") : t("tree.track_plural"),
+    track_word: GRP_VIEW_FIELD[node.id]
+      ? t(`tree.unit_${GRP_VIEW_FIELD[node.id]}_${n === 1 ? "singular" : "plural"}`)
+      : n === 1 ? t("tree.track_singular") : t("tree.track_plural"),
   });
   const st = undoStackFor(node.id);
   const undoBtn = document.getElementById("plUndo");
@@ -5765,7 +5767,7 @@ function currentListNode() {
   return {
     id, name: view.label, kind: "view",
     icon: TREE_ICONS[id] || null, color: null,
-    count: live().filter(view.test).length,
+    count: GRP_VIEW_FIELD[id] ? groupEntryCount(GRP_VIEW_FIELD[id]) : live().filter(view.test).length,
   };
 }
 

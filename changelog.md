@@ -3,6 +3,11 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.7.4] - 2026-10-10
+
+### Changed
+- Listenkopf von Genre, Album und Künstler: Die Zahl oben rechts nennt jetzt die Anzahl der Genres, Alben bzw. Künstler statt der Gesamtzahl der Tracks.
+
 ## [1.7.3] - 2026-10-10
 
 ### Added
