@@ -1044,6 +1044,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_backups()
         elif route == "/api/stats":
             self._get_stats()
+        elif route == "/api/stats/library":
+            self._get_stats_library()
         elif route == "/api/cover":
             self._get_cover()
         elif route == "/api/playlists":
@@ -1378,6 +1380,18 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             data = (stats_mod.build(cfg, conn) if stats_mod.is_stale(cfg, conn)
                     else stats_mod.read(cfg))
+        finally:
+            conn.close()
+        self._json({"ok": True, **data})
+
+    def _get_stats_library(self) -> None:
+        """Bibliotheks-Kennzahlen (Bestand, Zugaenge, Abdeckung). Kein
+        self.lock und kein Cache: reine Leseabfrage unter WAL, siehe
+        stats.library()."""
+        cfg = cfgmod.load()
+        conn = db_mod.connect(cfg)
+        try:
+            data = stats_mod.library(cfg, conn)
         finally:
             conn.close()
         self._json({"ok": True, **data})

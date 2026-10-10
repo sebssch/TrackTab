@@ -650,6 +650,8 @@ Der Button „Statistik" in der Kopfzeile zeigt eine Jahres-/Monats-Auswertung: 
 
 ![Statistik-Dashboard](docs/013-statistik.png)
 
+Der Reiter „Bibliothek" im Statistik-Fenster zeigt stattdessen eine Momentaufnahme des Bestands: Trackzahl, Spielzeit, Speicherbedarf und durchschnittliche Länge, Formate, Tag-Vollständigkeit (wie viele Tracks Cover, Genre, BPM, Tonart, Jahr und Albuminterpret haben), Jahrgänge, BPM- und Tonart-Verteilung sowie die Zugänge pro Monat und Jahr laut Music.app. Dazu kommen die Abdeckung (in Rekordbox, in Playlisten, in Merklisten, ausgeblendet, als korrekt bestätigt) und Pflegehinweise (Tag-Auffälligkeiten, Duplikat-Gruppen). Tracks ohne Hinzufüge-Datum aus Music.app fehlen bei den Zugängen und werden dort ausdrücklich genannt. Dieselben Zahlen gibt `./run.command stats` im Terminal aus.
+
 Ist Rekordbox in den Einstellungen ausgewählt, wird die Historie aus Rekordbox geladen und man erhält ebenfalls eine Statistik.
 
 

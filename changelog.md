@@ -3,6 +3,16 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.7.3] - 2026-10-10
+
+### Added
+- Statistik: Neuer Reiter „Bibliothek“ mit einer Momentaufnahme des Bestands: Trackzahl, Spielzeit, Speicherbedarf, durchschnittliche Länge, Formate, Tag-Vollständigkeit (Cover, Genre, BPM, Tonart, Jahr, Albuminterpret), Jahrgänge, BPM-Verteilung, Tonarten (in den Camelot-Farben), Zugänge pro Monat und Jahr laut Music.app, Abdeckung (Rekordbox, Playlisten, Merklisten, ausgeblendet, als korrekt bestätigt) sowie Pflegehinweise (Tag-Auffälligkeiten, Duplikat-Gruppen). Neuer Endpunkt `/api/stats/library`.
+- `./run.command stats` gibt dieselben Bestandskennzahlen im Terminal aus.
+
+### Changed
+- Statistik: Alle Diagramme (auch Aktionen und Wiedergabezeit pro Monat) stehen untereinander in voller Breite; die Achsenbeschriftung ist normaler Text und nicht mehr vertikal gestaucht.
+- Statistik: Jahre außerhalb von 1900 bis nächstes Jahr zählen als „fehlt“ und dehnen die Jahrgangs-Achse nicht mehr.
+
 ## [1.7.2] - 2026-10-10
 
 ### Changed

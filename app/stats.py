@@ -332,3 +332,143 @@ def build(cfg: dict, conn: sqlite3.Connection) -> dict:
 def read(cfg: dict | None = None) -> dict:
     cfg = cfg or cfgmod.load()
     return json.loads(stats_path(cfg).read_text(encoding="utf-8"))
+
+
+# ── Bibliotheks-Statistik ─────────────────────────────────────────────────
+# Momentaufnahme des Bestands, bewusst ohne stats.json-Cache: eine Abfrage
+# ueber 'files' (+ ein paar Markierungstabellen) kostet an ~11k Zeilen
+# Millisekunden, ein Cache braeuchte eine eigene Veraltet-Erkennung.
+
+_BPM_STEP = 10
+_BPM_MIN, _BPM_MAX = 60, 200
+_ADDED_MONTHS = 24
+
+
+def _bucket(counter: dict, key) -> None:
+    counter[key] = counter.get(key, 0) + 1
+
+
+def library(cfg: dict, conn: sqlite3.Connection) -> dict:
+    """Kennzahlen und Verteilungen ueber den gesamten Bestand (Tabelle 'files').
+
+    Tracks ohne Wert zaehlen bei Verteilungen nicht mit, sondern stehen in
+    'missing' (Tag-Vollstaendigkeit) -- nichts wird geraten oder aufgefuellt.
+    """
+    rows = conn.execute(
+        "SELECT f.path, f.size, f.duration_s, f.codec_family, f.year, f.bpm, "
+        "f.key, f.genre, f.has_cover, f.album_artist, f.tag_issues, f.file_hash, "
+        "EXISTS(SELECT 1 FROM rekordbox r WHERE r.path = f.path) AS in_rb, "
+        "EXISTS(SELECT 1 FROM playlist_items p WHERE p.path = f.path) AS in_pl, "
+        "EXISTS(SELECT 1 FROM playlist_items p JOIN playlists l ON l.id = p.playlist_id "
+        "       WHERE p.path = f.path AND l.fav_slot IS NOT NULL) AS in_fav, "
+        "EXISTS(SELECT 1 FROM dup_dismissed d WHERE d.path = f.path) AS dup_ok, "
+        "EXISTS(SELECT 1 FROM ignored i WHERE i.path = f.path) AS is_ign, "
+        "EXISTS(SELECT 1 FROM corrected c WHERE c.path = f.path) AS is_cor "
+        "FROM files f").fetchall()
+
+    total = len(rows)
+    size_sum = 0
+    dur_sum = 0.0
+    dur_n = 0
+    formats: dict[str, dict] = {}
+    years: dict[int, int] = {}
+    bpm: dict[int, int] = {}
+    keys: dict[str, int] = {}
+    hashes: dict[str, int] = {}
+    missing = {"cover": 0, "genre": 0, "bpm": 0, "key": 0, "year": 0, "album_artist": 0}
+    cover = {"in_rekordbox": 0, "in_playlist": 0, "in_favorites": 0,
+             "no_playlist": 0, "ignored": 0, "corrected": 0}
+    tag_issue_tracks = 0
+
+    for r in rows:
+        size_sum += r["size"] or 0
+        if r["duration_s"]:
+            dur_sum += r["duration_s"]
+            dur_n += 1
+        ext = os.path.splitext(r["path"])[1].lower().lstrip(".") or "?"
+        fmt = formats.setdefault(ext, {"format": ext, "tracks": 0, "bytes": 0})
+        fmt["tracks"] += 1
+        fmt["bytes"] += r["size"] or 0
+
+        # Unplausible Jahre (z.B. 115 aus kaputtem Tag) zaehlen als "fehlt",
+        # sonst dehnen sie die Jahres-Achse ueber Jahrhunderte.
+        if r["year"] and 1900 <= r["year"] <= datetime.now().year + 1:
+            _bucket(years, int(r["year"]))
+        else:
+            missing["year"] += 1
+        if r["bpm"] and r["bpm"] > 0:
+            b = int(r["bpm"] // _BPM_STEP * _BPM_STEP)
+            _bucket(bpm, min(max(b, _BPM_MIN), _BPM_MAX))
+        else:
+            missing["bpm"] += 1
+        if r["key"]:
+            _bucket(keys, r["key"])
+        else:
+            missing["key"] += 1
+        if not r["has_cover"]:
+            missing["cover"] += 1
+        if not (r["genre"] or "").strip():
+            missing["genre"] += 1
+        if not (r["album_artist"] or "").strip():
+            missing["album_artist"] += 1
+
+        if r["file_hash"] and not r["dup_ok"]:
+            _bucket(hashes, r["file_hash"])
+        try:
+            if r["tag_issues"] and json.loads(r["tag_issues"]):
+                tag_issue_tracks += 1
+        except ValueError:
+            pass
+
+        cover["in_rekordbox"] += bool(r["in_rb"])
+        cover["in_playlist"] += bool(r["in_pl"])
+        cover["in_favorites"] += bool(r["in_fav"])
+        cover["no_playlist"] += not r["in_pl"]
+        cover["ignored"] += bool(r["is_ign"])
+        cover["corrected"] += bool(r["is_cor"])
+
+    dup_groups = [n for n in hashes.values() if n > 1]
+
+    # Zugaenge: nur Tracks mit Music.app-Eintrag -- alle anderen stehen in
+    # 'without_date', statt ihnen ein Datum zu unterstellen.
+    added_months: dict[str, int] = {}
+    added_years: dict[str, int] = {}
+    with_date = 0
+    for r in conn.execute(
+            "SELECT m.added_ts FROM music_added m "
+            "WHERE m.path IN (SELECT path FROM files) AND m.added_ts > 0"):
+        dt = datetime.fromtimestamp(r["added_ts"])
+        _bucket(added_months, f"{dt.year:04d}-{dt.month:02d}")
+        _bucket(added_years, str(dt.year))
+        with_date += 1
+    now = datetime.now()
+    month_axis = []
+    y, m = now.year, now.month
+    for _ in range(_ADDED_MONTHS):
+        month_axis.append(f"{y:04d}-{m:02d}")
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+    month_axis.reverse()
+
+    return {
+        "total": total,
+        "size_bytes": size_sum,
+        "duration_s": round(dur_sum),
+        "avg_duration_s": round(dur_sum / dur_n) if dur_n else 0,
+        "formats": sorted(formats.values(), key=lambda f: -f["tracks"]),
+        "years": [{"year": k, "tracks": v} for k, v in sorted(years.items())],
+        "bpm": [{"from": b, "tracks": bpm.get(b, 0)}
+                for b in range(_BPM_MIN, _BPM_MAX + 1, _BPM_STEP)],
+        "keys": keys,
+        "missing": missing,
+        "tag_issue_tracks": tag_issue_tracks,
+        "duplicates": {"groups": len(dup_groups), "tracks": sum(dup_groups)},
+        "coverage": cover,
+        "added": {
+            "months": [{"month": k, "tracks": added_months.get(k, 0)} for k in month_axis],
+            "years": [{"year": k, "tracks": v} for k, v in sorted(added_years.items())],
+            "with_date": with_date,
+            "without_date": total - with_date,
+        },
+    }

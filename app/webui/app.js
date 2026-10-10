@@ -12855,24 +12855,30 @@ function statsActionKey(action) {
 
 function statsBarChartSVG(values, opts) {
   opts = opts || {};
-  const w = 600, h = 160, pad = 4, barGap = 4, baseline = 20;
+  // Nur die Balken liegen im gestreckten SVG (preserveAspectRatio="none");
+  // die Beschriftung ist eine HTML-Zeile darunter, damit Schrift nicht
+  // verzerrt wird. Beide teilen sich n gleich breite Spalten.
+  const w = 600, h = 140, barGap = opts.barGap != null ? opts.barGap : 4;
   const n = values.length;
-  const barW = (w - pad * 2 - barGap * (n - 1)) / n;
+  const col = w / n;
+  const barW = Math.max(1, col - barGap);
   const max = Math.max(1, ...values);
-  const monthNames = [...Array(12)].map((_, i) =>
+  const labels = opts.labels || [...Array(12)].map((_, i) =>
     new Date(2000, i, 1).toLocaleDateString("de-DE", {month: "short"}));
+  const skip = opts.skip || 1;
   const bars = values.map((v, i) => {
-    const barH = v > 0 ? Math.max(2, Math.round((v / max) * (h - baseline - 16))) : 0;
-    const x = pad + i * (barW + barGap);
-    const y = h - baseline - barH;
+    const barH = v > 0 ? Math.max(2, Math.round((v / max) * (h - 4))) : 0;
+    const x = i * col + barGap / 2;
     const label = opts.fmt ? opts.fmt(v) : Math.round(v).toLocaleString("de-DE");
-    return `<g><title>${esc(monthNames[i])}: ${esc(label)}</title>` +
-      `<rect x="${x.toFixed(1)}" y="${y}" width="${barW.toFixed(1)}" height="${barH}" rx="2" ` +
-      `class="statschart-bar"></rect>` +
-      `<text x="${(x + barW / 2).toFixed(1)}" y="${h - 6}" text-anchor="middle" ` +
-      `class="statschart-label">${esc(monthNames[i])}</text></g>`;
+    const fill = opts.colors && opts.colors[i] ? ` style="fill:${opts.colors[i]}"` : "";
+    return `<g><title>${esc(labels[i])}: ${esc(label)}</title>` +
+      `<rect x="${x.toFixed(1)}" y="${h - barH}" width="${barW.toFixed(1)}" height="${barH}" rx="2" ` +
+      `class="statschart-bar"${fill}></rect></g>`;
   }).join("");
-  return `<svg class="statschart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}</svg>`;
+  const axis = labels.map((l, i) =>
+    `<span>${i % skip === 0 ? esc(l) : ""}</span>`).join("");
+  return `<svg class="statschart-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${bars}</svg>` +
+    `<div class="statschart-axis">${axis}</div>`;
 }
 
 function statsActionsListHTML(actions) {
@@ -12906,16 +12912,17 @@ function statsRankedList(items, field, opts) {
   const valueField = opts.valueField || "seconds";
   const fmt = opts.fmt || statsFmtDuration;
   if (!items.length) return `<div class="stats-empty">${esc(t("stats.no_data"))}</div>`;
-  const max = Math.max(1, ...items.map(it => it[valueField]));
+  const max = opts.max || Math.max(1, ...items.map(it => it[valueField]));
+  const show = opts.fmtItem || (it => fmt(it[valueField]));
   return `<div class="stats-rankedlist">` + items.map((it, i) => `
       <div class="stats-rankrow">
         <div class="stats-ranknum">${i + 1}</div>
         <div class="stats-rankbar-wrap">
           <div class="stats-rankname" title="${esc(it[field])}">${esc(it[field])}</div>
           <div class="stats-rankbar"><div class="stats-rankbar-fill" ` +
-          `style="width:${Math.round(it[valueField] / max * 100)}%"></div></div>
+          `style="width:${Math.min(100, Math.round(it[valueField] / max * 100))}%"></div></div>
         </div>
-        <div class="stats-rankvalue">${esc(fmt(it[valueField]))}</div>
+        <div class="stats-rankvalue">${esc(show(it))}</div>
       </div>`
   ).join("") + `</div>`;
 }
@@ -12937,7 +12944,142 @@ function renderStatsYearSelect() {
   sel.onchange = () => { statsYear = sel.value; renderStatsBody(); };
 }
 
+// Zwei Reiter: "usage" = Jahresstatistik (Nutzung, Hoerzeit), "library" =
+// Momentaufnahme des Bestands (/api/stats/library, ohne Jahr/Cache).
+let statsTab = "usage";
+let STATS_LIB = null;
+
 function renderStatsBody() {
+  document.querySelectorAll("#statsTabs button").forEach(b =>
+    b.classList.toggle("active", b.dataset.tab === statsTab));
+  const usage = statsTab === "usage";
+  document.getElementById("statsYearSelect").style.display = usage ? "" : "none";
+  document.getElementById("btnStatsRebuild").style.display = usage ? "" : "none";
+  if (usage) renderStatsUsage(); else renderStatsLibrary();
+}
+
+async function setStatsTab(tab) {
+  statsTab = tab;
+  if (tab === "library" && !STATS_LIB) {
+    const status = document.getElementById("statsStatus");
+    try {
+      const res = await fetch("/api/stats/library");
+      if (!res.ok) throw new Error(t("error.server_status", {status: res.status}));
+      STATS_LIB = await res.json();
+      status.textContent = "";
+    } catch (err) {
+      status.textContent = t("stats.load_failed", {error: err.message});
+      statsTab = "usage";
+    }
+  }
+  renderStatsBody();
+}
+
+function statsFmtBytes(n) {
+  const gb = n / 1e9;
+  return gb >= 1 ? `${gb.toLocaleString("de-DE", {maximumFractionDigits: 1})} GB`
+                 : `${Math.round(n / 1e6).toLocaleString("de-DE")} MB`;
+}
+
+function renderStatsLibrary() {
+  const body = document.getElementById("statsBody");
+  const L = STATS_LIB;
+  if (!L || !L.total) {
+    body.innerHTML = `<div class="stats-empty">${esc(t("stats.no_data"))}</div>`;
+    return;
+  }
+  const n = v => v.toLocaleString("de-DE");
+  const pct = (v, of) => of ? Math.round(v / of * 1000) / 10 : 0;
+  const kpi = (value, label) => `<div class="stats-kpi"><div class="stats-kpi-value">${esc(value)}</div>` +
+    `<div class="stats-kpi-label">${esc(label)}</div></div>`;
+  const avg = `${Math.floor(L.avg_duration_s / 60)}:${String(L.avg_duration_s % 60).padStart(2, "0")}`;
+
+  // Tonarten im Camelot-Rad (1A, 1B, 2A, ...), Farbe aus --key-*; Beschriftung
+  // in der eingestellten Schreibweise (keyLabel).
+  const keyOrder = [];
+  for (let i = 1; i <= 12; i++) keyOrder.push(i + "A", i + "B");
+  const keyVals = keyOrder.map(k => L.keys[k] || 0);
+  const keyColors = keyOrder.map(k => `var(--key-${k.toLowerCase()})`);
+
+  const miss = L.missing;
+  const complete = [
+    ["cover", "stats.lib_tag_cover"], ["genre", "stats.lib_tag_genre"], ["bpm", "stats.lib_tag_bpm"],
+    ["key", "stats.lib_tag_key"], ["year", "stats.lib_tag_year"], ["album_artist", "stats.lib_tag_album_artist"],
+  ].map(([k, label]) => ({name: t(label), pct: pct(L.total - miss[k], L.total), missing: miss[k]}));
+
+  const cov = L.coverage;
+  const coverage = [
+    ["stats.lib_cov_rekordbox", cov.in_rekordbox, REKORDBOX_NAME],
+    ["stats.lib_cov_playlist", cov.in_playlist, true],
+    ["stats.lib_cov_favorites", cov.in_favorites, true],
+    ["stats.lib_cov_corrected", cov.corrected, true],
+    ["stats.lib_cov_ignored", cov.ignored, true],
+  ].filter(c => c[2]).map(([label, count]) => ({name: t(label), count, pct: pct(count, L.total)}));
+
+  const added = L.added;
+  const addedLabels = added.months.map(m => m.month.slice(5) + "/" + m.month.slice(2, 4));
+  const yearsLabels = L.years.map(y => String(y.year));
+
+  body.innerHTML = `
+    <div class="stats-kpis">
+      ${kpi(n(L.total), t("stats.lib_tracks"))}
+      ${kpi(statsFmtDuration(L.duration_s), t("stats.lib_duration"))}
+      ${kpi(statsFmtBytes(L.size_bytes), t("stats.lib_size"))}
+      ${kpi(avg + " min", t("stats.lib_avg"))}
+    </div>
+    <div class="stats-columns">
+      <div class="stats-section">
+        <h4>${esc(t("stats.lib_formats_title"))}</h4>
+        ${statsRankedList(L.formats, "format", {valueField: "tracks",
+          fmtItem: it => `${n(it.tracks)} · ${statsFmtBytes(it.bytes)}`})}
+      </div>
+      <div class="stats-section">
+        <h4>${esc(t("stats.lib_tags_title"))}</h4>
+        ${statsRankedList(complete, "name", {valueField: "pct", max: 100,
+          fmtItem: it => `${it.pct.toLocaleString("de-DE")} % · ${t("stats.lib_missing", {count: n(it.missing)})}`})}
+      </div>
+    </div>
+    <div class="stats-charts">
+      <div class="stats-chartbox">
+        <h4>${esc(t("stats.lib_years_title"))}</h4>
+        ${L.years.length ? statsBarChartSVG(L.years.map(y => y.tracks), {labels: yearsLabels, skip: Math.ceil(L.years.length / 12), barGap: 2})
+                         : `<div class="stats-empty">${esc(t("stats.no_data"))}</div>`}
+      </div>
+      <div class="stats-chartbox">
+        <h4>${esc(t("stats.lib_bpm_title"))}</h4>
+        ${statsBarChartSVG(L.bpm.map(b => b.tracks), {labels: L.bpm.map(b => String(b.from)), barGap: 2})}
+      </div>
+      <div class="stats-chartbox">
+        <h4>${esc(t("stats.lib_keys_title"))}</h4>
+        ${statsBarChartSVG(keyVals, {labels: keyOrder.map(k => keyLabel(k)), colors: keyColors, skip: 2, barGap: 2})}
+      </div>
+      <div class="stats-chartbox">
+        <h4>${esc(t("stats.lib_added_title"))}</h4>
+        ${statsBarChartSVG(added.months.map(m => m.tracks), {labels: addedLabels, skip: 3, barGap: 2})}
+      </div>
+    </div>
+    <div class="stats-section">
+      <h4>${esc(t("stats.lib_added_years_title"))}</h4>
+      ${statsRankedList(added.years.slice().reverse(), "year", {valueField: "tracks", fmt: n})}
+      ${added.without_date ? `<div class="stats-note">${esc(t("stats.lib_added_nodate", {count: n(added.without_date)}))}</div>` : ""}
+    </div>
+    <div class="stats-columns">
+      <div class="stats-section">
+        <h4>${esc(t("stats.lib_coverage_title"))}</h4>
+        ${statsRankedList(coverage, "name", {valueField: "pct", max: 100,
+          fmtItem: it => `${n(it.count)} · ${it.pct.toLocaleString("de-DE")} %`})}
+      </div>
+      <div class="stats-section">
+        <h4>${esc(t("stats.lib_care_title"))}</h4>
+        <table class="stats-actiontable"><tbody>
+          <tr><td>${esc(t("stats.lib_care_issues"))}</td><td class="stats-actioncount">${n(L.tag_issue_tracks)}</td></tr>
+          <tr><td>${esc(t("stats.lib_care_dupes"))}</td><td class="stats-actioncount">${n(L.duplicates.groups)} (${n(L.duplicates.tracks)})</td></tr>
+        </tbody></table>
+      </div>
+    </div>`;
+}
+
+function renderStatsUsage() {
   const body = document.getElementById("statsBody");
   const year = STATS.years[statsYear];
   if (!year) {
@@ -13039,6 +13181,10 @@ async function openStats() {
   document.getElementById("statsOverlay").style.display = "flex";
   document.getElementById("btnCloseStats").onclick = closeStats;
   document.onkeydown = e => { if (e.key === "Escape") closeStats(); };
+  document.querySelectorAll("#statsTabs button").forEach(b => { b.onclick = () => setStatsTab(b.dataset.tab); });
+  // Bibliotheksdaten sind eine Momentaufnahme: bei jedem Oeffnen neu holen.
+  STATS_LIB = null;
+  statsTab = "usage";
   renderStatsYearSelect();
   renderStatsBody();
 }

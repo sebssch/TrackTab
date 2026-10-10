@@ -29,6 +29,7 @@ from . import config as cfgmod
 from . import db as db_mod
 from . import jobs
 from . import loudness as loudness_mod
+from . import stats as stats_mod
 from . import taganomaly as taganomaly_mod
 from .analyzer import analyse_file
 
@@ -220,9 +221,57 @@ def _print_summary(conn) -> None:
         console.print(f"[dim]{s['errors']} Dateien konnten nicht analysiert werden[/dim]")
 
 
+def _fmt_hours(seconds: float) -> str:
+    h = seconds / 3600
+    return f"{h / 24:.1f} Tage" if h >= 48 else f"{h:.1f} Std."
+
+
+def _print_library(lib: dict) -> None:
+    total = max(lib["total"], 1)
+    gb = lib["size_bytes"] / 1e9
+    console.print(f"\n[bold]Bestand[/bold]: {lib['total']:,} Tracks · "
+                  f"{_fmt_hours(lib['duration_s'])} Spielzeit · {gb:,.1f} GB · "
+                  f"Ø {lib['avg_duration_s'] // 60}:{lib['avg_duration_s'] % 60:02d} min")
+
+    fmt = Table(title="Formate")
+    fmt.add_column("Format")
+    fmt.add_column("Tracks", justify="right")
+    fmt.add_column("Speicher", justify="right")
+    for f in lib["formats"]:
+        fmt.add_row(f["format"], f"{f['tracks']:,}", f"{f['bytes'] / 1e9:,.1f} GB")
+    console.print(fmt)
+
+    miss = Table(title="Fehlende Tags")
+    miss.add_column("Feld")
+    miss.add_column("Tracks", justify="right")
+    miss.add_column("Anteil", justify="right")
+    labels = {"cover": "Cover", "genre": "Genre", "bpm": "BPM", "key": "Tonart",
+              "year": "Jahr", "album_artist": "Albuminterpret"}
+    for key, label in labels.items():
+        n = lib["missing"][key]
+        miss.add_row(label, f"{n:,}", f"{100.0 * n / total:.1f} %")
+    console.print(miss)
+    console.print(f"Tracks mit Tag-Auffälligkeiten: {lib['tag_issue_tracks']:,} · "
+                  f"Duplikat-Gruppen: {lib['duplicates']['groups']:,} "
+                  f"({lib['duplicates']['tracks']:,} Tracks)")
+
+    cov = lib["coverage"]
+    console.print(f"In Rekordbox: {cov['in_rekordbox']:,} · in Playlisten: {cov['in_playlist']:,} · "
+                  f"in Merklisten: {cov['in_favorites']:,} · ausgeblendet: {cov['ignored']:,} · "
+                  f"korrigiert: {cov['corrected']:,}")
+    added = lib["added"]
+    if added["years"]:
+        parts = " · ".join(f"{y['year']}: {y['tracks']:,}" for y in added["years"])
+        console.print(f"Zugänge pro Jahr (Music.app): {parts}")
+    if added["without_date"]:
+        console.print(f"[dim]{added['without_date']:,} Tracks ohne Music.app-Datum[/dim]")
+
+
 def cmd_stats(args) -> int:
-    conn = db_mod.connect(cfgmod.load())
+    cfg = cfgmod.load()
+    conn = db_mod.connect(cfg)
     _print_summary(conn)
+    _print_library(stats_mod.library(cfg, conn))
     return 0
 
 

@@ -1076,6 +1076,7 @@ Hängt an jeder Antwort, auch an den von Hand gebauten (Audio-Range-Streaming, Z
 | `/api/reclassify` | Neubewertung ohne Neuanalyse |
 | `/api/scan` / `/api/scan/cancel` | Hintergrund-Scan starten/abbrechen |
 | `/api/quit` | Server geordnet beenden (Knopf **Beenden**). Läuft ein Scan, antwortet er `409` mit `scan_running: true`, damit der Client nachfragen kann; `{"force": true}` bricht den Scan ab und beendet trotzdem |
+| `/api/stats/library` | Bibliotheks-Kennzahlen (Bestand, Tag-Vollständigkeit, Zugänge, Abdeckung) aus `stats.library()`, ungecacht, bei jedem Öffnen des Reiters „Bibliothek“ frisch |
 | `/api/stats/rebuild` | Erzwingt den Statistik-Neubau unabhängig vom Staleness-Vergleich (Knopf „Neu berechnen" im Statistik-Dialog) |
 | `/api/rekordbox-sync` | Voller Abgleich gegen Rekordbox' Sammlung (`db.sync_rekordbox_presence`); ein Fehlschlag laesst den zuletzt bekannten Stand stehen |
 | `/api/music-added-sync` | Voller Abgleich gegen Music.app (`media.music_added_dates()` + `db.sync_music_added`); dieselbe Fehlschlag-Absicherung wie beim Rekordbox-Abgleich |
@@ -1477,6 +1478,7 @@ Jahres-/Monats-Statistik aus dem Änderungsprotokoll + der `events`-Tabelle, sie
 |---|---|
 | `stats_path(cfg=None)` | `cfgmod.resolve(cfg["stats_path"])`, analog `report_path`/`csv_path` |
 | `is_stale(cfg, conn)` | Vergleicht die jüngste Log-Datei-`mtime` und `MAX(events.ts)` gegen die in `stats.json` gespeicherten `covers_through`-Werte; `True` bei fehlender/kaputter Datei |
+| `library(cfg, conn)` | Bibliotheks-Momentaufnahme für den Reiter „Bibliothek“: ein Durchlauf über `files` mit `EXISTS`-Unterabfragen auf `rekordbox`/`playlist_items`/`playlists.fav_slot`/`dup_dismissed`/`ignored`/`corrected`, dazu `music_added` für die Zugänge (nur Tracks mit Datum, der Rest steht in `added.without_date`). Kein `stats.json`-Cache und kein `self.lock` — an ~11k Zeilen Millisekunden (`GET /api/stats/library`) |
 | `_iter_log_actions(cfg)` | `(jahr, monat_0basiert, action)` je Log-Zeile — Datum aus dem Dateinamen, nicht aus dem Zeileninhalt; kaputte Zeilen werden einzeln übersprungen |
 | `_iter_play_events(conn)` | `(jahr, monat_0basiert, path, duration_s)` je `events`-Zeile mit `kind = "play"` |
 | `_aggregate(cfg, conn)` | Ein Durchlauf je Quelle → `{jahr: {...}}` plus die Rohliste `(path, duration_s)` je Jahr für `_top_tracks()`/`_top_grouped()` |
