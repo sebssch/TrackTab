@@ -305,8 +305,15 @@ def is_stale(cfg: dict) -> bool:
     report = cfgmod.resolve(cfg["report_path"])
     try:
         baked = report.stat().st_mtime
+        with open(report, "r", encoding="utf-8", errors="replace") as fh:
+            head = fh.read(4096)
     except OSError:
         return True                        # gar keiner da -> auf jeden Fall bauen
+    # Andere Version (auch eine reine Versionsaenderung ohne neue
+    # Oberflaechen-Dateien): die Nummer im Footer ist eingebacken und waere
+    # sonst veraltet. Reports ohne Marke stammen aus einer Version vor 1.9.0.
+    if _version_marker() not in head:
+        return True
     ui = cfgmod.webui_dir()
     for name in _UI_FILES:
         try:
@@ -343,4 +350,11 @@ def _template() -> str:
     html = html.replace("<!--__JS__-->", i18n_de + "\n" + i18n_en + "\n" + lucide_js + "\n"
                         + app_js + "\n" + gen_js)
     html = html.replace("<!--__VERSION__-->", f"v{__version__}")
+    # Versionsmarke direkt hinter <head> -- is_stale() liest nur den Anfang
+    # der Datei und erkennt daran einen Report aus einer anderen Version.
+    html = html.replace("<head>", f"<head>\n{_version_marker()}", 1)
     return html
+
+
+def _version_marker() -> str:
+    return f'<meta name="tracktab-version" content="{__version__}">'
