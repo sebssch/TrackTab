@@ -960,6 +960,11 @@ button.act.small { padding:3px 9px; font-size:12px; }
 /* Buchstaben-Index: Leiste klebt oben im Scrollbereich, je Buchstabe ein
    Abschnitt mit grossem Buchstaben links und mehrspaltigem Chip-Fluss. */
 .genrebox-bubbles { display:block; position:relative; }
+/* Auffaelligkeiten haben keinen Buchstaben-Index, ihre Bubbles stehen direkt
+   in der Reihe -- ohne eigenes Flex (das display:block oben schlaegt
+   .chipsrow) klebten sie ohne Abstand aneinander. Die Tags-Reihe braucht das
+   nicht, .tagbubble bringt ihren Abstand per margin selbst mit. */
+#plHeadIssueBubblesRow { display:flex; flex-wrap:wrap; gap:6px; }
 .azbar { position:sticky; top:0; z-index:1; display:flex; flex-wrap:wrap; gap:2px;
          background:var(--bg); padding:4px 0 6px; margin-bottom:14px; }
 .azbtn { min-width:22px; padding:2px 5px; border:none; border-radius:6px; background:none;

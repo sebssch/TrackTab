@@ -96,12 +96,15 @@ function genResample(cfg, n) {
 }
 
 // Ausgangszustand eines neuen Generators (createPlaylistNode() in app.js).
+// v 2: Ausgeblendete Tracks sind ueber den Schalter der erweiterten Suche
+// ausgeschlossen ("/No /Ausgeblendet") statt fest in genPool() -- so laesst
+// sich die Vorgabe abwaehlen.
 function genDefaultConfig() {
   const cfg = {
-    v: 1, preset: "balanced", slots: [],
+    v: 2, preset: "balanced", slots: [],
     // Liederpool: Suchabfrage mit derselben Syntax wie die Suchleiste
     // (/Genre, /BPM, /Add 30d, ...), dazu optional eine Quell-Playlist.
-    query: "", filters: {source: null},
+    query: genHiddenDefault(""), filters: {source: null},
     gates: {bpm: "3", half: true, key: "loose"},
     knobs: genDefaultKnobs(), mode: "lean", cohesion: 0.5,
   };
@@ -122,6 +125,10 @@ function genParseConfig(node) {
   // Aeltere Generatoren hatten eigene Filterfelder (Genre, BPM, Hinzugefuegt)
   // statt der Suchabfrage -- einmalig in eine gleichwertige Abfrage umsetzen.
   cfg.query = typeof raw.query === "string" ? raw.query : genLegacyQuery(raw.filters || {});
+  // Vor v 2 schloss genPool() ausgeblendete Tracks fest aus -- einmalig als
+  // Ausdruck in die Abfrage uebernehmen, danach entscheidet allein der Schalter.
+  if (!(raw.v >= 2)) cfg.query = genHiddenDefault(cfg.query);
+  cfg.v = 2;
   cfg.filters = {source: (raw.filters && raw.filters.source) || null};
   cfg.gates = {...base.gates, ...(raw.gates || {})};
   cfg.knobs = (raw.knobs && typeof raw.knobs === "object") ? {...raw.knobs} : base.knobs;
@@ -130,6 +137,14 @@ function genParseConfig(node) {
   })) : base.slots;
   cfg.cohesion = Math.min(1, Math.max(0, Number(cfg.cohesion) || 0));
   return cfg;
+}
+
+// "/No /Ausgeblendet" anhaengen, sofern die Abfrage den Schalter noch nicht
+// setzt (weder "ja" noch "nein").
+function genHiddenDefault(query) {
+  const def = ADV_BY_KEY.ig;
+  const {filters} = parseSearchQuery(String(query || "").toLowerCase());
+  return filters.some(f => advMatches(def, f)) ? query : advApplyField(query || "", def, "no");
 }
 
 // Frueheres Filterformat {genres, bpm: [lo, hi], added: "7d"} -> Suchabfrage.
@@ -232,6 +247,8 @@ function genAnalysed(r) {
 // den Stimmungen. Die Abfrage einmal parsen, nicht je Zeile -- der Cache von
 // parseSearchQuery() haelt nur die zuletzt geparste, und das ist meist die
 // der Suchleiste. Die Standard-Suchfilter der Suchleiste gelten hier nicht.
+// Ausgeblendete Tracks regelt allein die Abfrage (Schalter "Ausgeblendet" der
+// erweiterten Suche); die Vorgabe "nein" setzt genHiddenDefault().
 function genPool(cfg) {
   const f = cfg.filters;
   let src = null;
@@ -248,7 +265,7 @@ function genPool(cfg) {
     }
   }
   return DATA.filter(r => {
-    if (!genAnalysed(r) || r.ig) return false;
+    if (!genAnalysed(r)) return false;
     if (src && !src.has(r.p)) return false;
     if (parsed && !matchesParsedQuery(r, parsed)) return false;
     if (must.length || mustNot.length) {
@@ -610,7 +627,7 @@ function genSettingsHtml() {
         </select>
       </label>
     </div>
-    ${GEN_ADV_OPEN ? `<div class="advsearch genadv" id="genAdv">${advPanelHtml("gen", ["ig"])}</div>` : ""}
+    ${GEN_ADV_OPEN ? `<div class="advsearch genadv" id="genAdv">${advPanelHtml("gen")}</div>` : ""}
     <div class="gengates">
       <div class="gensection">${esc(t("gen.gates"))}</div>
       <div class="genfilters">

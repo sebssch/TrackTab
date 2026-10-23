@@ -361,7 +361,7 @@ Der Playlist-Generator baut dir ein Set entlang einer **Energiekurve**. Du legst
 Wählst du einen Generator aus, siehst du statt der Tabelle:
 
 - **Einstellungen** (einklappbar):
-  - **Liederpool:** aus welchen Tracks der Generator wählt. Du schreibst ihn wie eine Suche in der Suchleiste, z. B. `/Genre House /BPM 120-128 /Add 30d` (siehe [Suchen und filtern](#suchen-und-filtern)). Über **Erweitert** klappst du dieselben Parameter als Eingabefelder auf. Darunter steht, wie viele Tracks gerade im Pool sind.
+  - **Liederpool:** aus welchen Tracks der Generator wählt. Du schreibst ihn wie eine Suche in der Suchleiste, z. B. `/Genre House /BPM 120-128 /Add 30d` (siehe [Suchen und filtern](#suchen-und-filtern)). Über **Erweitert** klappst du dieselben Parameter als Eingabefelder auf. Ausgeblendete Tracks bleiben standardmäßig draußen (`/No /Ausgeblendet`, unter **Ausgeblendet** steht „nein“) — mit „egal“ zählen sie mit, mit „ja“ wählt der Generator nur aus ihnen. Darunter steht, wie viele Tracks gerade im Pool sind.
   - **Quelle:** ganze Bibliothek oder eine deiner eigenen Playlisten. Die festen Prüflisten (Korrekt, Fake …) stehen hier bewusst nicht, dafür gibt es `/Status` im Liederpool.
   - **Übergänge** und **Stimmung** (siehe unten).
 - **Übergänge:** Regeln zum jeweils vorigen Track.

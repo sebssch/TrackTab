@@ -5,7 +5,11 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 
 ## [Unveröffentlicht]
 
+### Added
+- Playlist-Generator: Die erweiterte Suche des Liederpools hat jetzt den Schalter „Ausgeblendet“ (egal / ja / nein). Vorgabe ist „nein“ — ausgeblendete Tracks bleiben wie bisher draußen, lassen sich aber dazunehmen. Bestehende Generatoren werden beim Öffnen einmalig auf diese Vorgabe umgestellt.
+
 ### Fixed
+- Liste „Auffälligkeiten“: Die Bubbles im Listenkopf stehen wieder mit Abstand nebeneinander statt aneinanderzukleben.
 - Playlist-Generator: Die Waveform eines Slots zeigt für Tracks aus Rekordbox wieder die farbige RGB-Darstellung statt der grauen Hüllkurve (ohne Cue-Marker, die passen nicht in die Slot-Zeile).
 
 ### Changed
