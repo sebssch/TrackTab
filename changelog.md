@@ -3,6 +3,14 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [Unveröffentlicht]
+
+### Fixed
+- Playlist-Generator: Die Waveform eines Slots zeigt für Tracks aus Rekordbox wieder die farbige RGB-Darstellung statt der grauen Hüllkurve (ohne Cue-Marker, die passen nicht in die Slot-Zeile).
+
+### Changed
+- Graue Waveform etwas weniger geglättet (Stärke 0,6 statt 0,7), Transienten bleiben dadurch schärfer.
+
 ## [1.9.0] - 2026-10-23
 
 ### Added

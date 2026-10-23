@@ -11262,7 +11262,7 @@ function paintWaveEntry(entry) {
 // sonst sichtbar flacher. Gezeichnet als EIN Pfad mit Kurvenstuecken
 // (oben hin, gespiegelt zurueck), das "source-atop"-Einfaerben in
 // paintWaveEntry() wirkt darauf unveraendert.
-const WAVE_SMOOTH_SIGMA = 0.7;   // 3 (bei 2 px je Stuetzstelle), 1,5 und 0,8 waren zu weich
+const WAVE_SMOOTH_SIGMA = 0.6;   // 3 (bei 2 px je Stuetzstelle), 1,5, 0,8 und 0,7 waren zu weich
 function smoothedColumns(peaks, cols) {
   const n = peaks.length, raw = new Float32Array(cols);
   for (let x = 0; x < cols; x++) {

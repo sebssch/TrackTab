@@ -36,6 +36,9 @@ var GEN_ADV_OPEN;
 // die Liste wird bei jedem Abspielen/Umsortieren neu gebaut, ohne Cache
 // holte jeder Neuaufbau alle Waveforms erneut vom Server.
 var GEN_PEAKS;
+// Farbige Rekordbox-Waveform je Pfad (null = dort keine), gleicher Grund
+// wie GEN_PEAKS.
+var GEN_RBWAVE;
 // Slot-Nummer, die gerade gezogen wird (undefined/-1 = keiner).
 var GEN_DRAG_FROM;
 
@@ -824,6 +827,7 @@ function genPlay(i) {
 function genMountSlotWaves() {
   if (!GEN || !apiMode) return;
   if (!GEN_PEAKS) GEN_PEAKS = new Map();
+  if (!GEN_RBWAVE) GEN_RBWAVE = new Map();
   document.querySelectorAll("#genSlots canvas.genwave").forEach(canvas => {
     const i = Number(canvas.dataset.wave);
     const r = GEN.tracks[i];
@@ -842,6 +846,24 @@ function genMountSlotWaves() {
     else peaksForLibrary(r.p)
       .then(p => { GEN_PEAKS.set(r.p, p); setWaveData(entry, {peaks: p}); })
       .catch(() => setWaveData(entry, {peaks: []}));
+    // Farbige Waveform aus Rekordbox wie in der aufgeklappten Tabellenzeile
+    // (mountLibraryPlayer()), aber ohne Cues -- deren Faehnchen passen nicht
+    // in die 34 px hohe Slot-Zeile. Nur fuer Tracks, die laut Abgleich in
+    // Rekordbox liegen (r.rb), sonst eine Anfrage je Slot fuer nichts.
+    if (r.rb) {
+      if (GEN_RBWAVE.has(r.p)) {
+        const wf = GEN_RBWAVE.get(r.p);
+        if (wf) setWaveData(entry, {waveform: wf});
+      } else {
+        rekordboxExtrasFor(r.p)
+          .then(extras => {
+            const wf = (extras && extras.available && extras.waveform) || null;
+            GEN_RBWAVE.set(r.p, wf);
+            if (wf) setWaveData(entry, {waveform: wf});
+          })
+          .catch(() => {});
+      }
+    }
     canvas.onclick = ev => {
       ev.stopPropagation();
       const rect = canvas.getBoundingClientRect();
