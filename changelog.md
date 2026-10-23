@@ -3,16 +3,21 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
-## [Unveröffentlicht]
+## [1.9.1] - 2026-10-23
 
 ### Added
 - Playlist-Generator: Die erweiterte Suche des Liederpools hat jetzt den Schalter „Ausgeblendet“ (egal / ja / nein). Vorgabe ist „nein“ — ausgeblendete Tracks bleiben wie bisher draußen, lassen sich aber dazunehmen. Bestehende Generatoren werden beim Öffnen einmalig auf diese Vorgabe umgestellt.
+- Kopfzeile: Neue Kombi-Leiste neben „Beenden“ mit den Symbolen Datei öffnen, Statistik, Quellen und Einstellungen. „Quellen“ (Datenbank-Symbol) öffnet ein Menü mit Bibliothek scannen, Rekordbox abgleichen und Music.app abgleichen; ein Punkt am Symbol zeigt Handlungsbedarf (aktuell: für Rekordbox vorgemerkte Änderungen), im Menü ist der betroffene Eintrag markiert.
+- Einstellungen → Spaltenansichten: „Spaltenansicht der Einzelprüfung“. Die Einzelprüfung kann Reihenfolge, Sichtbarkeit und Breiten einer gespeicherten Ansicht übernehmen (Vorgabe: weiterhin eigene, unabhängige Spalten).
 
 ### Fixed
 - Liste „Auffälligkeiten“: Die Bubbles im Listenkopf stehen wieder mit Abstand nebeneinander statt aneinanderzukleben.
 - Playlist-Generator: Die Waveform eines Slots zeigt für Tracks aus Rekordbox wieder die farbige RGB-Darstellung statt der grauen Hüllkurve (ohne Cue-Marker, die passen nicht in die Slot-Zeile).
 
 ### Changed
+- Die Werkzeugleiste unter dem Titel entfällt: Scan und Abgleiche liegen im Quellen-Menü, die Statistik in der Kombi-Leiste. „Auto-Relocate“ und „Aus der Liste entfernen“ bleiben an ihrer Stelle und erscheinen nur bei fehlenden Dateien.
+- Die Einzelprüfung ist zunächst ausgeblendet und erscheint, sobald eine Datei über „Datei öffnen“ oder per Drag & Drop hinzukommt; „Liste leeren“ blendet sie wieder aus.
+- Der Laufstatus von Scan und Abgleichen steht jetzt unter „TrackTab“, mit breiterem Balken, hervorgehobener Phase und Prozentangabe.
 - Graue Waveform etwas weniger geglättet (Stärke 0,6 statt 0,7), Transienten bleiben dadurch schärfer.
 
 ## [1.9.0] - 2026-10-23

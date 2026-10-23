@@ -217,6 +217,8 @@ Für die verlässlichste Wiedergabe aller unterstützten Formate empfiehlt sich 
 
 ## Bibliothek scannen
 
+**Wo ist der Button?** Oben rechts neben „Einstellungen" sitzt eine kompakte Icon-Leiste mit drei Symbolen: **Statistik**, **Quellen** (Datenbank-Symbol) und **Datei öffnen**. „Quellen" öffnet ein Menü mit „Bibliothek scannen", „Rekordbox abgleichen" und „Music.app abgleichen" (die beiden letzten nur, wenn die jeweilige App in den Einstellungen gewählt ist). Ein roter Punkt am Symbol zeigt, dass eine Quelle Handlungsbedarf hat — im geöffneten Menü steht dann am betroffenen Eintrag eine Markierung (aktuell: für Rekordbox vorgemerkte Änderungen). Läuft ein Scan oder Abgleich, erscheint der Fortschritt unter dem Titel „TrackTab".
+
 **Scannen.** TrackTab durchsucht deine konfigurierten Musikordner und analysiert jede noch nicht bekannte oder seither geänderte Datei. Der Button „Bibliothek scannen" öffnet dafür die Scan-Optionen:
 
    ![Scan-Optionen-Dialog](docs/008-scan-bibliothek.png)
@@ -467,6 +469,8 @@ Jede Spalte lässt sich in der Breite ziehen und in der Reihenfolge verschieben 
 
 **Die Standard-Spaltenansicht** legst du unter *Einstellungen → Spaltenansichten* fest: eine der gespeicherten Ansichten gilt damit für jede Liste ohne eigene Einstellung. Dort lassen sich Ansichten auch umbenennen und löschen; eine gelöschte Ansicht nimmt die Listen mit, die sie verwendet haben — die fallen auf den Standard zurück, an den Spalten selbst ändert sich nichts.
 
+**Spaltenansicht der Einzelprüfung.** Im selben Einstellungsblock wählst du, welche gespeicherte Ansicht die Einzelprüfung verwendet. „Eigene Spalten der Einzelprüfung" (Vorgabe) heißt: die Einzelprüfung behält ihre unabhängige Spaltenkonfiguration. Ist eine Ansicht gewählt, gelten deren Reihenfolge, Sichtbarkeit und Breiten; Änderungen im Spalten-Menü der Einzelprüfung ändern dann die Ansicht selbst — und damit auch jede Liste, die sie nutzt.
+
 Ist dort keine Standard-Spaltenansicht gesetzt, gilt weiterhin das, was du zuletzt im Spalten-Menü eingestellt hast, ohne dass eine Ansicht geladen war — getrennt für Bearbeiten und Player (siehe oben). Sobald du eine gespeicherte Ansicht lädst, wirkt sie dagegen in beiden: sie ist nur ein Satz Spalten.
 
 **Achtung:** Solange eine gespeicherte Ansicht geladen ist, ändert jedes Häkchen, jeder Zug an einer Spaltenbreite und jedes Verschieben einer Überschrift **diese Ansicht** — und damit jede andere Liste, die sie ebenfalls verwendet.
@@ -660,10 +664,12 @@ Ein Schalter im Popup, „Originaldatei in den Papierkorb legen", bestimmt, was 
 
 ## Einzelprüfung von neuen Dateien (nicht in der Mediathek)
 
+Der Bereich „Einzelprüfungen" ist zunächst ausgeblendet. Er erscheint, sobald du eine Datei über das Symbol „Datei öffnen" in der Kopfzeile hinzufügst oder eine Datei auf die Seite ziehst, und verschwindet wieder mit „Liste leeren".
+
 Für eine Datei, die noch nicht in der Bibliothek liegt, gibt es zwei unterschiedliche Wege — beide landen **nicht** in der Datenbank und beeinflussen weder Statistik noch Export, unterscheiden sich aber deutlich im Funktionsumfang:
 
 - **Drag & Drop** — ziehst du eine Audiodatei auf die Seite, wird sie sofort gemessen und angezeigt: eine reine Schnellanalyse. In der Zeile stehen dafür nur eingeschränkte Aktionen zur Verfügung (Abspielen, Löschen, Shop-Suche).
-- **„Dateien öffnen"** — der Button über den Einzelprüfungen öffnet einen Dateiauswahl-Dialog. Nur auf diesem Weg erhältst du den vollen Funktionsumfang: Metadaten bearbeiten, neu messen, konvertieren, automatisch umbenennen und — über „In Music-Bibliothek importieren" — den Track anschließend in deine Music.app-Bibliothek aufnehmen (der Button erscheint nur, wenn die Music App in den Einstellungen ausgewählt ist); TrackTab übernimmt den neuen Speicherort automatisch.
+- **„Dateien öffnen"** — das Symbol „Datei öffnen" in der Kopfzeile (bzw. der Button im Bereich Einzelprüfungen) öffnet einen Dateiauswahl-Dialog. Nur auf diesem Weg erhältst du den vollen Funktionsumfang: Metadaten bearbeiten, neu messen, konvertieren, automatisch umbenennen und — über „In Music-Bibliothek importieren" — den Track anschließend in deine Music.app-Bibliothek aufnehmen (der Button erscheint nur, wenn die Music App in den Einstellungen ausgewählt ist); TrackTab übernimmt den neuen Speicherort automatisch.
 
 ![Einzelprüfung über „Dateien öffnen" mit vollem Funktionsumfang](docs/017-einzelpruefung.png)
 

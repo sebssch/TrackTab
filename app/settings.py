@@ -560,6 +560,7 @@ def describe() -> dict:
             "column_view_assign": cfgmod.load().get("column_view_assign", {}),
             "column_view_default": cfgmod.load().get("column_view_default", ""),
             "column_view_music_default": cfgmod.load().get("column_view_music_default", ""),
+            "column_view_drop": cfgmod.load().get("column_view_drop", ""),
             "drop_column_order": cfgmod.load().get("drop_column_order", []),
             "drop_hidden_columns": cfgmod.load().get("drop_hidden_columns", []),
             "drop_column_widths": cfgmod.load().get("drop_column_widths", {})}
@@ -1024,7 +1025,8 @@ def ensure_apple_music_column_view() -> None:
 
 
 def save_column_views(items: list, default_id: str | None = None,
-                       music_default_id: str | None = None) -> dict:
+                       music_default_id: str | None = None,
+                       drop_view_id: str | None = None) -> dict:
     """Schreibt die Spaltenansichten nach config.local.yaml, zusammen mit der
     Standard-Spaltenansicht (welche Ansicht jede Liste ohne eigene Zuordnung
     bekommt). Zuordnungen auf eine inzwischen geloeschte Ansicht fallen dabei
@@ -1053,12 +1055,19 @@ def save_column_views(items: list, default_id: str | None = None,
     music_default_id = str(music_default_id).strip()
     if music_default_id and music_default_id not in known:
         music_default_id = ""
+    if drop_view_id is None:
+        drop_view_id = str(stored.get("column_view_drop") or "")
+    drop_view_id = str(drop_view_id).strip()
+    if drop_view_id and drop_view_id not in known:
+        drop_view_id = ""
     _write_local({"column_views": clean, "column_view_assign": assign,
                   "column_view_default": default_id,
-                  "column_view_music_default": music_default_id})
+                  "column_view_music_default": music_default_id,
+                  "column_view_drop": drop_view_id})
     return {"column_views": clean, "column_view_assign": assign,
             "column_view_default": default_id,
-            "column_view_music_default": music_default_id}
+            "column_view_music_default": music_default_id,
+            "column_view_drop": drop_view_id}
 
 
 def save_column_assign(view_id: str, column_view_id: str) -> dict:

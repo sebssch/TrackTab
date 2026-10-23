@@ -361,6 +361,12 @@ def defaults() -> dict:
         # zuerst gegen diesen Wert aufgeloest. Leer = wie column_view_default.
         "column_view_music_default": "",
 
+        # Spaltenansicht der Einzelpruefungen (Id aus column_views). Leer = die
+        # eigene, unabhaengige Spaltenkonfiguration (drop_column_*). Gesetzt =
+        # die Einzelpruefung nutzt Reihenfolge/Sichtbarkeit/Breiten dieser
+        # Ansicht, jede Anpassung dort aendert die Ansicht selbst.
+        "column_view_drop": "",
+
         # Welche Spaltenansicht welche Liste bekommt: {view_id: column_view_id}.
         # 'view_id' ist die Kennung aus VIEWS in app.js ("all", "ignored",
         # "pl:<id>", "sm:<id>", "fl:list1", ...). Nicht eingetragene Listen
@@ -532,6 +538,8 @@ def _normalize_columns(cfg: dict) -> None:
         cfg["column_view_default"] = ""
     if not isinstance(cfg.get("column_view_music_default"), str):
         cfg["column_view_music_default"] = ""
+    if not isinstance(cfg.get("column_view_drop"), str):
+        cfg["column_view_drop"] = ""
 
     # Einzelpruefungen: flach, kein Ansicht-Split (siehe Kommentar bei den
     # Defaults oben).

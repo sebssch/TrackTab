@@ -4812,7 +4812,8 @@ class _Handler(BaseHTTPRequestHandler):
                     # Nicht mitgeschickt = unveraendert lassen (Spalten-Menue),
                     # mitgeschickt = setzen (Einstellungs-Dialog).
                     payload.get("default") if "default" in payload else None,
-                    payload.get("music_default") if "music_default" in payload else None)
+                    payload.get("music_default") if "music_default" in payload else None,
+                    payload.get("drop_view") if "drop_view" in payload else None)
         except ValueError as exc:
             self._fail(str(exc))
             return

@@ -491,6 +491,10 @@ let COLUMN_VIEW_DEFAULT = "";
 // bewusst keine eigene Zuordnung (siehe extSourceOfView()-Aufrufstellen),
 // brauchen also einen eigenen Vorgabe-Weg VOR der allgemeinen Standardansicht.
 let COLUMN_VIEW_MUSIC_DEFAULT = "";
+// Spaltenansicht der Einzelpruefungen (leer = eigene Konfiguration state.dropColumns).
+let COLUMN_VIEW_DROP = "";
+// Der Topf, der in den Einzelpruefungen tatsaechlich gilt.
+const dropColumnStore = () => columnViewById(COLUMN_VIEW_DROP) || state.dropColumns;
 
 const columnViewById = id => (id && COLUMN_VIEWS.find(v => v.id === id)) || null;
 // Nur die Zuordnung dieser einen Liste -- ohne Ruecksicht auf die
@@ -580,6 +584,7 @@ function saveFilters() {
       columnAssign: COLUMN_ASSIGN,
       columnViewDefault: COLUMN_VIEW_DEFAULT,
       columnViewMusicDefault: COLUMN_VIEW_MUSIC_DEFAULT,
+      columnViewDrop: COLUMN_VIEW_DROP,
       // Eigene Spaltenkonfiguration der Einzelprueflungen (state.dropColumns)
       // -- serverseitig die Wahrheit (siehe saveDropColumns()), hier nur die
       // Rueckfallebene wie bei columnsByLayout oben.
@@ -984,6 +989,9 @@ function loadFilters() {
     if (COLUMN_VIEWS.some(v => v.id === s.columnViewMusicDefault)) {
       COLUMN_VIEW_MUSIC_DEFAULT = s.columnViewMusicDefault;
     }
+    if (COLUMN_VIEWS.some(v => v.id === s.columnViewDrop)) {
+      COLUMN_VIEW_DROP = s.columnViewDrop;
+    }
     if (s.dropColumns && typeof s.dropColumns === "object") {
       if (Array.isArray(s.dropColumns.order) && s.dropColumns.order.length) {
         state.dropColumns.order = s.dropColumns.order;
@@ -1153,6 +1161,8 @@ const ICONS = {
   fileMusic: SVG(LUCIDE_ICONS["file-music"]),
   fileSearchCorner: SVG(LUCIDE_ICONS["file-search-corner"]),
   brushCleaning: SVG(LUCIDE_ICONS["brush-cleaning"]),
+  database: SVG(LUCIDE_ICONS["database"]),
+  chartColumn: SVG(LUCIDE_ICONS["chart-column"]),
   databaseArrowDown: SVG(LUCIDE_ICONS["database-arrow-down"]),
   databaseBackup: SVG(LUCIDE_ICONS["database-backup"]),
   bookDown: SVG(LUCIDE_ICONS["book-down"]),
@@ -3944,6 +3954,7 @@ async function initStorage() {
         // DAW-Knopf (siehe DAW_NAME).
         document.getElementById("btnRekordboxSync").style.display = REKORDBOX_NAME ? "" : "none";
         document.getElementById("btnMusicAddedSync").style.display = MUSIC_NAME ? "" : "none";
+        renderSourcesDot();
         REKORDBOX_PLAYLIST = s.values.rekordbox_playlist || "";
         RENAME_PATTERN = s.values.rename_pattern || "";
         REKORDBOX_QUALITY_CHECK = s.values.rekordbox_quality_check !== undefined
@@ -4571,7 +4582,8 @@ function renderColsMenu() {
 
 // Eigenes, schlankeres Spalten-Menue fuer die Einzelprueflungen -- keine
 // Ansicht-Auswahl/Speichern-Zeile wie bei renderColsMenu(), Drops sind keine
-// Liste, der sich eine benannte Spaltenansicht zuweisen liesse. Nur
+// Liste, der sich eine Zuordnung je Liste geben liesse (eine Ansicht fuer
+// ALLE Einzelpruefungen waehlt der Einstellungs-Dialog, COLUMN_VIEW_DROP). Nur
 // Checkboxen + Breiten/Reihenfolge zuruecksetzen, alles auf
 // state.dropColumns statt state.colOrder/hiddenCols/colWidths.
 function renderDropColsMenu() {
@@ -4587,24 +4599,25 @@ function renderDropColsMenu() {
   </div>
   <div class="colsrow">
     ${sortedCols.map(c => `
-      <label><input type="checkbox" data-dropcolkey="${c.key}" ${state.dropColumns.hidden.includes(c.key) ? "" : "checked"}>
+      <label><input type="checkbox" data-dropcolkey="${c.key}" ${dropColumnStore().hidden.includes(c.key) ? "" : "checked"}>
         ${esc(c.label)}</label>`).join("")}
   </div>`;
   menu.querySelectorAll("[data-dropcolkey]").forEach(cb => cb.onchange = () => {
     const k = cb.dataset.dropcolkey;
-    state.dropColumns.hidden = cb.checked
-      ? state.dropColumns.hidden.filter(x => x !== k)
-      : [...state.dropColumns.hidden, k];
+    const st = dropColumnStore();
+    st.hidden = cb.checked
+      ? st.hidden.filter(x => x !== k)
+      : [...st.hidden, k];
     saveDropColumns();
     renderDrops();
   });
   document.getElementById("dropColsReset").onclick = () => {
-    state.dropColumns.widths = {};
+    dropColumnStore().widths = {};
     saveDropColumns();
     renderDrops();
   };
   document.getElementById("dropColsOrderReset").onclick = () => {
-    state.dropColumns.order = OPTIONAL_COLUMNS.map(c => c.key);
+    dropColumnStore().order = OPTIONAL_COLUMNS.map(c => c.key);
     saveDropColumns();
     renderDrops();
   };
@@ -4651,6 +4664,7 @@ function postColumnViews() {
 function saveDropColumns() {
   saveFilters();
   if (!apiMode) return;
+  if (columnViewById(COLUMN_VIEW_DROP)) { postColumnViews(); return; }
   fetch("/api/drop-columns", {method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({order: state.dropColumns.order,
@@ -10186,11 +10200,13 @@ async function runOrphanCleanup(btn) {
 let colViewDraft = [];
 let colViewDefaultDraft = "";
 let colViewMusicDefaultDraft = "";
+let colViewDropDraft = "";
 
 function renderColumnViewsBlock() {
   colViewDraft = COLUMN_VIEWS.map(v => ({...v}));
   colViewDefaultDraft = COLUMN_VIEW_DEFAULT;
   colViewMusicDefaultDraft = COLUMN_VIEW_MUSIC_DEFAULT;
+  colViewDropDraft = COLUMN_VIEW_DROP;
   return `<div class="setgroup collapsed">
     <div class="sethead">
       <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.column_views_title"))}</b></div>
@@ -10207,6 +10223,11 @@ function renderColumnViewsBlock() {
           <label for="cvMusicDefault">${esc(t("settings.column_view_music_default_label"))}</label>
           <select id="cvMusicDefault"></select>
           <div class="sethelp">${esc(t("settings.column_view_music_default_help"))}</div>
+        </div></div>
+        <div class="setrow"><div class="setfield">
+          <label for="cvDrop">${esc(t("settings.column_view_drop_label"))}</label>
+          <select id="cvDrop"></select>
+          <div class="sethelp">${esc(t("settings.column_view_drop_help"))}</div>
         </div></div>
       </div>
       <div id="cvRows" style="margin-top:10px"></div>
@@ -10235,6 +10256,13 @@ function redrawColumnViewsBlock() {
     colViewDraft.map(v => `<option value="${esc(v.id)}"` +
       `${v.id === colViewMusicDefaultDraft ? " selected" : ""}>${esc(v.name)}</option>`).join("");
   selMusic.onchange = () => { colViewMusicDefaultDraft = selMusic.value; };
+
+  const selDrop = document.getElementById("cvDrop");
+  if (!colViewDraft.some(v => v.id === colViewDropDraft)) colViewDropDraft = "";
+  selDrop.innerHTML = `<option value="">${esc(t("cols.view_own"))}</option>` +
+    colViewDraft.map(v => `<option value="${esc(v.id)}"` +
+      `${v.id === colViewDropDraft ? " selected" : ""}>${esc(v.name)}</option>`).join("");
+  selDrop.onchange = () => { colViewDropDraft = selDrop.value; };
 
   const host = document.getElementById("cvRows");
   host.innerHTML = colViewDraft.length
@@ -10267,7 +10295,8 @@ async function saveColumnViewsFromSettings() {
     const res = await fetch("/api/column-views", {method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({column_views: colViewDraft, default: colViewDefaultDraft,
-                            music_default: colViewMusicDefaultDraft})});
+                            music_default: colViewMusicDefaultDraft,
+                            drop_view: colViewDropDraft})});
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
     adoptColumnViewsFromServer(data);
@@ -10276,6 +10305,8 @@ async function saveColumnViewsFromSettings() {
     // Eine geloeschte oder umbenannte Ansicht schlaegt sofort auf die
     // Tabelle durch -- der Server hat verwaiste Zuordnungen mit entfernt.
     repaintColumns();
+    renderDropColsMenu();
+    renderDrops();
   } catch (err) {
     st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
   }
@@ -10299,6 +10330,8 @@ function adoptColumnViewsFromServer(data) {
     ? data.column_view_default : "";
   COLUMN_VIEW_MUSIC_DEFAULT = COLUMN_VIEWS.some(v => v.id === data.column_view_music_default)
     ? data.column_view_music_default : "";
+  COLUMN_VIEW_DROP = COLUMN_VIEWS.some(v => v.id === data.column_view_drop)
+    ? data.column_view_drop : "";
   saveFilters();
 }
 
@@ -10862,6 +10895,16 @@ async function startScan(force, extra = {}) {
   }
 }
 
+// Laufstatus der Quellen-Aktionen (Rekordbox/Music-Abgleich) in derselben Zeile
+// unter dem Titel; ein Bibliotheks-Scan ueberschreibt sie (pollScan()).
+function sourceBusy(text) {
+  if (scanRunning) return;
+  scanLine(`<span class="bar indet"><i></i></span><span class="phase">${esc(text)}</span>`);
+}
+function sourceDone() {
+  if (!scanRunning) scanLine("");
+}
+
 function scanLine(html, warn) {
   const el = document.getElementById("scanLine");
   el.innerHTML = html;
@@ -10880,7 +10923,8 @@ async function pollScan() {
   if (s.running) {
     const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
     scanLine(`<span class="bar"><i style="width:${pct}%"></i></span>` +
-      `${esc(t("scan.status_line", {phase: s.phase, done: s.done.toLocaleString("de-DE"), total: s.total.toLocaleString("de-DE")}))} ` +
+      `<span class="phase">${esc(s.phase)}</span>` +
+      `<span class="nums">${esc(t("scan.progress_nums", {done: s.done.toLocaleString("de-DE"), total: s.total.toLocaleString("de-DE"), pct}))}</span>` +
       `<button class="act small" id="btnCancelScan">${esc(t("action.cancel"))}</button>`);
     const cb = document.getElementById("btnCancelScan");
     if (cb) cb.onclick = () => fetch("/api/scan/cancel", {method: "POST"});
@@ -12697,6 +12741,7 @@ async function analyseFile(file) {
 }
 
 async function handleDropped(fileList) {
+  setDropsVisible(true);
   const files = [...fileList].filter(f =>
     DROP_EXT.some(e => f.name.toLowerCase().endsWith(e)));
   const skipped = fileList.length - files.length;
@@ -12749,11 +12794,21 @@ function dropStatus(text, warn) {
 // renderDropColsMenu()).
 function dropVisibleCols() {
   // "#" ergibt nur in einer Playlist Sinn, Einzelpruefungen sind keine.
-  return state.dropColumns.order.filter(k => k !== "po" && !state.dropColumns.hidden.includes(k) && CELL_RENDERERS[k]);
+  const st = dropColumnStore();
+  return st.order.filter(k => k !== "po" && !st.hidden.includes(k) && CELL_RENDERERS[k]);
+}
+
+// Die Einzelpruefung ist standardmaessig ausgeblendet; sie erscheint, sobald
+// eine Datei ueber "Datei oeffnen" oder per Drag&Drop hinzukommt, und
+// verschwindet mit "Liste leeren" bzw. dem Entfernen des letzten Eintrags.
+function setDropsVisible(on) {
+  if (on) document.body.setAttribute("data-drops", "on");
+  else document.body.removeAttribute("data-drops");
 }
 
 function renderDrops() {
   lastDropSelPos = null;
+  if (drops.length) setDropsVisible(true);
   // Auswahl auf Zeilen begrenzen, die es noch gibt -- entfernte Eintraege
   // sollen nicht unsichtbar in dropSelected haengen bleiben.
   const alive = new Set(dropSelectable().map(r => r._id));
@@ -12778,10 +12833,10 @@ function renderDrops() {
     return;
   }
   const cols = dropVisibleCols();
-  const statusHidden = state.dropColumns.hidden.includes("v");
+  const statusHidden = dropColumnStore().hidden.includes("v");
   const colHead = cols.map(k => {
     const c = OPTIONAL_COLUMNS.find(c => c.key === k);
-    const w = state.dropColumns.widths[k] || DEFAULT_COL_WIDTHS[k];
+    const w = dropColumnStore().widths[k] || DEFAULT_COL_WIDTHS[k];
     return `<th${c.numeric ? ' class="num"' : ""} style="width:${w}px">${esc(c.label)}</th>`;
   }).join("");
 
@@ -13243,6 +13298,7 @@ function removeDrop(id, defer) {
   const key = r.blobUrl || r.p;
   const entry = players.get(key);
   if (entry) { entry.audio.pause(); players.delete(key); }
+  if (!drops.length) setDropsVisible(false);
   if (!defer) renderDrops();
 }
 
@@ -13310,8 +13366,10 @@ function initDropzone() {
     for (const r of drops) if (r.blobUrl) URL.revokeObjectURL(r.blobUrl);
     drops.length = 0;
     dropSelected.clear();
+    setDropsVisible(false);
     renderDrops();
   };
+  document.getElementById("btnOpenFile").onclick = () => document.getElementById("dropPick").click();
   // Ohne Server (Fallback) bleibt nur die Browser-Dateiauswahl -- die
   // verrät nie den echten Pfad (siehe handleDropped/analyseFile), Import in
   // die Music-Bibliothek geht dann nicht (r.nativePath bleibt unset). Läuft der
@@ -13326,6 +13384,7 @@ function initDropzone() {
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || t("error.unknown"));
       if (!data.cancelled && data.paths && data.paths.length) {
+        setDropsVisible(true);
         const total = data.paths.length;
         let ok = 0, failed = 0;
         const pt = progressToast(total > 1 ? t("drop.pick.progress", {done: 0, total}) : t("drop.pick.single"));
@@ -13641,8 +13700,35 @@ document.addEventListener("keydown", ev => {
 let RB_PENDING = 0;
 function renderRekordboxSyncButton() {
   const badge = RB_PENDING > 0 ? ` <span class="countbadge">${RB_PENDING}</span>` : "";
-  document.getElementById("btnRekordboxSync").innerHTML =
-    `<span class="btnicon">${ICONS.update}</span> ${esc(t("toolbar.rekordbox_sync"))}${badge}`;
+  const rb = document.getElementById("btnRekordboxSync");
+  rb.innerHTML = `<span class="btnicon">${ICONS.update}</span> ${esc(t("toolbar.rekordbox_sync"))}${badge}`;
+  rb.classList.toggle("attn", RB_PENDING > 0);
+  renderSourcesDot();
+}
+
+// Punkt am Quellen-Icon: nur wenn eine Quelle Handlungsbedarf hat (aktuell
+// Rekordbox mit vorgemerkten Aenderungen). Im geoeffneten Menue zeigt der
+// Eintrag selbst, welche Quelle gemeint ist (Badge bzw. .attn).
+function renderSourcesDot() {
+  const dot = document.getElementById("sourcesDot");
+  if (!dot) return;
+  const attn = RB_PENDING > 0 && !!REKORDBOX_NAME;
+  dot.hidden = !attn;
+  document.getElementById("btnSources").title = attn
+    ? t("sources.attention", {count: RB_PENDING}) : t("header.sources");
+}
+
+function toggleSourcesMenu(force) {
+  const menu = document.getElementById("sourcesMenu");
+  const btn = document.getElementById("btnSources");
+  const open = force === undefined ? !menu.classList.contains("show") : force;
+  menu.classList.toggle("show", open);
+  btn.classList.toggle("open", open);
+  btn.setAttribute("aria-expanded", open ? "true" : "false");
+  if (!open) return;
+  const b = btn.getBoundingClientRect();
+  menu.style.top = (b.bottom + 6) + "px";
+  menu.style.left = Math.max(8, Math.min(b.left, window.innerWidth - menu.offsetWidth - 8)) + "px";
 }
 async function refreshRekordboxPending() {
   try {
@@ -13659,6 +13745,9 @@ function applyToolbarLabels() {
     `<span class="btnicon-lg">${ICONS.save}</span> ${esc(t("action.save"))}`;
   document.getElementById("btnScan").innerHTML =
     `<span class="btnicon">${ICONS.listRestart}</span> ${esc(t("toolbar.scan"))}`;
+  document.getElementById("btnStats").innerHTML = ICONS.chartColumn;
+  document.getElementById("btnSources").innerHTML = `${ICONS.database}<span class="cbdot" id="sourcesDot" hidden></span>`;
+  document.getElementById("btnOpenFile").innerHTML = ICONS.folder;
   renderRekordboxSyncButton();
   document.getElementById("btnMusicAddedSync").innerHTML =
     `<span class="btnicon">${ICONS.update}</span> ${esc(t("toolbar.music_sync"))}`;
@@ -15053,25 +15142,33 @@ async function openRekordboxSyncFlow() {
   const choice = await askRekordboxSyncOptions();
   if (!choice || (!choice.presence && !choice.fixPaths && !choice.pending)) return;
   const btn = document.getElementById("btnRekordboxSync");
-  const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = t("sync.button_busy");
+  sourceBusy(t("sync.rekordbox.running"));
   try {
     if (choice.pending) await runRekordboxPendingApply();
     if (choice.presence) await runRekordboxPresenceSync();
     if (choice.fixPaths) await runRekordboxFixPathsFlow();
   } finally {
     btn.disabled = false;
+    sourceDone();
     renderRekordboxSyncButton();
   }
 }
 
-document.getElementById("btnRekordboxSync").onclick = () => openRekordboxSyncFlow();
+document.getElementById("btnRekordboxSync").onclick = () => { toggleSourcesMenu(false); openRekordboxSyncFlow(); };
+document.getElementById("btnSources").onclick = e => { e.stopPropagation(); toggleSourcesMenu(); };
+document.getElementById("sourcesMenu").addEventListener("click", e => {
+  if (e.target.closest("button")) toggleSourcesMenu(false);
+});
+document.addEventListener("click", e => {
+  if (!e.target.closest("#sourcesMenu")) toggleSourcesMenu(false);
+});
+document.addEventListener("keydown", e => { if (e.key === "Escape") toggleSourcesMenu(false); });
+window.addEventListener("resize", () => toggleSourcesMenu(false));
 document.getElementById("btnMusicAddedSync").onclick = async () => {
   const btn = document.getElementById("btnMusicAddedSync");
-  const orig = btn.innerHTML;
   btn.disabled = true;
-  btn.innerHTML = t("sync.button_busy");
+  sourceBusy(t("sync.music.running"));
   const pt = progressToast(t("sync.music.running"), {indeterminate: true});
   try {
     const res = await fetch("/api/music-added-sync", {method: "POST"});
@@ -15084,7 +15181,7 @@ document.getElementById("btnMusicAddedSync").onclick = async () => {
     pt.fail(t("sync.music.failed", {error: err.message}));
   }
   btn.disabled = false;
-  btn.innerHTML = orig;
+  sourceDone();
 };
 
 // ── Beenden ─────────────────────────────────────────────────────────────
