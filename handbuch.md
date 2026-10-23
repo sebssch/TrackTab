@@ -34,6 +34,7 @@ Andere Dokumente:
 - [Playlisten und Ordner](#playlisten-und-ordner)
 - [Playlisten "Merken"](#playlisten-merken)
 - [Smart Playlists](#smart-playlists)
+- [Playlist-Generator](#playlist-generator)
 - [Fremde Playlisten](#fremde-playlisten)
 - [Suchen und filtern](#suchen-und-filtern)
 - [Spalten anpassen](#spalten-anpassen)
@@ -127,7 +128,7 @@ Die zwölf Gruppen im Überblick:
 | **Bibliothek** | Musikordner, Dateiendungen, ausgeschlossene Ordner, Mindestdauer |
 | **Suche** | Tippfehler-Toleranz, Mindestzeichen für Autovervollständigung, Standard-Suchfilter (siehe [Suchen und filtern](#suchen-und-filtern)) |
 | **Darstellung** | Sprache, Farbschema, Schriftgröße, Designfarbe |
-| **BPM & Tonart** | Automatik für Einzelprüfungen, Längenlimit und – in den Abschnitten Tonart-Feld, BPM-Feld und Kommentar-Feld – was die Analyse in welches Feld schreibt. Im Abschnitt Tonart-Feld steht auch die Schreibweise der Tonart (Camelot, Open Key, Notennamen), siehe [Tonart](#tonart) |
+| **Analyse: BPM, Tonart, Genre & Stimmung** | Eine gemeinsame Gruppe für beide Analysen: Automatik für Einzelprüfungen (je Analyse), ein gemeinsames Längenlimit und – in den Abschnitten Tonart-Feld, BPM-Feld, Kommentar-Feld und Genre & Stimmung – was in welches Feld geschrieben wird. Im Abschnitt Tonart-Feld steht auch die Schreibweise der Tonart (Camelot, Open Key, Notennamen), siehe [Tonart](#tonart) und [Genre, Stimmung und Energie](#genre-stimmung-und-energie) |
 | **Spaltenansichten** | Standard-Spaltenansicht für Listen ohne eigene Zuordnung (siehe [Spalten anpassen](#spalten-anpassen)) |
 | **Rekordbox** | Rekordbox-App, Ziel-Playlist für den Schnellzugriff, Waveform-Stil (siehe [Bibliothek scannen](#bibliothek-scannen)) |
 | **Externe Programme** | Audio-Editor, DAW, Mixed In Key, Music App, AAC-Encoder (siehe [Die Buttonleiste](#die-buttonleiste)) |
@@ -353,6 +354,39 @@ In der Fußzeile schaltest du „Begrenzen auf“ ein und begrenzt die Liste auf
 
 Berechnet wird beim Start des Programms und jedes Mal, wenn du die Liste im Baum anklickst — nicht dauernd im Hintergrund.
 
+## Playlist-Generator
+
+Der Playlist-Generator baut dir ein Set entlang einer **Energiekurve**. Du legst ihn über das Kurven-Symbol oben im Listenbaum an (neben „Neue Smart Playlist“). Er erscheint dann wie eine Playlist im Baum. Jeder Generator merkt sich seine Einstellungen und Tracks, du kannst also mehrere anlegen, zum Beispiel „Warm-up Freitag“ und „Peak“.
+
+Wählst du einen Generator aus, siehst du statt der Tabelle:
+
+- **Einstellungen** (einklappbar):
+  - **Genre:** nur Tracks mit diesem Genre (mehrere möglich).
+  - **Quelle:** ganze Bibliothek oder eine deiner Playlisten.
+  - **BPM:** Bereich mit Minimum und Maximum.
+  - **Hinzugefügt:** nur Tracks, die in diesem Zeitraum zur Music.app-Mediathek kamen.
+- **Verlauf:** eine Vorlage für die Kurve (Ausgewogen, Warm-up, Energy Build, Peak Time, Welle, Cool-down) und die Zahl der **Slots**. Rechts daneben steht, wie viele Slots belegt sind.
+- **Übergänge:** Regeln zum jeweils vorigen Track.
+  - **BPM:** ±0, ±3 oder beliebig. Mit **½·2×** zählt halbes oder doppeltes Tempo als passend.
+  - **Tonart** auf dem Camelot-Rad:
+    - **Streng:** gleiche Tonart, ein Schritt weiter oder der Wechsel A↔B.
+    - **Locker:** erlaubt zusätzlich zwei Schritte und den Diagonalschritt.
+- **Stimmung:** Drehregler für Stimmungen wie Düster, Deep, Groovy, Melodisch, Euphorisch und Aggressiv. Weitere fügst du über **+ Regler** hinzu.
+  - Senkrecht ziehen stellt ein: nach oben „mehr“, nach unten „weniger“ bzw. „meiden“. Doppelklick setzt zurück.
+  - **Tendenz** gewichtet die Regler nur.
+  - **Muss passen** nimmt ausschließlich Tracks, bei denen jede aufgedrehte Stimmung erkannt wurde (und keine zugedrehte).
+  - **Kohäsion** hält aufeinanderfolgende Tracks stilistisch beieinander.
+- **Energiekurve:** Jeder Punkt ist ein Slot. Ziehst du einen Punkt nach oben oder unten, änderst du die Soll-Energie, die Vorlage heißt dann „Eigene Kurve“. Die hellblauen Punkte zeigen die tatsächliche Energie der eingesetzten Tracks.
+- **Slots:** die Tracks in ihrer Reihenfolge.
+  - Ein Klick spielt ab, die folgenden Slots kommen in die Warteschlange. Durch Ziehen sortierst du um. Ein Slot lässt sich auch auf eine andere Playlist im Baum ziehen.
+  - Das **Schloss** sperrt einen Track: Er bleibt beim Neu-Würfeln stehen.
+  - Je Slot kannst du **neu belegen**, aus **Alternativen** wählen, den Track herausnehmen oder den Slot löschen.
+  - Verletzt ein Übergang deine Regeln (etwa nach Umsortieren), steht dazwischen ein roter Hinweis wie „−34 BPM · Tonart-Clash“.
+
+Oben füllt **Füllen** nur die leeren Slots, **Neu würfeln** belegt alle nicht gesperrten Slots neu, und **Leeren** räumt sie. Über **M3U** exportierst du das Set. **Als Playlist speichern** legt eine normale Playlist mit der aktuellen Belegung an; sie ändert sich danach nicht mehr mit dem Generator. Im Menü „…“ am Baumeintrag stehen außerdem Warteschlange und Duplizieren.
+
+Der Generator nutzt nur Tracks mit einer Genre-/Stimmungsanalyse, denn er braucht ihre Energie und Stimmung. Oben steht, wie viele Tracks schon analysiert sind. Fehlen noch viele, startest du über „Bibliothek scannen“ einen Scan mit der Option „Genre, Stimmung & Energie“ (siehe [Genre, Stimmung und Energie](#genre-stimmung-und-energie)). Lässt sich ein Slot mit deinen Regeln nicht füllen, lockert der Generator für diesen einen Slot erst die Tonart-, dann die BPM-Regel und markiert den Übergang.
+
 ## Fremde Playlisten
 
 Klappst du **Music App** oder **Rekordbox** auf, liest TrackTab deren Playlisten-Baum. Ein Klick auf eine Liste zeigt ihre Tracks in genau der Reihenfolge, die dort gilt.
@@ -508,17 +542,32 @@ Welche Formate sich dabei tatsächlich hörbar abspielen lassen, hängt vom verw
 Die Spalte **Tonart** zeigt jede Tonart als farbige Bubble. Die Farben folgen dem Camelot-Rad von Mixed In Key: gleiche Tonart, gleiche Farbe — außen (Dur, kräftig) und innen (Moll, heller) je zwölf Töne. Passende Tonarten stehen auf dem Rad nebeneinander und haben damit auch ähnliche Farben.
 
 - **Woher sie kommt:** TrackTab liest die Tonart beim Scannen aus dem Datei-Tag „Initial Key“. Angezeigt wird ausschließlich, was in der Datei steht — Rekordbox spielt dafür keine Rolle, auch nicht als Ersatz.
-- **Schreibweise:** Unter ⚙ Einstellungen → BPM & Tonart → Tonart-Feld wählst du Camelot (`8A`), Open Key (`1m`) oder Notennamen (`Am`). Das gilt für die Tabelle, den Tags-Dialog, neu analysierte Tonarten, den in die Datei geschriebenen Wert und den Übertrag nach Rekordbox. Gelesen werden immer alle drei Schreibweisen; ein Wechsel der Einstellung ändert nur die Anzeige, die Dateien selbst bleiben zunächst unverändert (siehe „Tonart-Schreibweise angleichen“).
+- **Schreibweise:** Unter ⚙ Einstellungen → Analyse → Tonart-Feld wählst du Camelot (`8A`), Open Key (`1m`) oder Notennamen (`Am`). Das gilt für die Tabelle, den Tags-Dialog, neu analysierte Tonarten, den in die Datei geschriebenen Wert und den Übertrag nach Rekordbox. Gelesen werden immer alle drei Schreibweisen; ein Wechsel der Einstellung ändert nur die Anzeige, die Dateien selbst bleiben zunächst unverändert (siehe „Tonart-Schreibweise angleichen“).
 - **Gestrichelter Rahmen:** Unterscheidet sich der Wert in der Datei von der Darstellung in TrackTab (z. B. steht in der Datei `8A`, eingestellt ist Open Key), wird die Bubble mit einem gestrichelten Rahmen angezeigt. Der Hinweistext darüber nennt den Wert aus der Datei („In der Datei: 8A“). Speicherst du die Tonart im Tags-Dialog neu, wird sie in der gewählten Schreibweise geschrieben und der Rahmen verschwindet.
-- **Tonart-Schreibweise angleichen:** Nach einem Wechsel der Schreibweise tragen die Dateien die Tonart noch in der alten; die Tonart-Bubble bekommt dann einen gestrichelten Rahmen. Markiere die betroffenen Tracks und klicke in der Sammelleiste auf das Notenschlüssel-Symbol „Tonart-Schreibweise angleichen“ (bzw. wähle den Eintrag im Menü ⋮ einer Zeile): Die vorhandene Tonart wird in der gewählten Schreibweise in den Datei-Tag geschrieben, der Wert selbst bleibt. Das Symbol erscheint nur, wenn mindestens ein markierter Track abweicht, und gilt auch in den Einzelprüfungen. Unter ⚙ Einstellungen → BPM & Tonart → Tonart-Feld steht, wie viele Dateien der Bibliothek abweichen. Ein Knopf für die ganze Bibliothek ist bewusst nicht vorgesehen (bei vielen tausend Dateien dauert das sehr lange und wird selten gebraucht).
+- **Tonart-Schreibweise angleichen:** Nach einem Wechsel der Schreibweise tragen die Dateien die Tonart noch in der alten; die Tonart-Bubble bekommt dann einen gestrichelten Rahmen. Markiere die betroffenen Tracks und klicke in der Sammelleiste auf das Notenschlüssel-Symbol „Tonart-Schreibweise angleichen“ (bzw. wähle den Eintrag im Menü ⋮ einer Zeile): Die vorhandene Tonart wird in der gewählten Schreibweise in den Datei-Tag geschrieben, der Wert selbst bleibt. Das Symbol erscheint nur, wenn mindestens ein markierter Track abweicht, und gilt auch in den Einzelprüfungen. Unter ⚙ Einstellungen → Analyse → Tonart-Feld steht, wie viele Dateien der Bibliothek abweichen. Ein Knopf für die ganze Bibliothek ist bewusst nicht vorgesehen (bei vielen tausend Dateien dauert das sehr lange und wird selten gebraucht).
 - **Ändern:** im Tags-Dialog (Stift-Symbol), einzeln oder für mehrere Tracks zugleich. Tippen kannst du in jeder Schreibweise. Die Änderung steht danach in der Datei und in TrackTab.
 - **Sortieren und Suchen:** Die Spalte sortiert nach der Position auf dem Rad (1A, 1B, 2A …), Tracks ohne Tonart stehen immer am Ende. Suche: `/Key 8A`, `/Key Am` oder `/Key 8`.
-- **BPM und Tonart analysieren:** TrackTab kann Tempo und Tonart selbst aus dem Audio messen — ohne Mixed In Key und ohne Internet. Über das Menü ⋮ einer Zeile oder in der Sammelleiste über das Wellenform-Symbol „BPM/Tonart analysieren“ (immer sichtbar, sobald die Analyse verfügbar ist) wird die Analyse für die gewählten Tracks gestartet, in den Einzelprüfungen genauso; je Track dauert sie etwa 2–4 Sekunden. Neu hinzugefügte Dateien der Einzelprüfungen werden auf Wunsch automatisch analysiert (⚙ Einstellungen → BPM & Tonart → „Einzelprüfungen automatisch analysieren“). Dateien, die länger als die eingestellte Grenze sind (Standard 10 Minuten, z. B. DJ-Mixe), werden übersprungen. Welche Felder beschrieben werden, legst du in den drei Abschnitten dieser Einstellungsgruppe fest:
+- **BPM und Tonart analysieren:** TrackTab kann Tempo und Tonart selbst aus dem Audio messen — ohne Mixed In Key und ohne Internet. Über das Menü ⋮ einer Zeile oder in der Sammelleiste über das Wellenform-Symbol „BPM/Tonart analysieren“ (immer sichtbar, sobald die Analyse verfügbar ist) wird die Analyse für die gewählten Tracks gestartet, in den Einzelprüfungen genauso; je Track dauert sie etwa 2–4 Sekunden. Neu hinzugefügte Dateien der Einzelprüfungen werden auf Wunsch automatisch analysiert (⚙ Einstellungen → Analyse: BPM, Tonart, Genre & Stimmung → „Einzelprüfungen: BPM & Tonart automatisch“). Dateien, die länger als die eingestellte Grenze sind (Standard 10 Minuten, z. B. DJ-Mixe), werden übersprungen. Welche Felder beschrieben werden, legst du in den drei Abschnitten dieser Einstellungsgruppe fest:
   - **Tonart-Feld** und **BPM-Feld:** „In … schreiben“ mit **Ja** (überschreibt einen vorhandenen Wert), **Ja, nur wenn leer** (ein vorhandener Wert bleibt stehen) oder **Nein**. Die BPM werden als ganze Zahl gespeichert.
-  - **Kommentar-Feld:** „In Kommentar-Feld schreiben“: nichts, nur die Tonart (z. B. `10A`) oder Tonart und Tempo (z. B. `10A - 126`). Bei einem vorhandenen Kommentar wählst du „Nur wenn leer“, „Überschreiben“ oder „Voranstellen“ (getrennt durch ` - `).
+  - **Kommentar-Feld:** Ein gemeinsamer Eintrag für BPM-/Tonart- und Genre-/Stimmungs-Analyse. „In Kommentar-Feld schreiben“: nichts, Tonart (`10A`), Tonart und Tempo (`10A - 126`), Tonart, Tempo und Energie (`10A - 126 - E7`), Tonart und Energie (`10A - E7`) oder nur Energie (`E7`). Jede Analyse ergänzt die Werte, die sie misst, die übrigen kommen aus der Datei bzw. der letzten Analyse — der Eintrag sieht also immer gleich aus, egal welche Analyse zuletzt lief. Bei einem vorhandenen Kommentar wählst du „Nur wenn leer“, „Überschreiben“, „Voranstellen“ oder „Anhängen“ (getrennt durch ` - `); ein früherer eigener Eintrag — vorn oder hinten — zählt dabei als leer bzw. wird ersetzt, nie doppelt geschrieben.
   - Die Tonart steht überall in der Schreibweise, die du im Abschnitt Tonart-Feld gewählt hast (Camelot, Open Key oder Notennamen).
   - Die Messung ist eine Einschätzung, kein Urteil: Beim Tempo kommt gelegentlich die halbe oder doppelte BPM heraus, bei der Tonart manchmal die parallele Dur-/Moll-Tonart. Die Funktion ist nur auf Macs mit Apple Silicon verfügbar; auf anderen Macs erscheinen die Knöpfe nicht.
 - **Rekordbox:** Beim Übertragen **neuer** Tracks nach Rekordbox wird die Tonart mit gesetzt. Tracks, die schon in Rekordbox stehen, bleiben unberührt — Rekordbox kann ihre Daten über „Track-ID abrufen“ jederzeit selbst aus der Datei neu einlesen.
+
+## Genre, Stimmung und Energie
+
+TrackTab hört sich einen Track an und schätzt, welcher Stil er ist, welche Stimmung er hat und wie viel Energie er mitbringt — komplett auf deinem Mac, ohne Internet und ohne etwas hochzuladen. Grundlage sind die frei verfügbaren Musik-Modelle von Essentia (Music Technology Group, Universitat Pompeu Fabra Barcelona).
+
+- **Starten:** Über das Menü ⋮ einer Zeile oder in der Sammelleiste über das Symbol „Genre & Stimmung analysieren“, in den Einzelprüfungen genauso. Je Track dauert das etwa eine Sekunde.
+- **Ganze Bibliothek:** Im Dialog „Bibliothek scannen“ gibt es den Schalter „Genre, Stimmung & Energie“. Nach dem normalen Scan werden dann alle Tracks analysiert, die noch kein Ergebnis haben. Beim ersten Mal dauert das für eine große Bibliothek mehrere Stunden; du kannst jederzeit abbrechen, der nächste Scan macht beim Rest weiter. Dieser Weg speichert nur in TrackTab und schreibt nie in die Dateien — auch wenn die Schreib-Optionen unten eingeschaltet sind. Neu hinzugefügte Einzelprüfungen lassen sich automatisch analysieren (⚙ Einstellungen → Analyse: BPM, Tonart, Genre & Stimmung → „Einzelprüfungen: Genre & Stimmung automatisch“; läuft nach der BPM-/Tonart-Analyse). Dateien über der gemeinsamen Längengrenze (Standard 10 Minuten, z. B. DJ-Mixe) werden übersprungen.
+- **Genre-Vorschläge:** Klickst du im Tags-Dialog in das Genre-Feld, zeigt die Auswahlliste oben unter „Vorschläge“ bis zu fünf Treffer mit Wahrscheinlichkeit, z. B. „Electro House 69 %“. Darunter folgen alle Genres deiner Bibliothek (markiert mit „✓ in deiner Bibliothek“) und danach die übrigen rund 380 Stile, die die Erkennung kennt; Tippen filtert die Liste. Ein Klick setzt den Stil ins Feld, gespeichert wird wie immer mit „Speichern“. Wurde der Track noch nicht analysiert, startet der Knopf „Genre-Vorschläge ermitteln“ in der Liste die Analyse direkt. Schwache Treffer blendet die Einstellung „Genre-Vorschläge ab … %“ aus.
+- **Energie:** Spalte mit zehn Segmenten und einer Zahl von 1 (ruhig) bis 10 (treibend). Sie berücksichtigt Lautheit und den Charakter des Tracks, ist also eine Einschätzung zum Sortieren und Vorsortieren, keine Messgröße. Sortierbar und in der Suche als `/Energie 7` nutzbar.
+- **Stimmung:** Spalte mit farbigen Schildchen. Gefüllt: die fünf Grundstimmungen Aggressiv, Fröhlich, Party, Entspannt, Traurig — jede, die zutrifft. Umrandet: die zwei stärksten DJ-Stimmungen aus Energiegeladen, Groovy, Düster, Deep, Euphorisch, Melancholisch, Beschwingt, Episch, Melodisch, Sommerlich, Romantisch. Ein Track kann mehrere haben oder keine. Tracks, die vor den DJ-Stimmungen analysiert wurden, bekommen sie beim nächsten Bibliotheks-Scan mit eingeschaltetem Schalter „Genre, Stimmung & Energie“ oder per erneuter Analyse.
+- **Eigene Tags:** Im Tags-Dialog gibt es unter den Kommentaren das Feld „Eigene Tags“. Tippe einen Namen (z. B. „Warm-up“, „Peak Time“) und bestätige mit Enter oder Komma; bereits vergebene Tags werden vorgeschlagen, × entfernt einen Tag. Mit „Speichern“ werden sie übernommen. Bei mehreren markierten Tracks zeigt das Feld die Tags, die alle gemeinsam haben: Hinzufügen gibt einen Tag allen, Entfernen nimmt ihn allen weg. Eigene Tags stehen nur in TrackTab, nie in der Datei.
+- **Liste „Tags“:** Im Seitenbaum neben Genre, Album und Künstler. Oben im Listenkopf stehen alle Tags der Bibliothek als Bubbles mit Trackzahl — erkannte Stimmungen farbig, eigene Tags gestrichelt. Ein Klick filtert, mehrere gewählte Tags müssen alle zutreffen (z. B. „Party“ und „Deep“).
+- **Suchen:** `/Energie 8`, `/Energie >7` oder `/Energie 3-5` (Energie wie in der Spalte angezeigt, also gerundet); `/Stimmung Party` oder `/Tag Warm-up` für erkannte Stimmungen und eigene Tags — nach dem Parameter erscheinen alle vergebenen Tags als Auswahl. Mit `/No` davor ausschließen.
+- **In die Datei schreiben (optional):** Standardmäßig bleibt die Datei unberührt, die Ergebnisse stehen nur in TrackTab. Die Energie kann Teil des gemeinsamen Kommentar-Eintrags werden (⚙ Einstellungen → Analyse → Kommentar-Feld, z. B. `8A - 128 - E7`, so auch in Rekordbox sichtbar), die Stimmungen als Mood-Tag (Abschnitt Genre & Stimmung, z. B. „Party, Happy“). Das Genre selbst schreibt TrackTab nie ungefragt — dafür ist der Klick auf einen Vorschlag da.
+- **Gut zu wissen:** Die Modelle wurden an Discogs-Daten trainiert und kennen 400 Stile; bei Nischen-Genres oder Edits liegen sie auch mal daneben. Die Funktion ist nur auf Macs mit Apple Silicon ab macOS 14 verfügbar; sonst erscheinen die Knöpfe nicht. Die Modelle stehen unter der Lizenz CC BY-NC-SA 4.0 und dürfen nur nicht-kommerziell genutzt werden.
 
 ## Tags bearbeiten
 

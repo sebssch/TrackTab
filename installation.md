@@ -14,7 +14,7 @@ Die einfachste Variante: eine fertig gepackte App, kein Terminal nötig. Vorauss
 
 ffmpeg/ffprobe sind in dieser Variante bereits enthalten — im Gegensatz zu Abschnitt 2 muss nichts zusätzlich installiert werden.
 
-Die BPM-/Tonart-Analyse ist in der App enthalten (libsonare).
+Die BPM-/Tonart-Analyse ist in der App enthalten (libsonare), ebenso die Genre-/Stimmungs-Analyse samt Modellen (onnxruntime, Essentia-Modelle; benötigt macOS 14).
 
 ---
 
@@ -58,6 +58,7 @@ Nach einer neuen Version des Quellcodes einfach `./build_app.sh` erneut ausführ
 - Python 3.12 oder neuer
 - `ffmpeg`/`ffprobe` im PATH
 - Optional: `libsonare` für die BPM-/Tonart-Analyse (kommt über `requirements.txt` automatisch mit; das PyPI-Wheel gibt es nur für Apple Silicon — auf einem Intel-Mac läuft TrackTab ohne diese Funktion)
+- Optional: `onnxruntime` und die Essentia-Modelle für Genre, Stimmung und Energie. `onnxruntime` kommt über `requirements.txt` mit (nur Apple Silicon, macOS 14+), die Modelle (~21 MB) lädt einmalig `./fetch_models.sh` nach `vendor/models/essentia/`; `./build_app.sh` erledigt das selbst. Ohne beides läuft TrackTab ohne diese Funktion.
 - `osascript` (in macOS bereits enthalten; wird für Papierkorb, Finder-Integration, externe Programme und Dialoge genutzt)
 
 ### Einrichtung

@@ -42,6 +42,7 @@ from . import __version__
 from . import audit_log
 from . import backup as backup_mod
 from . import bpmkey as bpmkey_mod
+from . import genremood as genremood_mod
 from . import config as cfgmod
 from . import classify as classify_mod
 from . import convert as convert_mod
@@ -905,7 +906,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _mark_sets(conn) -> tuple:
-        """Die fuenf Markierungsmengen, die rows_to_payload() braucht.
+        """Die Markierungsmengen (plus Genre-/Stimmungs-Analysen), die
+        rows_to_payload() braucht.
 
         Jede davon liest ihre Tabelle vollstaendig -- zusammen an echtem
         Material rund 16.400 Zeilen (vor allem music_added und rekordbox).
@@ -914,7 +916,7 @@ class _Handler(BaseHTTPRequestHandler):
         """
         return (db_mod.ignored_paths(conn), db_mod.corrected_paths(conn),
                 db_mod.rekordbox_paths(conn), db_mod.music_added_map(conn),
-                db_mod.dup_dismissed_paths(conn))
+                db_mod.dup_dismissed_paths(conn), db_mod.genremood_map(conn))
 
     def _compact_rows(self, conn, cfg: dict, paths, marks: tuple | None = None) -> list:
         """Mehrere DB-Zeilen im kompakten Report-Format, positionsgleich zu
@@ -1013,6 +1015,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_check_update()
         elif route == "/api/ignored":
             self._get_ignored()
+        elif route == "/api/user-tags":
+            self._get_user_tags()
         elif route == "/api/corrected":
             self._get_corrected()
         elif route == "/api/dup-dismissed":
@@ -1112,6 +1116,64 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
         self._json({"ignored": paths})
+
+    def _get_user_tags(self) -> None:
+        with self.lock:
+            conn = db_mod.connect(cfgmod.load())
+            try:
+                tags = db_mod.user_tags_map(conn)
+            finally:
+                conn.close()
+        self._json({"ok": True, "tags": tags})
+
+    _USER_TAG_MAX = 60
+
+    @classmethod
+    def _clean_user_tags(cls, raw) -> list[str]:
+        """Freie Tag-Namen: getrimmt, Leerraum zusammengefasst, ohne Doppelte
+        (Gross/Klein egal), hoechstens _USER_TAG_MAX Zeichen."""
+        out, seen = [], set()
+        for item in raw or []:
+            tag = " ".join(str(item).split())[:cls._USER_TAG_MAX]
+            if tag and tag.casefold() not in seen:
+                seen.add(tag.casefold())
+                out.append(tag)
+        return out
+
+    def _post_user_tags(self) -> None:
+        """Eigene Tags setzen. {path, tags}: ersetzt die Tags eines Tracks
+        (Tags-Dialog). {paths, add, remove}: Sammelaktion, uebrige Tags
+        bleiben. Wie Merklisten reine Nutzer-Angabe in der DB, nie in der
+        Datei; erlaubt sind Bibliothekspfade und eigene Dateiauswahl
+        (_authorize_path). Antwort: alle Tags (wie GET), der Client uebernimmt
+        sie komplett."""
+        try:
+            payload = json.loads(self._body(1_000_000).decode("utf-8"))
+            single = "path" in payload
+            paths = [str(payload["path"])] if single else [str(p) for p in payload["paths"]]
+            tags = self._clean_user_tags(payload.get("tags") if single else payload.get("add"))
+            remove = [] if single else self._clean_user_tags(payload.get("remove"))
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        for p in paths:
+            if not self._authorize_path(p)[1]:
+                self._fail("Unbekannter Pfad")
+                return
+        with self.lock:
+            conn = db_mod.connect(cfgmod.load())
+            try:
+                if single:
+                    db_mod.set_user_tags(conn, paths[0], tags)
+                else:
+                    db_mod.change_user_tags(conn, paths, tags, remove)
+                all_tags = db_mod.user_tags_map(conn)
+            finally:
+                conn.close()
+            # Die Tags stecken auch gebacken in META.userTags -- ohne Neubau
+            # stuende nach einem Neuladen der alte Stand da.
+            self._rebuild(cfgmod.load())
+        self._json({"ok": True, "tags": all_tags})
 
     def _get_playlists(self) -> None:
         """Baum-Definitionen und Zuordnungen in einem Zug.
@@ -1783,6 +1845,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_analyse_path()
         elif route == "/api/bpmkey":
             self._post_bpmkey()
+        elif route == "/api/genremood":
+            self._post_genremood()
+        elif route == "/api/user-tags":
+            self._post_user_tags()
         elif route == "/api/rename":
             self._post_rename()
         elif route == "/api/add-to-library":
@@ -3207,13 +3273,14 @@ class _Handler(BaseHTTPRequestHandler):
                 rekordbox = db_mod.rekordbox_paths(conn)
                 music_added = db_mod.music_added_map(conn)
                 dup_dismissed = db_mod.dup_dismissed_paths(conn)
+                genremood = db_mod.genremood_map(conn)
             finally:
                 conn.close()
             self._rebuild(cfg)
 
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
-            dup_dismissed)[0]
+            dup_dismissed, genremood)[0]
         self._json({"ok": True, "row": compact})
 
     def _post_rewrite_drop(self) -> None:
@@ -3349,13 +3416,14 @@ class _Handler(BaseHTTPRequestHandler):
                 rekordbox = db_mod.rekordbox_paths(conn)
                 music_added = db_mod.music_added_map(conn)
                 dup_dismissed = db_mod.dup_dismissed_paths(conn)
+                genremood = db_mod.genremood_map(conn)
             finally:
                 conn.close()
             self._rebuild(cfg)
 
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
-            dup_dismissed)[0]
+            dup_dismissed, genremood)[0]
         self._json({"ok": True, "row": compact})
 
     def _post_bpmkey(self) -> None:
@@ -3393,7 +3461,15 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:                       # noqa: BLE001
             self._fail(f"Analyse fehlgeschlagen: {exc}", 500)
             return
-        fields = bpmkey_mod.plan_fields(cfg, result, tags_mod.read_extra(path))
+        # Energie der Genre-/Stimmungs-Analyse fuer den gemeinsamen Kommentar-
+        # Eintrag ("8A - 128 - E7") -- kurz unter Lock gelesen, wie jede DB-Arbeit.
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                energy = db_mod.genremood_energy(conn, path)
+            finally:
+                conn.close()
+        fields = bpmkey_mod.plan_fields(cfg, result, tags_mod.read_extra(path), energy)
         base = {"ok": True, "bpm": result["bpm"],
                 "key": tags_mod.key_file_value(result["camelot"], cfg),
                 "confidence": round(result["confidence"], 2)}
@@ -3430,6 +3506,85 @@ class _Handler(BaseHTTPRequestHandler):
                 conn.close()
             self._rebuild(cfg)
         self._json({**base, "status": "written", "fields": fields, "row": compact})
+
+    def _post_genremood(self) -> None:
+        """Genre-Vorschlaege, Stimmung und Energie messen (genremood.py) --
+        fuer EINEN Pfad (der Client ruft je Datei einmal auf). Ergebnis geht
+        immer in die Tabelle 'genremood' (sofern es eine DB-Zeile gibt), in
+        die Datei nur nach den Einstellungen genremood_write_*. Einzel-
+        pruefungen ohne DB-Zeile bekommen row=None und bauen ihre Zeile aus
+        'result'/'fields'.
+
+        Messen (ffmpeg + onnxruntime, mehrere Sekunden) laeuft AUSSERHALB von
+        self.lock, wie _post_bpmkey()."""
+        try:
+            payload = json.loads(self._body(100_000).decode("utf-8"))
+            path = str(payload["path"])
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if not genremood_mod.available():
+            self._json({"ok": True, "status": "unavailable", "row": None})
+            return
+        row, ok, path = self._authorize_or_relocate(path)
+        if not ok:
+            self._reject_missing(path)
+            return
+
+        cfg = cfgmod.load()
+        # Gemeinsames Laengenlimit beider Analysen.
+        minutes = int(cfg.get("bpmkey_max_minutes") or 10)
+        try:
+            result = genremood_mod.analyse(path, minutes * 60)
+        except genremood_mod.TooLongError:
+            self._json({"ok": True, "status": "skipped", "reason": "too_long",
+                        "minutes": minutes, "row": None})
+            return
+        except Exception as exc:                       # noqa: BLE001
+            self._fail(f"Analyse fehlgeschlagen: {exc}", 500)
+            return
+
+        fields = genremood_mod.plan_fields(cfg, result, tags_mod.read_extra(path),
+                                           tags_mod.read_mood(path))
+        new_issues = None
+        if fields:
+            try:
+                tags_mod.write_tags(path, fields)
+            except tags_mod.TagError as exc:
+                self._fail(str(exc), 500)
+                return
+            audit_log.log("genremood", path, ", ".join(sorted(fields)))
+            new_issues = taganomaly_mod.detect(
+                path, (row["codec_family"] if row else "") or "")
+        base = {"ok": True, "status": "written" if fields else "unchanged",
+                "result": result, "fields": fields}
+
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                # Auch ohne 'files'-Zeile (Einzelpruefung) ablegen: wird die
+                # Datei spaeter in die Bibliothek uebernommen, ist das
+                # Ergebnis dann schon da, ohne erneut zu messen.
+                db_mod.save_genremood(conn, path, result["genres"], result["moods"],
+                                      result["energy"], result["model"])
+                compact = None
+                if row is not None:
+                    if fields:
+                        # 'mood' ist keine Spalte in 'files' -- update_tags()
+                        # nimmt ohnehin nur bekannte Tag-Spalten.
+                        db_mod.update_tags(conn, path, fields)
+                        db_mod.update_tag_issues(conn, path, new_issues)
+                        db_mod.refresh_stat(conn, path)
+                    compact = self._compact_rows(conn, cfg, [path])[0]
+            finally:
+                conn.close()
+            if row is not None:
+                self._rebuild(cfg)
+        if row is None:
+            self._json({**base, "row": None,
+                        **({"issues": new_issues} if new_issues is not None else {})})
+            return
+        self._json({**base, "row": compact})
 
     def _post_fix_tag_issues(self) -> None:
         """Sicher automatisch behebbare Auffaelligkeiten (Steuerzeichen,
@@ -3481,13 +3636,14 @@ class _Handler(BaseHTTPRequestHandler):
                 rekordbox = db_mod.rekordbox_paths(conn)
                 music_added = db_mod.music_added_map(conn)
                 dup_dismissed = db_mod.dup_dismissed_paths(conn)
+                genremood = db_mod.genremood_map(conn)
             finally:
                 conn.close()
             self._rebuild(cfg)
 
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
-            dup_dismissed)[0]
+            dup_dismissed, genremood)[0]
         self._json({"ok": True, "row": compact, "fixed": fixed_codes})
 
     def _rename_tag_value(self, field: str, old_label: str, paths_fn, new: str,
@@ -3759,13 +3915,14 @@ class _Handler(BaseHTTPRequestHandler):
                 rekordbox = db_mod.rekordbox_paths(conn)
                 music_added = db_mod.music_added_map(conn)
                 dup_dismissed = db_mod.dup_dismissed_paths(conn)
+                genremood = db_mod.genremood_map(conn)
             finally:
                 conn.close()
             self._rebuild(cfg)
 
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
-            dup_dismissed)[0]
+            dup_dismissed, genremood)[0]
         self._json({"ok": True, "row": compact,
                      "music_cover_synced": music_cover_synced,
                      "music_cover_error": music_cover_error})
@@ -3829,13 +3986,14 @@ class _Handler(BaseHTTPRequestHandler):
                 rekordbox = db_mod.rekordbox_paths(conn)
                 music_added = db_mod.music_added_map(conn)
                 dup_dismissed = db_mod.dup_dismissed_paths(conn)
+                genremood = db_mod.genremood_map(conn)
             finally:
                 conn.close()
             self._rebuild(cfg)
 
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
-            dup_dismissed)[0]
+            dup_dismissed, genremood)[0]
         self._json({"ok": True, "row": compact,
                      "music_cover_synced": music_cover_synced,
                      "music_cover_error": music_cover_error})
@@ -3935,13 +4093,14 @@ class _Handler(BaseHTTPRequestHandler):
                 rekordbox = db_mod.rekordbox_paths(conn)
                 music_added = db_mod.music_added_map(conn)
                 dup_dismissed = db_mod.dup_dismissed_paths(conn)
+                genremood = db_mod.genremood_map(conn)
             finally:
                 conn.close()
             self._rebuild(cfg)
 
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
-            dup_dismissed)[0]
+            dup_dismissed, genremood)[0]
         self._json({"ok": True, "row": compact,
                      "music_cover_synced": music_cover_synced,
                      "music_cover_error": music_cover_error})
@@ -4362,6 +4521,39 @@ class _Handler(BaseHTTPRequestHandler):
         raise ValueError(f"Es sind bereits {cls._MAX_FAV_SLOTS} Merklisten markiert.")
 
     @staticmethod
+    def _clean_generator_config(raw):
+        """Einstellungen eines Playlist-Generators pruefen (Kurve, Slots,
+        Filter, Gates, Regler). Wie bei Smart Playlists wertet ausschliesslich
+        der Client aus (app/webui/generator.js) -- hier zaehlt nur die Form.
+        Pfade stehen bewusst NICHT darin, die Belegung liegt in
+        'playlist_items' (siehe db.PLAYLIST_KINDS)."""
+        if raw in (None, ""):
+            return None
+        if isinstance(raw, str):
+            try:
+                raw = json.loads(raw)
+            except ValueError as exc:
+                raise ValueError(f"Generator-Einstellungen nicht lesbar: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ValueError("Generator-Einstellungen müssen ein Objekt sein.")
+        slots = raw.get("slots")
+        if not isinstance(slots, list) or len(slots) > 200:
+            raise ValueError("Ein Generator hat bis zu 200 Slots.")
+        if not all(isinstance(s, dict) for s in slots):
+            raise ValueError("Slots müssen Objekte sein.")
+        text = json.dumps(raw, ensure_ascii=False)
+        if len(text) > 50_000:
+            raise ValueError("Generator-Einstellungen sind zu gross.")
+        return text
+
+    @classmethod
+    def _clean_rules_for(cls, kind: str, raw):
+        """'rules' je Listenart: Generator-Einstellungen oder Regelwerk."""
+        if kind == "generator":
+            return cls._clean_generator_config(raw)
+        return cls._clean_playlist_rules(raw)
+
+    @staticmethod
     def _clean_playlist_rules(raw):
         """Regelwerk einer Smart Playlist pruefen. Gespeichert wird JSON-Text,
         ausgewertet wird ausschliesslich im Client (die Zeilen liegen dort
@@ -4430,7 +4622,7 @@ class _Handler(BaseHTTPRequestHandler):
                 "parent_id": parent, "kind": kind, "name": name,
                 "icon": self._clean_playlist_style(payload, "icon"),
                 "color": self._clean_playlist_style(payload, "color"),
-                "rules": self._clean_playlist_rules(payload.get("rules")),
+                "rules": self._clean_rules_for(kind, payload.get("rules")),
                 "seq": int(payload.get("seq") or 0),
                 "fav_slot": fav_slot,
             })
@@ -4483,7 +4675,7 @@ class _Handler(BaseHTTPRequestHandler):
             if key in ("icon", "color"):
                 current[key] = self._clean_playlist_style(payload, key)
             elif key == "rules":
-                current[key] = self._clean_playlist_rules(payload[key])
+                current[key] = self._clean_rules_for(current["kind"], payload[key])
             else:
                 current[key] = payload[key]
         if "merkliste" in payload:
@@ -4523,7 +4715,9 @@ class _Handler(BaseHTTPRequestHandler):
                 if node is None:
                     self._fail("Diese Liste existiert nicht mehr.")
                     return
-                if node["kind"] != "playlist":
+                # Ein Generator speichert seine Belegung wie eine normale
+                # Playlist (siehe db.PLAYLIST_KINDS).
+                if node["kind"] not in ("playlist", "generator"):
                     self._fail("Nur reguläre Playlisten nehmen Tracks auf.")
                     return
                 # Beim Entfernen nicht gegen 'files' pruefen: ein Eintrag darf
@@ -4698,6 +4892,7 @@ class _Handler(BaseHTTPRequestHandler):
             skip_loudness=bool(payload.get("skip_loudness")),
             force_cover_fill=bool(payload.get("force_cover_fill")),
             recheck_tag_issues=bool(payload.get("recheck_tags")),
+            genremood=bool(payload.get("genremood")),
         )
         if not started:
             self._fail("Scan konnte nicht gestartet werden", 409)

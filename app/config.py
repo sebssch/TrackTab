@@ -401,22 +401,33 @@ def defaults() -> dict:
         # tags.format_key() und app.js::keyLabel().
         "key_notation": "camelot",
 
-        # BPM-/Tonart-Analyse (libsonare, app/bpmkey.py). Die Tonart steht in
-        # Feld UND Kommentar in der Schreibweise von key_notation.
-        # Neue Einzelpruefungs-Dateien automatisch analysieren und schreiben:
+        # Analysen: BPM/Tonart (libsonare, app/bpmkey.py) und Genre/Stimmung/
+        # Energie (onnxruntime, app/genremood.py) -- eine gemeinsame
+        # Einstellungsgruppe. Die Tonart steht in Feld UND Kommentar in der
+        # Schreibweise von key_notation.
+        # Neue Einzelpruefungs-Dateien automatisch analysieren (je Analyse):
         "bpmkey_auto_drops": True,
-        # Laengere Dateien (DJ-Mixe) werden nicht analysiert, Minuten:
+        "genremood_auto_drops": False,
+        # Laengere Dateien (DJ-Mixe) werden nicht analysiert, Minuten (beide):
         "bpmkey_max_minutes": 10,
         # Erkannte Tonart in das Tonart-Feld schreiben: yes (immer, ueberschreibt)
         # | if_empty (nur wenn dort noch keine Tonart steht) | no.
         "bpmkey_write_key": "yes",
         # Dasselbe fuer die BPM im BPM-Feld.
         "bpmkey_write_bpm": "yes",
-        # Kommentar-Feld: none (nichts) | key ("10A") | key_bpm ("10A - 126");
+        # Gemeinsamer Kommentar-Eintrag beider Analysen (tags.plan_comment()):
+        # none | key ("10A") | key_bpm ("10A - 126") | key_bpm_energy
+        # ("10A - 126 - E7") | key_energy ("10A - E7") | energy ("E7");
         # bei vorhandenem Kommentar: if_empty (nur wenn leer) | overwrite
-        # (ueberschreiben) | prepend (dem bestehenden voranstellen).
+        # (ueberschreiben) | prepend (dem bestehenden voranstellen) | append
+        # (anhaengen). Ein frueherer eigener Eintrag zaehlt als leer bzw.
+        # wird ersetzt.
         "bpmkey_comment_content": "none",
         "bpmkey_comment_existing": "overwrite",
+        # Genre-Vorschlaege unter dieser Wahrscheinlichkeit (Prozent) ausblenden:
+        "genremood_min_percent": 5,
+        # Stimmungen als Mood-Tag schreiben (TXXX:MOOD / MOOD): no | tag.
+        "genremood_write_mood": "no",
 
         # Oberflaechen-Sprache: auto (folgt navigator.language im Browser)
         # oder ein fester Sprachcode. de/en uebersetzt (siehe app/webui/
@@ -526,7 +537,24 @@ def load() -> dict:
 
     _normalize_cutoff_classes(cfg)
     _normalize_columns(cfg)
+    _migrate_energy_comment(cfg)
     return cfg
+
+
+# Alte Einstellung (vor dem Zusammenlegen der Analyse-Einstellungen): Energie
+# hing ueber eine eigene Option "genremood_write_energy: comment" am
+# Kommentar. Jetzt ist Energie ein Teil von bpmkey_comment_content. Solange der
+# alte Schluessel in config.local.yaml steht, wird er hier eingerechnet;
+# settings.save() entfernt ihn, sobald die Kommentar-Auswahl einmal neu
+# gespeichert wird -- danach gilt nur noch die neue Auswahl.
+_ENERGY_UPGRADE = {"none": "energy", "key": "key_energy", "key_bpm": "key_bpm_energy"}
+
+
+def _migrate_energy_comment(cfg: dict) -> None:
+    if cfg.pop("genremood_write_energy", None) != "comment":
+        return
+    content = cfg.get("bpmkey_comment_content", "none")
+    cfg["bpmkey_comment_content"] = _ENERGY_UPGRADE.get(content, content)
 
 
 def reload() -> dict:

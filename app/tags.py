@@ -116,6 +116,102 @@ def key_file_value(camelot: str, cfg: dict) -> str:
     return format_key(camelot, cfg.get("key_notation", "camelot"))
 
 
+# ── Eigener Kommentar-Eintrag der Analysen ───────────────────────────────────
+# BPM-/Tonart-Analyse (bpmkey.py) und Genre-/Stimmungs-Analyse (genremood.py)
+# schreiben EINEN gemeinsamen Eintrag in den Kommentar, z. B. "8A - 128 - E7".
+# Welche Teile, steuert cfg["bpmkey_comment_content"]; wie mit einem
+# vorhandenen Kommentar umgegangen wird, cfg["bpmkey_comment_existing"].
+# Jede Analyse liefert die Teile, die sie selbst misst, die uebrigen kommen
+# aus Datei bzw. DB -- so sieht der Eintrag gleich aus, egal welche Analyse
+# zuletzt lief.
+COMMENT_PARTS = {
+    "none": (), "key": ("key",), "key_bpm": ("key", "bpm"),
+    "key_bpm_energy": ("key", "bpm", "energy"), "key_energy": ("key", "energy"),
+    "energy": ("energy",),
+}
+_COMMENT_SEP = " - "
+_BPM_TOKEN_RE = re.compile(r"^\d{2,3}(?:[.,]\d)?$")
+_ENERGY_TOKEN_RE = re.compile(r"^E(?:10|[1-9])$")
+
+
+def comment_parts(cfg: dict) -> tuple[str, ...]:
+    return COMMENT_PARTS.get(str(cfg.get("bpmkey_comment_content", "none")), ())
+
+
+def _token_kind(token: str) -> str:
+    """Art eines Kommentar-Teils: "key" (Tonart, jede Schreibweise), "bpm"
+    (40-250), "energy" ("E7") oder "" fuer freien Text."""
+    token = token.strip()
+    if _ENERGY_TOKEN_RE.match(token):
+        return "energy"
+    if normalize_key(token) in KEY_TABLE:
+        return "key"
+    if _BPM_TOKEN_RE.match(token) and 40 <= float(token.replace(",", ".")) <= 250:
+        return "bpm"
+    return ""
+
+
+def _split_own_entry(comment: str, parts: tuple[str, ...]) -> tuple[str, dict]:
+    """Trennt einen eigenen Eintrag am Anfang oder Ende vom uebrigen Text
+    ("8A - 128 - E7 - Lieblingsmix" -> ("Lieblingsmix", {key, bpm, energy})).
+    Als eigener Eintrag zaehlen nur Teile der Arten, die laut Einstellung
+    (`parts`) hineingehoeren -- bei "nur Energie" bleiben "8A - 128" also
+    freier Text und gehen nicht verloren. Rueckgabe: (Rest, gefundene Werte)."""
+    tokens = comment.split(_COMMENT_SEP)
+    found: dict = {}
+    i, j = 0, len(tokens)
+    while i < j and _token_kind(tokens[i]) in parts:
+        found.setdefault(_token_kind(tokens[i]), tokens[i].strip())
+        i += 1
+    while j > i and _token_kind(tokens[j - 1]) in parts:
+        found.setdefault(_token_kind(tokens[j - 1]), tokens[j - 1].strip())
+        j -= 1
+    return _COMMENT_SEP.join(tokens[i:j]).strip(), found
+
+
+def plan_comment(cfg: dict, current: str, key_txt: str, bpm: int,
+                 energy: float, measured: set[str]) -> str | None:
+    """Neuer Kommentar nach den Einstellungen -- None, wenn nichts zu tun ist.
+
+    key_txt/bpm/energy sind die besten bekannten Werte (0/"" = unbekannt, der
+    Teil entfaellt dann). `measured` sind die Teile, die die aufrufende Analyse
+    gerade selbst gemessen hat: enthaelt die Einstellung keinen davon, bleibt
+    der Kommentar unangetastet (die Genre-Analyse soll keinen Kommentar
+    umschreiben, wenn nur Tonart/BPM darin stehen sollen, und umgekehrt).
+
+    Ein frueherer eigener Eintrag (vorn oder hinten) zaehlt bei "nur wenn
+    leer" als leer und wird bei "voranstellen"/"anhaengen" ersetzt statt
+    doppelt geschrieben.
+    """
+    parts = comment_parts(cfg)
+    if not parts or not measured.intersection(parts):
+        return None
+    current = (current or "").strip()
+    if is_junk_comment(current):
+        current = ""
+    rest, found = _split_own_entry(current, parts)
+    # Fehlt ein Wert in den Tag-Feldern, steht aber schon im bisherigen
+    # Eintrag (z. B. "8A - 128" von Hand oder aus einem anderen Programm),
+    # bleibt er erhalten statt still zu verschwinden.
+    values = {"key": key_txt or found.get("key", ""),
+              "bpm": str(int(bpm)) if bpm and int(bpm) > 0 else found.get("bpm", ""),
+              "energy": f"E{int(round(energy))}" if energy and 1 <= round(energy) <= 10
+                        else found.get("energy", "")}
+    text = _COMMENT_SEP.join(values[p] for p in parts if values[p])
+    if not text:
+        return None
+    mode = cfg.get("bpmkey_comment_existing", "overwrite")
+    if mode == "if_empty":
+        new = text if not rest else current
+    elif mode == "prepend":
+        new = f"{text}{_COMMENT_SEP}{rest}" if rest else text
+    elif mode == "append":
+        new = f"{rest}{_COMMENT_SEP}{text}" if rest else text
+    else:
+        new = text
+    return new if new != current else None
+
+
 def key_aliases() -> dict[str, str]:
     """Kleingeschriebene Schreibweise -> Camelot, fuer den Client (Suche und
     Eingabefeld): alle drei Schreibweisen plus gaengige Varianten."""
@@ -204,6 +300,13 @@ def _id3_tags(path: str, suffix: str):
     raise TagError(f"Kein ID3-Container fuer '{suffix}'.")
 
 
+# Stimmung: ID3v2.4 haette TMOO, geschrieben wird aber v2.3 (siehe _id3_tags),
+# und mutagen verwirft TMOO beim Speichern als v2.3. TXXX:MOOD ist die
+# v2.3-Entsprechung, die Mp3tag/MusicBrainz Picard ebenso lesen.
+_ID3_MOOD_FRAME = "TXXX:MOOD"
+_MP4_MOOD_ATOM = "----:com.apple.iTunes:MOOD"
+
+
 def _raw_id3(tags) -> str:
     return str(tags.getall("TKEY")[0]).strip() if tags.getall("TKEY") else ""
 
@@ -281,6 +384,12 @@ def _write_tags_id3(path: str, suffix: str, fields: dict) -> None:
         tags.delall("COMM")
         if comment:
             tags.add(COMM(encoding=3, lang="eng", desc="", text=[comment]))
+    if "mood" in fields:
+        from mutagen.id3 import TXXX
+        mood = (fields["mood"] or "").strip()
+        tags.delall(_ID3_MOOD_FRAME)
+        if mood:
+            tags.add(TXXX(encoding=3, desc="MOOD", text=[mood]))
     if "track_no" in fields or "track_total" in fields:
         existing = str(tags.getall("TRCK")[0]) if tags.getall("TRCK") else ""
         no = int(fields.get("track_no", _parse_track_no(existing)) or 0)
@@ -395,6 +504,13 @@ def _write_tags_mp4(path: str, fields: dict) -> None:
         if is_junk_comment(comment):
             comment = ""
         tags["\xa9cmt"] = [comment]
+    if "mood" in fields:
+        from mutagen.mp4 import MP4FreeForm
+        mood = (fields["mood"] or "").strip()
+        if mood:
+            tags[_MP4_MOOD_ATOM] = [MP4FreeForm(mood.encode("utf-8"))]
+        elif _MP4_MOOD_ATOM in tags:
+            del tags[_MP4_MOOD_ATOM]
     if "track_no" in fields or "track_total" in fields:
         trkn = tags.get("trkn")
         cur_no = trkn[0][0] if trkn and trkn[0] else 0
@@ -500,6 +616,12 @@ def _write_tags_flac(path: str, fields: dict) -> None:
         if is_junk_comment(comment):
             comment = ""
         audio["comment"] = comment
+    if "mood" in fields:
+        mood = (fields["mood"] or "").strip()
+        if mood:
+            audio["mood"] = mood
+        elif "mood" in audio:
+            del audio["mood"]
     if "track_no" in fields or "track_total" in fields:
         cur_tn = (audio.get("tracknumber") or [""])[0]
         cur_tt = (audio.get("tracktotal") or [""])[0]
@@ -594,9 +716,41 @@ def read_key(path: str) -> str:
     return ""
 
 
+def read_mood(path: str) -> str:
+    """Der Stimmungs-Tag der Datei (TXXX:MOOD / TMOO, MP4-Freiform "MOOD",
+    Vorbis "mood") -- leer, wenn keiner da ist. Bewusst nicht Teil von
+    read_extra(): die Stimmung ist keine Spalte in 'files', sie wird nur vor
+    dem Schreiben der eigenen Analyse verglichen (genremood.plan_fields()).
+
+    Best effort wie read_extra(): bei jedem Fehler ein leerer Wert.
+    """
+    suffix = Path(path).suffix.lower()
+    try:
+        if suffix in _ID3_LIKE_SUFFIXES:
+            tags, _ = _id3_tags(path, suffix)
+            for frame in (_ID3_MOOD_FRAME, "TMOO"):
+                if tags.getall(frame):
+                    return str(tags.getall(frame)[0]).strip()
+            return ""
+        if suffix in _MP4_SUFFIXES:
+            from mutagen.mp4 import MP4
+            value = (MP4(path).tags or {}).get(_MP4_MOOD_ATOM)
+            if value:
+                raw = value[0]
+                return (raw.decode("utf-8", "replace") if isinstance(raw, bytes)
+                        else str(raw)).strip()
+            return ""
+        if suffix in _FLAC_SUFFIXES:
+            from mutagen.flac import FLAC
+            return str((FLAC(path).get("mood") or [""])[0]).strip()
+    except Exception:                                  # noqa: BLE001
+        pass
+    return ""
+
+
 def write_tags(path: str, fields: dict) -> None:
     """Schreibt eine Teilmenge von Titel/Interpret/Album/Albumkuenstler/
-    Komponist/Genre/Jahr/BPM/Tonart/Kommentar/Tracknummer/-gesamtzahl in die
+    Komponist/Genre/Jahr/BPM/Tonart/Kommentar/Stimmung/Tracknummer/-gesamtzahl in die
     Datei (die Tonart so, wie sie uebergeben wird -- Umsetzen in die gewaehlte
     Schreibweise ist Sache des Aufrufers, siehe format_key()).
 

@@ -114,6 +114,9 @@
         <button class="treeadd" id="btnNewSmart" data-i18n-title="tree.new_smart" title="Neue Smart Playlist"><svg viewBox="0 0 24 24" width="15" height="15"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
             aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg></button>
+        <button class="treeadd" id="btnNewGenerator" data-i18n-title="gen.new" title="Neuer Playlist-Generator"><svg viewBox="0 0 24 24" width="15" height="15"
+            fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+            aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 16c.5-2 1.5-7 4-7 2 0 2 3 4 3 2.5 0 4.5-5 5-7"/></svg></button>
         <button class="treeadd" id="btnNewFolder" data-i18n-title="tree.new_folder" title="Neuer Ordner"><svg viewBox="0 0 24 24" width="15" height="15"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
             aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7v10"/><path d="M11 7v10"/><path d="m15 7 2 10"/></svg></button>
@@ -141,12 +144,16 @@
     </div>
     <div id="plHeadBubblesRow" class="chipsrow genrebox-bubbles" hidden></div>
     <div id="plHeadIssueBubblesRow" class="chipsrow genrebox-bubbles" hidden></div>
+    <div id="plHeadTagBubblesRow" class="chipsrow genrebox-bubbles" hidden></div>
     <button type="button" class="genrebox-expandlink" id="plHeadBubblesExpand" hidden>
       <span class="btnicon" id="plHeadBubblesExpandIcon"></span>
       <span id="plHeadBubblesExpandLabel"></span>
     </button>
     <div id="plHeadMergeSuggestions" class="genrebox-merge" hidden></div>
   </div>
+  <!-- Playlist-Generator (generator.js): ersetzt bei einer Generator-Liste
+       Filter, Tabelle und "weitere laden" (body[data-gen], siehe app.css). -->
+  <div id="generatorPane" class="genpane" hidden></div>
   <div class="panel" id="filterPanel">
     <div class="controls">
       <span class="searchwrap">
@@ -482,6 +489,14 @@
         <label class="toggle"><input id="scanOptTagIssues" type="checkbox">
           <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
       </div>
+      <div class="optrow" id="scanOptGenreMoodRow">
+        <div class="opttext">
+          <label for="scanOptGenreMood" class="optlabel" data-i18n="scanopts.genremood">Genre, Stimmung &amp; Energie</label>
+          <div class="opthelp" data-i18n="scanopts.genremood_help">Analysiert danach alle Tracks, die noch kein Ergebnis haben.</div>
+        </div>
+        <label class="toggle"><input id="scanOptGenreMood" type="checkbox">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
     </div>
     <div class="confirmbtns">
       <button class="act" id="scanOptionsCancel"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
@@ -696,6 +711,9 @@
           <input type="text" id="tagsKey" maxlength="12" autocomplete="off"></div>
         <div class="setfield full"><label for="tagsComment" data-i18n="tags.comment_label">Kommentare</label>
           <textarea id="tagsComment" rows="2"></textarea></div>
+        <div class="setfield full"><label for="tagsUserTagInput" data-i18n="tags.user_tags">Eigene Tags</label>
+          <div class="utagbox"><span id="tagsUserTagChips"></span>
+            <input type="text" id="tagsUserTagInput" autocomplete="off"></div></div>
       </div>
     </div>
     <div class="tagslookup">

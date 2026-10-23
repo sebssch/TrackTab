@@ -128,13 +128,14 @@ def _mode(value) -> str:
     return text if text in ("yes", "if_empty") else "no"
 
 
-def plan_fields(cfg: dict, result: dict, existing: dict) -> dict:
+def plan_fields(cfg: dict, result: dict, existing: dict, energy: float = 0.0) -> dict:
     """Entscheidet, was in die Datei geschrieben wird -- im Format von
     tags.write_tags() (nur geaenderte Felder, leer = nichts zu tun).
 
-    `existing` ist tags.read_extra(path). Die Tonart steht in Feld UND Kommentar
-    in derselben Schreibweise (cfg["key_notation"]). Junk-Kommentare (technische
-    Hex-Felder) zaehlen als leer -- write_tags() verwirft sie ohnehin.
+    `existing` ist tags.read_extra(path), `energy` die gespeicherte Energie der
+    Genre-/Stimmungs-Analyse (0 = keine) fuer den gemeinsamen Kommentar-Eintrag
+    (tags.plan_comment()). Die Tonart steht in Feld UND Kommentar in derselben
+    Schreibweise (cfg["key_notation"]).
     """
     fields: dict = {}
     camelot = result.get("camelot") or ""
@@ -153,23 +154,8 @@ def plan_fields(cfg: dict, result: dict, existing: dict) -> dict:
         if not (mode == "if_empty" and old > 0) and old != bpm:
             fields["bpm"] = float(bpm)
 
-    content = cfg.get("bpmkey_comment_content", "none")
-    if content in ("key", "key_bpm"):
-        parts = [key_txt] if key_txt else []
-        if content == "key_bpm" and bpm > 0:
-            parts.append(str(bpm))
-        text = " - ".join(parts)
-        if text:
-            current = str(existing.get("comment") or "").strip()
-            if tags.is_junk_comment(current):
-                current = ""
-            cmode = cfg.get("bpmkey_comment_existing", "overwrite")
-            if not (cmode == "if_empty" and current):
-                if cmode == "prepend" and current:
-                    # Schon vorangestellt -> nichts doppelt schreiben.
-                    new = current if current.startswith(text) else f"{text} - {current}"
-                else:
-                    new = text
-                if new != current:
-                    fields["comment"] = new
+    comment = tags.plan_comment(cfg, str(existing.get("comment") or ""),
+                                key_txt, bpm, energy, {"key", "bpm"})
+    if comment is not None:
+        fields["comment"] = comment
     return fields

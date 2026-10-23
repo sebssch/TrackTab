@@ -105,6 +105,9 @@ const VIEWS = [
   {id: "grp:genre",  label: t("views.grp_genre"),  test: () => true},
   {id: "grp:album",  label: t("views.grp_album"),  test: () => true},
   {id: "grp:artist", label: t("views.grp_artist"), test: () => true},
+  // Alle Tracks, im Listenkopf die Tags (Stimmungen + eigene Tags) als
+  // Filter-Bubbles -- siehe renderTagBubbles().
+  {id: "tags", label: t("views.tags"), test: () => true},
 ];
 // Anzeige-Reihenfolge der Listen-Tabs -- "corrected" bleibt bewusst aussen
 // vor: die Ansicht ist ueber den "Manuell korrigiert"-Chip in der
@@ -165,6 +168,73 @@ function keyBubble(camelot, raw) {
   const mismatch = at >= 0 && at !== KEY_NOTATION_INDEX[KEY_NOTATION];
   const tip = mismatch ? ` title="${esc(t("key.in_file", {value: raw}))}"` : "";
   return `<span class="keybubble${mismatch ? " keymis" : ""}"${tip} style="background:var(--key-${camelot.toLowerCase()})">${esc(keyLabel(camelot))}</span>`;
+}
+
+// ── Genre, Stimmung, Energie (genremood.py) ───────────────────────────────
+// r.gs = [[Stil, Prozent], ...] (schon nach genremood_min_percent gefiltert),
+// r.eg = Energie 1..10 (0 = nicht analysiert), r.mm = {Stimmung: 0..1}.
+// Stimmungen, Themen und Schwellen wie MOODS/THEMES/MOOD_THRESHOLD/
+// THEME_TOP/THEME_FLOOR in genremood.py: die Ja/Nein-Stimmungen ab 0,5, dazu
+// die zwei staerksten DJ-Stimmungen ab 0,05 (der Themen-Kopf liefert nur
+// kleine Absolutwerte, siehe dort).
+const MOODS = ["aggressive", "happy", "party", "relaxed", "sad"];
+const MOOD_THRESHOLD = 0.5;
+const THEMES = ["energetic", "groovy", "dark", "deep", "uplifting", "melancholic",
+  "upbeat", "epic", "melodic", "summer", "romantic"];
+const THEME_TOP = 2, THEME_FLOOR = 0.05;
+
+// Zutreffende Stimmungen: erst die Ja/Nein-Stimmungen, staerkste zuerst,
+// dann die DJ-Stimmungen.
+function moodNames(r) {
+  const mm = r.mm || {};
+  const moods = MOODS.filter(m => (mm[m] || 0) >= MOOD_THRESHOLD)
+    .sort((a, b) => mm[b] - mm[a]);
+  const themes = THEMES.filter(m => (mm[m] || 0) >= THEME_FLOOR)
+    .sort((a, b) => mm[b] - mm[a]).slice(0, THEME_TOP);
+  return moods.concat(themes);
+}
+
+// Zehn Segmente, gefaerbt von kalt nach warm bis zum Wert -- dazu die Zahl.
+function energyCell(eg) {
+  if (!eg) return "";
+  const n = Math.round(eg);
+  const segs = Array.from({length: 10}, (_, i) =>
+    `<i class="${i < n ? `on e${i + 1}` : ""}"></i>`).join("");
+  return `<span class="energy" title="${esc(t("col.energy"))} ${n}/10"><span class="energybar">${segs}</span>${n}</span>`;
+}
+
+// Eigene Tags (Pfad -> [Tag]), gebacken in META.userTags und nach jeder
+// Aenderung komplett vom Server uebernommen (adoptUserTags()).
+let USER_TAGS = new Map(Object.entries((META && META.userTags) || {}));
+function adoptUserTags(obj) {
+  USER_TAGS = new Map(Object.entries(obj || {}));
+}
+
+// Alle Tags einer Zeile: erkannte Stimmungen und DJ-Stimmungen, dann die
+// eigenen Tags. id ist je Art eindeutig ("m:party", "u:Warm-up"), damit ein
+// eigener Tag "Party" nicht mit der erkannten Stimmung zusammenfaellt.
+function rowTags(r) {
+  const out = moodNames(r).map(m => ({id: "m:" + m, label: t("mood." + m), cls: "mood-" + m}));
+  for (const tag of (r.p && USER_TAGS.get(r.p)) || []) {
+    out.push({id: "u:" + tag, label: tag, cls: "usertag"});
+  }
+  return out;
+}
+
+// "Electronic---Electro House" -> "Electro House": geschrieben wird nur der Stil.
+const styleName = label => String(label).split("---").pop().trim();
+
+// Analyse-Ergebnis (Server-Format von genremood.analyse()) auf eine
+// Einzelpruefungs-Zeile uebertragen -- dieselbe Form, die rows_to_payload()
+// fuer Bibliothekszeilen liefert.
+function genreMoodToRow(result) {
+  const min = GENREMOOD_MIN_PERCENT / 100;
+  return {
+    gs: (result.genres || []).slice(0, 5).filter(([, p]) => p >= min)
+      .map(([g, p]) => [g, Math.round(p * 100)]),
+    eg: Math.round((result.energy || 0) * 10) / 10,
+    mm: result.moods || {},
+  };
 }
 
 // ── Eigene Playlisten und Ordner ──────────────────────────────────────────
@@ -235,7 +305,7 @@ function rebuildPlaylistViews() {
     if (VIEWS[i].id.startsWith("pl:")) VIEWS.splice(i, 1);
   }
   for (let i = VIEWS.length - 1; i >= 0; i--) {
-    if (VIEWS[i].id.startsWith("sm:")) VIEWS.splice(i, 1);
+    if (VIEWS[i].id.startsWith("sm:") || VIEWS[i].id.startsWith("gen:")) VIEWS.splice(i, 1);
   }
   for (const n of PLAYLISTS) {
     const id = n.id;
@@ -250,6 +320,14 @@ function rebuildPlaylistViews() {
       VIEWS.push({
         id: `sm:${id}`, label: playlistLabel(n),
         test: r => { const s = SMART_CACHE.get(id); return !!s && s.has(r.p); },
+      });
+    } else if (n.kind === "generator") {
+      // Playlist-Generator (generator.js): Belegung liegt wie bei einer
+      // normalen Playlist in PLAYLIST_ITEMS, angezeigt wird statt der
+      // Tabelle aber der Generator (siehe syncGeneratorPane() in render()).
+      VIEWS.push({
+        id: `gen:${id}`, label: playlistLabel(n),
+        test: r => !!(PLAYLIST_SETS[id] && PLAYLIST_SETS[id].has(r.p)),
       });
     }
   }
@@ -301,6 +379,10 @@ const OPTIONAL_COLUMNS = [
   {key: "yr", label: t("field.year"), numeric: true},
   {key: "bp", label: t("field.bpm"), numeric: true},
   {key: "ky", label: t("field.key"), numeric: false},
+  // Energie 1..10 und Stimmungen aus der Genre-/Stimmungs-Analyse
+  // (genremood.py, Tabelle 'genremood') -- leer, solange nicht analysiert.
+  {key: "eg", label: t("col.energy"), numeric: true},
+  {key: "mm", label: t("col.mood"), numeric: false},
   {key: "cm", label: t("field.comment"), numeric: false},
   {key: "a", label: t("field.artist"), numeric: false},
   {key: "t", label: t("field.title"), numeric: false},
@@ -314,7 +396,7 @@ const OPTIONAL_COLUMNS = [
 // liesse sich die Spalte nicht anpassen (sie wuerde jede Aenderung sofort
 // wieder mit dem freien Platz ausgleichen).
 const DEFAULT_COL_WIDTHS = {po:50, v:105, co:90, kb:105, mk:75, cf:110, st:75, lu:90, tp:60, du:70, rb:105,
-  im:85, da:115, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, ky:70, cm:180, a:150, t:200, n:340,
+  im:85, da:115, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, ky:70, eg:110, mm:170, cm:180, a:150, t:200, n:340,
   ti:280};
 
 let state = {
@@ -335,6 +417,9 @@ let state = {
   // Code (siehe app/taganomaly.py), nicht persistiert wie valueFilter, gilt
   // nur solange die Liste aktiv ist (selectView() setzt ihn zurueck).
   tagIssueFilter: null,
+  // Gewaehlte Tag-Bubbles der Liste "Tags" (ids aus rowTags()), nicht
+  // persistiert wie tagIssueFilter.
+  tagFilter: [],
   sort: "co", dir: 1, shown: PAGE,
   layout: "edit",
   searchTolerance: 0.8,
@@ -994,6 +1079,7 @@ const ICONS = {
   audioWaveform: SVG(LUCIDE_ICONS["audio-waveform"]),
   pencil: SVG(LUCIDE_ICONS["pencil"]),
   sparkles: SVG(LUCIDE_ICONS["sparkles"]),
+  brainCircuit: SVG(LUCIDE_ICONS["brain-circuit"]),
   pencilRuler: SVG(LUCIDE_ICONS["pencil-ruler"]),
   eye: SVG(LUCIDE_ICONS.eye),
   eyeOff: SVG(LUCIDE_ICONS["eye-off"]),
@@ -1295,6 +1381,7 @@ const TREE_ICONS = {
   corrected: SVG(LUCIDE_ICONS.check),
   "grp:genre": SVG(LUCIDE_ICONS.tag), "grp:album": SVG(LUCIDE_ICONS["disc-2"]),
   "grp:artist": SVG(LUCIDE_ICONS.speech),
+  tags: SVG(LUCIDE_ICONS.tags),
   tag_issues: SVG(LUCIDE_ICONS["file-exclamation-point"]),
 };
 
@@ -1307,7 +1394,8 @@ const TREE_ICONS = {
 //   view   state.view-Wert -- oder null bei Ordnern/Wurzel (nur auf/zu)
 //   node   die Datenbankzeile bei eigenen Listen, sonst undefined
 //   kids   Unterknoten
-const PLAYLIST_ICONS = {playlist: "sym:list-music", folder: "sym:square-library", smart: "sym:settings"};
+const PLAYLIST_ICONS = {playlist: "sym:list-music", folder: "sym:square-library", smart: "sym:settings",
+                        generator: "sym:chart-spline"};
 
 // Icon-Auswahl fuer Playlisten/Merklisten (Baum-Badge + Auswahl-Dialog) laeuft
 // vollstaendig ueber das lokal vendorte Lucide-Lexikon LUCIDE_ICONS (siehe
@@ -1362,7 +1450,7 @@ function iconGlyphHtml(icon) {
 // keins gewaehlt hat -- dieselbe Regel an jeder Stelle, die eine Liste ohne
 // eigenes Icon zeigt (Baum, Kopfzeile, "Zur Playlist hinzufuegen"-Auswahl).
 function playlistIconValue(node) {
-  return node.icon || (node.kind === "smart" ? "sym:settings" : "sym:list-music");
+  return node.icon || PLAYLIST_ICONS[node.kind] || PLAYLIST_ICONS.playlist;
 }
 
 // Markup fuer einen farbigen Icon-Kreis ausserhalb des Baums (Kopfzeile,
@@ -1405,8 +1493,7 @@ function playlistChildren(parentId, depth = 0) {
     .filter(n => (n.parent_id || null) === (parentId || null))
     .map(n => ({
       id: `node:${n.id}`,
-      view: n.kind === "playlist" ? `pl:${n.id}`
-          : n.kind === "smart" ? `sm:${n.id}` : null,
+      view: nodeViewId(n),
       label: playlistLabel(n),
       icon: n.kind === "folder" ? PLAYLIST_ICONS.folder : playlistIconValue(n),
       color: n.color || null,
@@ -1505,6 +1592,10 @@ function treeRoots() {
     return {id: `view:${id}`, view: id, label: v.label, icon: TREE_ICONS[id],
             count: groupEntryCount(GRP_VIEW_FIELD[id]), kids: [], top: true};
   });
+  // "Tags" wie Genre/Album/Kuenstler: die Zahl nennt die verschiedenen Tags.
+  const tagsView = VIEWS.find(v => v.id === "tags");
+  groupNodes.push({id: "view:tags", view: "tags", label: tagsView.label, icon: TREE_ICONS.tags,
+                   count: allTagEntries().length, kids: [], top: true});
   const own = playlistChildren(null).map(n => ({...n, top: true}));
   // "Duplikate" zieht in den "Pruefliste"-Ordner (sys_verdicts) -- wie die
   // drei Gruppen-Listen ein reiner VIEWS-Eintrag ohne eigene DB-Zeile, wird
@@ -1554,7 +1645,7 @@ function renderTree() {
     // ist (n.node.fav_slot, siehe playlistBadgeHtml()), sonst rund. Fremde
     // Aeste (Music.app/Rekordbox) und Ordner behalten die schlichte
     // Textdarstellung.
-    const isOwnList = n.node && (n.node.kind === "playlist" || n.node.kind === "smart");
+    const isOwnList = n.node && n.node.kind !== "folder";
     const badge = isOwnList
       ? `<span class="tbadge ${n.node.fav_slot ? "tsquare" : "tcircle"}" style="background:${n.color ? `var(--${esc(n.color)})` : "var(--dim)"}">` +
         // Feste Verdikt-Playlisten (system=1) tragen ihr Icon fest ueber
@@ -2087,6 +2178,7 @@ function smartFields() {
     {key: "p",  type: SMART_TYPES.TEXT, label: FIELD_LABELS.p},
     {key: "yr", type: SMART_TYPES.NUM,  label: FIELD_LABELS.yr},
     {key: "bp", type: SMART_TYPES.NUM,  label: FIELD_LABELS.bp},
+    {key: "eg", type: SMART_TYPES.NUM,  label: t("col.energy")},
     // Tonart: Auswahl der 24 Tonarten in der eingestellten Schreibweise; die
     // Regel speichert den Camelot-Wert (v), damit sie nach einem Wechsel der
     // Schreibweise weiter greift.
@@ -2748,6 +2840,7 @@ function selectView(id) {
   state.valueFilter = null;
   state.mergePreview = null;
   state.tagIssueFilter = null;
+  state.tagFilter = [];
   // Die Genre-Liste gruppiert immer nach Genre (siehe groupMode in
   // render()) -- die Checkbox "nach Album gruppieren" darf dabei nie
   // angehakt stehen bleiben, das waere ein widersprüchliches Signal
@@ -2782,6 +2875,7 @@ async function openExtPlaylist(viewId) {
     state.valueFilter = null;
     state.mergePreview = null;
     state.tagIssueFilter = null;
+    state.tagFilter = [];
     syncColumnsForView();
     saveFilters(); syncSortHeaders(); updateCards(); render();
     renderPlaylistHeader();
@@ -3021,10 +3115,12 @@ async function createPlaylistNode(kind) {
   const props = await askPlaylistProps(
     kind === "folder" ? t("tree.dialog_new_folder")
       : kind === "smart" ? t("tree.dialog_new_smart")
+      : kind === "generator" ? t("gen.dialog_new")
       : t("tree.dialog_new_playlist"),
     // Ordner haben keine eigene Tabelle -- weder Symbol/Farbe noch eine
-    // Spaltenansicht ergeben dort einen Sinn.
-    null, kind !== "folder", kind === "folder" ? undefined : null,
+    // Spaltenansicht ergeben dort einen Sinn. Ein Generator zeigt statt der
+    // Tabelle seine Slots (generator.js), also ebenfalls keine Spaltenansicht.
+    null, kind !== "folder", kind === "folder" || kind === "generator" ? undefined : null,
     true, null, null, kind === "playlist");
   if (!props) return;
   const name = props.name;
@@ -3036,6 +3132,9 @@ async function createPlaylistNode(kind) {
     const data = await playlistApi("/api/playlist", {
       op: "create", kind: kind, name: name, parent_id: parent,
       icon: props.icon, color: props.color, merkliste: props.merkliste,
+      // Ein neuer Generator startet mit einer Vorlage statt leer (siehe
+      // genDefaultConfig() in generator.js).
+      ...(kind === "generator" ? {rules: genDefaultConfig()} : {}),
     });
     await reloadPlaylists();
     // Zuordnung VOR dem Oeffnen setzen -- selectView() baut die Kopfzeile
@@ -3045,6 +3144,8 @@ async function createPlaylistNode(kind) {
     }
     if (kind === "playlist") {
       selectView(`pl:${data.node.id}`);
+    } else if (kind === "generator") {
+      selectView(`gen:${data.node.id}`);
     } else if (kind === "smart") {
       // Eine Smart Playlist ohne Regeln waere leer und ihr Zweck unklar --
       // deshalb direkt in den Regel-Editor, statt sie so stehen zu lassen.
@@ -3077,8 +3178,12 @@ function playlistRows(id) {
 
 // View-Kennung eines Baumknotens -- Ordner haben keine (kein eigener View,
 // ein Klick klappt sie nur auf und zu).
-const nodeViewId = node => node.kind === "folder"
-  ? null : `${node.kind === "smart" ? "sm" : "pl"}:${node.id}`;
+// Als Funktionsdeklaration (nicht const), weil playlistChildren() weiter oben
+// sie schon beim ersten Baumaufbau braucht.
+function nodeViewId(node) {
+  const prefix = {playlist: "pl", smart: "sm", generator: "gen"}[node.kind];
+  return prefix ? `${prefix}:${node.id}` : null;
+}
 
 async function setNodeColumnView(node) {
   const viewId = nodeViewId(node);
@@ -3095,7 +3200,7 @@ function nodeMenuItems(node) {
   // aendert -- Bearbeiten, Duplizieren und Loeschen weist auch der Server ab.
   // Ihre Position im Baum laesst sich trotzdem per Drag & Drop aendern.
   const locked = !!node.system;
-  const spielbar = node.kind === "playlist" || node.kind === "smart";
+  const spielbar = node.kind === "playlist" || node.kind === "smart" || node.kind === "generator";
 
   // Drei Gruppen, am Ende mit Trennlinien verbunden:
   //   1. was die Liste SELBST betrifft (Name, Regeln, Kopie)
@@ -3134,7 +3239,7 @@ function nodeMenuItems(node) {
         action: () => openRulesDialog(node),
       });
     }
-    if (node.kind === "playlist" || node.kind === "smart") {
+    if (node.kind === "playlist" || node.kind === "smart" || node.kind === "generator") {
       listeSelbst.push({
         icon: ICONS.stickyNotes, label: t("tree.duplicate"),
         action: async () => {
@@ -3142,10 +3247,12 @@ function nodeMenuItems(node) {
             const isSmart = node.kind === "smart";
             // Smart Playlists haben keine festen Eintraege -- die Kopie
             // bekommt stattdessen Regelwerk, Symbol und Farbe des Originals.
+            // Ein Generator braucht beides: Einstellungen UND Belegung.
+            const withRules = isSmart || node.kind === "generator";
             const copy = await playlistApi("/api/playlist", {
               op: "create", kind: node.kind, parent_id: node.parent_id || null,
               name: t("tree.copy_name", {name: node.name}),
-              ...(isSmart ? {icon: node.icon, color: node.color, rules: node.rules} : {}),
+              ...(withRules ? {icon: node.icon, color: node.color, rules: node.rules} : {}),
             });
             const paths = isSmart ? [] : (PLAYLIST_ITEMS[node.id] || []);
             if (paths.length) {
@@ -3167,7 +3274,8 @@ function nodeMenuItems(node) {
   // der einzige Weg (Name/Symbol/Farbe sind dort gesperrt, kein Bearbeiten-
   // Punkt); bei normalen Listen bewusst getrennt vom Bearbeiten-Dialog, damit
   // es pro Einstellung nur eine Stelle gibt.
-  if (spielbar) {
+  // Ein Generator zeigt keine Tabelle (generator.js) -- keine Spaltenansicht.
+  if (spielbar && node.kind !== "generator") {
     listeSelbst.push({
       icon: ICONS.columns3, label: t("cols.view_menu"),
       action: () => setNodeColumnView(node),
@@ -3756,6 +3864,12 @@ async function initStorage() {
         // BPM-/Tonart-Analyse (libsonare): Knoepfe nur, wenn die Bibliothek da ist.
         BPMKEY_AVAILABLE = !!s.bpmkey_available;
         BPMKEY_AUTO = !!s.values.bpmkey_auto_drops;
+        // Genre-/Stimmungs-Analyse (onnxruntime + Modelle), gleiche Logik.
+        GENREMOOD_AVAILABLE = !!s.genremood_available;
+        GENREMOOD_AUTO = !!s.values.genremood_auto_drops;
+        GENREMOOD_MIN_PERCENT = Number(s.values.genremood_min_percent) || 5;
+        GENREMOOD_WRITES = String(s.values.bpmkey_comment_content || "").includes("energy") ||
+          s.values.genremood_write_mood === "tag";
         // Kein Auto-detect wie bei MIK/Editor: Music.app ist auf jedem Mac
         // vorhanden, die Auswahl hier ist ein bewusstes Ein-/Ausschalten der
         // gesamten Integration (Baum, Knoepfe, Import, Sync, Cover-Autofill),
@@ -3886,6 +4000,8 @@ let SEARCH_HELP_ENTRIES = [
   [t("search.help.genre.token"), t("field.genre"), t("search.help.genre.example")],
   [t("search.help.year.token"), t("search.help.year.desc"), t("search.help.year.example")],
   [t("search.help.bpm.token"), t("search.help.bpm.desc"), t("search.help.bpm.example")],
+  [t("search.help.energy.token"), t("search.help.energy.desc"), t("search.help.energy.example")],
+  [t("search.help.mood.token"), t("search.help.mood.desc"), t("search.help.mood.example")],
   [t("search.help.composer.token"), t("field.composer"), t("search.help.composer.example")],
   [t("search.help.album_artist.token"), t("field.album_artist"), t("search.help.album_artist.example")],
   [t("search.help.comment.token"), t("search.help.comment.desc"), t("search.help.comment.example")],
@@ -3930,6 +4046,8 @@ function fieldValuesForAutocomplete(field) {
   if (field === "ky") {
     return Object.keys(KEY_TABLE).sort((a, b) => keyRank(a) - keyRank(b)).map(keyLabel);
   }
+  // Stimmung/Tags: alle in der Bibliothek vergebenen Tags (Beschriftungen).
+  if (field === "mm") return allTagEntries().map(e => e.label);
   const set = new Set();
   for (const r of DATA) {
     const v = field === "__ext" ? fileExt(r.p) : r[field];
@@ -3957,7 +4075,7 @@ const VALUE_AC_DEBOUNCE_MS = 200;
 // Felder mit fester, kurzer Werteliste: Vorschlaege sofort und ohne
 // Mindestlaenge (siehe open()). Nur "/Status" -- alle anderen Werte kommen
 // aus DATA und waeren ohne Schwellwert eine unbrauchbar lange Liste.
-const INSTANT_VALUE_FIELDS = new Set(["v"]);
+const INSTANT_VALUE_FIELDS = new Set(["v", "mm"]);
 
 function attachSearchFilterAutocomplete(el, list) {
   let items = [], active = -1, tokStart = -1, tokEnd = -1, debounceTimer = 0;
@@ -4683,6 +4801,8 @@ const SEARCH_FIELD_ALIASES = {
   jahr: "yr", year: "yr",
   bpm: "bp",
   key: "ky", tonart: "ky",
+  energie: "eg", energy: "eg",
+  stimmung: "mm", mood: "mm", tag: "mm", tags: "mm",
   dauer: "du", laenge: "du", length: "du",
   deklariert: "kb", declared: "kb",
   konfidenz: "cf", confidence: "cf",
@@ -4712,7 +4832,7 @@ const FLAG_ALIASES = new Map([
 // den Datei-Tags kommen -- als reiner Textvergleich waere "/Jahr >2020"
 // eine sinnlose Teilstringsuche. Beide sind in der DB ganzzahlig (0 =
 // kein Tag), ein exakter Zahlenvergleich geht also auf.
-const NUMERIC_OP_FIELDS = new Set(["du", "kb", "cf", "yr", "bp"]);
+const NUMERIC_OP_FIELDS = new Set(["du", "kb", "cf", "yr", "bp", "eg"]);
 // "/Status" braucht eine eigene Filterart: in der Zeile steht der interne
 // Schluessel ("OK"/"VERDAECHTIG"/...), getippt wird aber die uebersetzte
 // Beschriftung ("Korrekt"/"Verdaechtig"/...). Ein Freitextvergleich auf r.v
@@ -4724,7 +4844,7 @@ const ALIAS_LOOKUP = new Set([...Object.keys(SEARCH_FIELD_ALIASES), ...NEGATE_AL
 let FIELD_LABELS = {a:t("field.artist"), t:t("field.title"), al:t("field.album"), aa:t("field.album_artist"),
   cp:t("field.composer"), ge:t("field.genre"), cm:t("field.comment"), p:t("field.path"), yr:t("field.year"),
   bp:t("field.bpm"), ky:t("field.key"), du:t("field.duration"), kb:t("field.declared"),
-  cf:t("field.confidence"), da:t("field.added"), v:t("col.status")};
+  cf:t("field.confidence"), da:t("field.added"), v:t("col.status"), eg:t("col.energy"), mm:t("col.mood")};
 
 // Holt labels/FIELD_LABELS/SEARCH_HELP_ENTRIES/... nach, die oben als
 // Modul-Konstanten mit t() gebaut wurden, bevor initStorage() die Sprache
@@ -4741,6 +4861,8 @@ function refreshI18nCache() {
     [t("search.help.genre.token"), t("field.genre"), t("search.help.genre.example")],
     [t("search.help.year.token"), t("search.help.year.desc"), t("search.help.year.example")],
     [t("search.help.bpm.token"), t("search.help.bpm.desc"), t("search.help.bpm.example")],
+  [t("search.help.energy.token"), t("search.help.energy.desc"), t("search.help.energy.example")],
+  [t("search.help.mood.token"), t("search.help.mood.desc"), t("search.help.mood.example")],
     [t("search.help.key.token"), t("search.help.key.desc"), t("search.help.key.example")],
     [t("search.help.composer.token"), t("field.composer"), t("search.help.composer.example")],
     [t("search.help.album_artist.token"), t("field.album_artist"), t("search.help.album_artist.example")],
@@ -4764,7 +4886,7 @@ function refreshI18nCache() {
   FIELD_LABELS = {a:t("field.artist"), t:t("field.title"), al:t("field.album"), aa:t("field.album_artist"),
     cp:t("field.composer"), ge:t("field.genre"), cm:t("field.comment"), p:t("field.path"), yr:t("field.year"),
     bp:t("field.bpm"), ky:t("field.key"), du:t("field.duration"), kb:t("field.declared"),
-    cf:t("field.confidence"), da:t("field.added"), v:t("col.status")};
+    cf:t("field.confidence"), da:t("field.added"), v:t("col.status"), eg:t("col.energy"), mm:t("col.mood")};
   // Gleiche Schluessel wie beim urspruenglichen Aufbau von OPTIONAL_COLUMNS
   // oben (Zeile ~81) -- Objekte werden hier nur umbenannt, nicht ersetzt,
   // sonst wuerden gespeicherte Spaltenreihenfolge/-breiten ihre Referenz
@@ -4773,12 +4895,13 @@ function refreshI18nCache() {
     st:"col.steepness", lu:"col.loudness", tp:"col.clip", du:"field.duration", rb:"col.rekordbox",
     im:"col.in_music", da:"field.added", cv:"col.cover", al:"field.album", tn:"col.track_no",
     aa:"field.album_artist", cp:"field.composer", ge:"field.genre", yr:"field.year", bp:"field.bpm", ky:"field.key",
+    eg:"col.energy", mm:"col.mood",
     cm:"field.comment", a:"field.artist", t:"field.title", n:"field.file",
     ti:"col.tag_issues"};
   for (const col of OPTIONAL_COLUMNS) col.label = t(columnKeyToI18n[col.key]);
   const viewIdToI18n = {ignored:"views.ignored", corrected:"views.corrected",
     gone:"views.missing", all:"views.all", duplicates:"views.duplicates",
-    tag_issues:"views.tag_issues"};
+    tag_issues:"views.tag_issues", tags:"views.tags"};
   // "pl:"/"sm:"/Fremd-Ansichten ueberspringen: ihre Label kommen aus der
   // Playlist-Tabelle (Nutzername), nicht aus STRINGS.
   for (const v of VIEWS) if (viewIdToI18n[v.id]) v.label = t(viewIdToI18n[v.id]);
@@ -4945,6 +5068,7 @@ function pushFieldFilter(filters, word, values, start, end, negate) {
   const field = SEARCH_FIELD_ALIASES[word];
   if (VERDICT_OP_FIELDS.has(field)) { filters.push({...f, kind: "verdict", field}); return; }
   if (DATE_OP_FIELDS.has(field)) { filters.push({...f, kind: "date", field}); return; }
+  if (field === "mm") { filters.push({...f, kind: "tags", field}); return; }
   filters.push({...f, kind: NUMERIC_OP_FIELDS.has(field) ? "numeric" : "field", field});
 }
 
@@ -5183,7 +5307,16 @@ function applyFilters(r, filters) {
       } { const fv = String(r[f.field] ?? "").toLowerCase();
         hit = !f.values.length || f.values.some(v => matchesFieldValue(fv, v)); break; }
       case "ext": hit = f.values.some(v => fileExt(r.p) === v.text.replace(/^\./, "").toUpperCase()); break;
-      case "numeric": hit = f.values.some(v => matchesNumericFilter(r[f.field], v.text, f.field, v.exact && !v.text)); break;
+      // Energie wird ganzzahlig angezeigt (7,6 -> "8") -- gesucht wird nach
+      // derselben Zahl, sonst traefe "/Energie 8" diesen Track nicht.
+      case "numeric": hit = f.values.some(v => matchesNumericFilter(
+        f.field === "eg" ? Math.round(r.eg || 0) : r[f.field], v.text, f.field, v.exact && !v.text)); break;
+      // Stimmung/Tags: trifft, wenn irgendein Tag der Zeile passt -- ueber die
+      // angezeigte Beschriftung oder den englischen Namen ("/Stimmung party").
+      case "tags": { const tags = rowTags(r);
+        hit = !f.values.length ? tags.length > 0
+          : f.values.some(v => tags.some(tg => matchesFieldValue(tg.label.toLowerCase(), v) ||
+              tg.id.slice(2).toLowerCase() === v.text)); break; }
       case "date": hit = f.values.some(v => matchesDateFilter(r[f.field], v.text, v.exact && !v.text)); break;
       case "verdict": hit = f.values.some(v => matchesVerdictFilter(r, v.text)); break;
       case "flag": hit = !!r[f.field]; break;
@@ -5427,7 +5560,10 @@ function filtered() {
     // Bubble-Filter der "Auffaelligkeiten"-Liste (state.tagIssueFilter) --
     // wie state.valueFilter nur wirksam, solange diese Liste aktiv ist.
     (!state.tagIssueFilter || view.id !== "tag_issues" ||
-     (r.ti || []).some(i => i.code === state.tagIssueFilter))
+     (r.ti || []).some(i => i.code === state.tagIssueFilter)) &&
+    // Bubble-Filter der Tag-Liste: ALLE gewaehlten Tags muessen passen.
+    (!state.tagFilter.length || view.id !== "tags" ||
+     (ids => state.tagFilter.every(id => ids.has(id)))(new Set(rowTags(r).map(tg => tg.id))))
   );
   if (view.id === "duplicates") {
     // Gruppierung hat hier Vorrang vor „nach Album gruppieren" -- sonst
@@ -5538,7 +5674,9 @@ function filtered() {
     // "n" (Datei) ist die einzige Spalte ohne gleichnamiges Datenfeld --
     // sortiert wird nach dem angezeigten Text.
     const val = k === "n" ? (r => displayName(r).toLowerCase())
-      : k === "ky" ? (r => keyRank(r.ky, state.dir)) : (r => r[k]);
+      : k === "ky" ? (r => keyRank(r.ky, state.dir))
+      : k === "eg" ? (r => r.eg || 0)
+      : k === "mm" ? (r => rowTags(r).map(tg => tg.label).join(", ")) : (r => r[k]);
     // Auch hier den Schluessel je Zeile einmal bilden: bei k === "n" steckt
     // darin displayName() + toLowerCase(), das sonst in jedem Vergleich neu
     // liefe. Ob textlich oder numerisch verglichen wird, entscheidet ein
@@ -5671,6 +5809,9 @@ const CELL_RENDERERS = {
   // Ganze Werte ohne ",0" ("130"), echte Nachkommastellen bleiben ("127,5").
   bp: r => `<td class="num">${r.bp ? String(Math.round(r.bp * 10) / 10).replace(".", ",") : ""}</td>`,
   ky: r => `<td>${keyBubble(r.ky, r.kr)}</td>`,
+  eg: r => `<td>${energyCell(r.eg)}</td>`,
+  mm: r => `<td>${rowTags(r).map(tg =>
+    `<span class="moodtag ${tg.cls}">${esc(tg.label)}</span>`).join("")}</td>`,
   cm: r => `<td>${esc(r.cm || "")}</td>`,
   // Eigenstaendige Spalte neben dem Badge in der Namenszelle -- zeigt jede
   // gefundene Auffaelligkeit als Zeile plus zwei Aktionsknoepfe direkt in
@@ -5763,6 +5904,9 @@ function currentListNode() {
   if (id.startsWith("pl:") || id.startsWith("sm:")) {
     return PLAYLISTS.find(n => n.id === id.slice(3)) || null;
   }
+  if (id.startsWith("gen:")) {
+    return PLAYLISTS.find(n => n.id === id.slice(4)) || null;
+  }
   // Feste System-Views (Alle/Ausgeblendet/Datei fehlt/Duplikate): dieselbe
   // Kopfzeilen-Box wie eine eigene Playliste, aber ohne editierbares
   // Icon/Farbe -- ein neutrales Symbol aus TREE_ICONS.
@@ -5816,6 +5960,12 @@ function rowMoreMenuItems(r) {
     items.push({
       icon: ICONS.audioWaveform, cls: "", title: t("action.bpmkey_title"),
       label: t("rowmenu.bpmkey"), action: () => analyseBpmKey([r]),
+    });
+  }
+  if (!r.gone && apiMode && GENREMOOD_AVAILABLE) {
+    items.push({
+      icon: ICONS.brainCircuit, cls: "", title: t("action.genremood_title"),
+      label: t("rowmenu.genremood"), action: () => analyseGenreMood([r]),
     });
   }
   if (!r.gone) {
@@ -5901,10 +6051,14 @@ window.addEventListener("resize", closeRowMoreMenu);
 
 function render() {
   closeRowMoreMenu();
+  // Ein Playlist-Generator ersetzt die Tabelle (generator.js) -- dort gibt
+  // es nichts zu filtern oder zu zeichnen.
+  if (syncGeneratorPane()) return;
   lastSelPos = null;
   renderSearchChips();
   renderPlaylistHeaderValueBox();
   renderIssueBubbles();
+  renderTagBubbles();
   if (dupGroupsDirty) { computeDuplicateGroups(); dupGroupsDirty = false; }
   const rows = filtered();
   POS_MAP = listPositionMap(currentView());
@@ -6553,6 +6707,7 @@ function renderBulkBar() {
     <button class="iconbtn plain" id="bulkConvert" title="${esc(t("bulk.convert_title"))}">${ICONS.convert}</button>
     ${bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.clefTreble}</button>` : ""}
     ${bulkBpmKeyShown(selRows, false) ? `<button class="iconbtn plain" id="bulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.audioWaveform}</button>` : ""}
+    ${bulkGenreMoodShown(selRows, false) ? `<button class="iconbtn plain" id="bulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.brainCircuit}</button>` : ""}
     <span class="sep"></span>
     ${!MIK_NAME ? "" : `<button class="iconbtn plain" id="bulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
     <span class="sep"></span>
@@ -6615,6 +6770,8 @@ function renderBulkBar() {
   if (bulkKeySyncBtn) bulkKeySyncBtn.onclick = () => writeKeyToFiles(bulkRows(), false);
   const bulkBpmKeyBtn = document.getElementById("bulkBpmKey");
   if (bulkBpmKeyBtn) bulkBpmKeyBtn.onclick = () => analyseBpmKey(bulkRows(), false);
+  const bulkGenreMoodBtn = document.getElementById("bulkGenreMood");
+  if (bulkGenreMoodBtn) bulkGenreMoodBtn.onclick = () => analyseGenreMood(bulkRows(), false);
   const bulkConvertBtn = document.getElementById("bulkConvert");
   if (bulkConvertBtn) bulkConvertBtn.onclick = () => bulkApply("convert");
   document.getElementById("bulkRescan").onclick = () => bulkApply("rescan");
@@ -6813,7 +6970,8 @@ async function analyseBpmKey(rows, isDrop, opts) {
         const data = await res.json();
         if (!data.ok) throw new Error(data.error || t("error.unknown"));
         if (data.status === "unavailable") { missing = true; continue; }
-        // Zu lange Datei (bpmkey_max_minutes): bewusst uebersprungen, kein Fehler.
+        // Zu lange Datei (bpmkey_max_minutes, gilt fuer beide Analysen):
+        // bewusst uebersprungen, kein Fehler.
         if (data.status === "skipped") { skipped++; skipMinutes = data.minutes; continue; }
         if (data.status === "written") {
           if (isDrop) Object.assign(r, fieldsToDropRow(data.fields));
@@ -6839,6 +6997,63 @@ async function analyseBpmKey(rows, isDrop, opts) {
   } else if (failed) note(t("toast.bpmkey_failed", {failed, error: lastError}), "soft");
   else if (skipped) note(t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}), "soft");
   if (!isDrop) { state.selected.clear(); render(); }
+}
+
+function bulkGenreMoodShown(rows, isDrop) {
+  return apiMode && GENREMOOD_AVAILABLE && rows.some(r => !r.gone && (!isDrop || r.nativePath));
+}
+
+// Genre-Vorschlaege, Stimmung und Energie messen (/api/genremood, je Datei ein
+// Aufruf, wie analyseBpmKey()). Das Ergebnis landet immer in der Tabelle
+// (Spalten Energie/Stimmung, Vorschlaege im Tags-Dialog); in die Datei
+// schreibt der Server nur nach den Einstellungen (Energie im gemeinsamen
+// Kommentar-Eintrag, Stimmung per genremood_write_mood).
+// Bibliothekszeilen bekommen die frische Server-Zeile, Einzelpruefungen
+// werden aus 'result' (+ geschriebenen Feldern) nachgezogen.
+async function analyseGenreMood(rows, isDrop, opts) {
+  const {workers = 2, quiet = false} = opts || {};
+  const todo = rows.filter(r => !r.gone && (!isDrop || r.nativePath));
+  if (!todo.length) return;
+  const pt = quiet ? null : progressToast(t("toast.genremood_running", {count: todo.length}));
+  const queue = todo.slice();
+  let done = 0, written = 0, skipped = 0, skipMinutes = 0, failed = 0, lastError = "", missing = false;
+  const worker = async () => {
+    while (queue.length && !missing) {
+      const r = queue.shift();
+      try {
+        // Nur beim Schreiben in die Datei muss der Player los -- vorher
+        // wuerde jede reine Messung die laufende Wiedergabe abbrechen.
+        if (GENREMOOD_WRITES) stopPlayerFor(r.p);
+        const res = await fetch("/api/genremood", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({path: r.p})});
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || t("error.unknown"));
+        if (data.status === "unavailable") { missing = true; continue; }
+        if (data.status === "skipped") { skipped++; skipMinutes = data.minutes; continue; }
+        if (data.status === "written") written++;
+        if (isDrop) {
+          Object.assign(r, genreMoodToRow(data.result), fieldsToDropRow(data.fields || {}));
+          renderDrops();
+        } else if (data.row) applyRowUpdate(r.i, data.row);
+        done++;
+      } catch (err) {
+        failed++; lastError = `${baseName(r.p)}: ${err.message}`;
+      }
+      if (pt) pt.update(100 * (done + skipped + failed) / todo.length,
+        t("toast.bpmkey_progress", {done: done + skipped + failed, total: todo.length}));
+    }
+  };
+  await Promise.all(Array.from({length: workers}, worker));
+  const skipText = skipped ? " " + t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}) : "";
+  if (missing) {
+    if (pt) pt.fail(t("toast.genremood_missing")); else note(t("toast.genremood_missing"), "soft");
+  } else if (pt) {
+    if (failed) pt.fail(t("toast.genremood_failed", {failed, error: lastError}) + skipText);
+    else if (!done && skipped) pt.done(skipText.trim(), true);
+    else pt.done(t("toast.genremood_done", {done, written}) + skipText);
+  } else if (failed) note(t("toast.genremood_failed", {failed, error: lastError}), "soft");
+  if (!isDrop) render();
 }
 
 async function bulkApply(kind) {
@@ -7505,6 +7720,12 @@ function groupCounts(key) {
 }
 
 function fieldValues(key) {
+  // Eigene Tags: alle bisher vergebenen, fuer den Tag-Editor im Tags-Dialog.
+  if (key === "ut") {
+    const all = new Map();
+    for (const tags of USER_TAGS.values()) for (const tag of tags) all.set(tag.toLowerCase(), tag);
+    return [...all.values()].sort(COLLATOR_LOOSE.compare);
+  }
   // Tonart: feste Liste aller 24 Tonarten in der gewaehlten Schreibweise,
   // nach Kreisposition (1A, 1B, 2A ...) -- nicht aus den Daten abgeleitet und
   // deshalb nie zwischengespeichert (die Schreibweise laesst sich umstellen).
@@ -7538,9 +7759,18 @@ function fieldValues(key) {
 // Umbenennen-Dialog setzt es auf false -- dort steht der ALTE Wert schon im
 // Feld, ein voller Vorschlag beim blossen Oeffnen waere nur Rauschen; erst
 // getipptes soll etwas anzeigen (siehe askValueRename-Aufruf).
-function attachAutocomplete(el, key, {openOnFocus = true} = {}) {
-  if (el._acConfig) { el._acConfig.key = key || null; el._acConfig.openOnFocus = openOnFocus; return; }
-  const cfg = {key: key || null, openOnFocus};
+// extra (optional, nur das Genre-Feld nutzt es): {header(rerender) -> HTML
+// fuer einen Kopfbereich ueber der Liste (Elemente mit data-ac-pick waehlen
+// den Wert, eigene Klicks bindet header selbst ueber bind(list, rerender)),
+// more(q) -> weitere Werte hinter den Bibliothekswerten, tag(v) -> Hinweis
+// rechts neben einem Wert}.
+function attachAutocomplete(el, key, {openOnFocus = true, extra = null} = {}) {
+  if (el._acConfig) {
+    el._acConfig.key = key || null; el._acConfig.openOnFocus = openOnFocus;
+    if (extra) el._acConfig.extra = extra;
+    return;
+  }
+  const cfg = {key: key || null, openOnFocus, extra};
   el._acConfig = cfg;
   const list = document.createElement("ul");
   list.className = "ac-list";
@@ -7550,15 +7780,31 @@ function attachAutocomplete(el, key, {openOnFocus = true} = {}) {
 
   const close = () => { list.style.display = "none"; list.innerHTML = ""; items = []; active = -1; };
 
-  const render = vals => {
+  const render = (vals, rerender) => {
     items = vals;
-    if (!items.length) { close(); return; }
+    const ex = cfg.extra;
+    const head = ex && ex.header ? ex.header() : "";
+    if (!items.length && !head) { close(); return; }
     active = -1;
-    list.innerHTML = items.map((v, i) => `<li data-i="${i}">${esc(v)}</li>`).join("");
+    list.innerHTML = head + items.map((v, i) => {
+      const tag = ex && ex.tag ? ex.tag(v) : "";
+      return `<li data-i="${i}"><span>${esc(v)}</span>${tag ? `<span class="actag">${esc(tag)}</span>` : ""}</li>`;
+    }).join("");
+    list.classList.toggle("ac-rich", !!ex);
     list.style.display = "";
-    list.querySelectorAll("li").forEach(li => {
+    list.querySelectorAll("li[data-i]").forEach(li => {
       li.onmousedown = ev => { ev.preventDefault(); pick(items[+li.dataset.i]); };
     });
+    list.querySelectorAll("[data-ac-pick]").forEach(b => {
+      b.onmousedown = ev => { ev.preventDefault(); pick(b.dataset.acPick); };
+    });
+    if (ex && ex.bind) ex.bind(list, rerender);
+  };
+  // Bibliothekswerte + (falls vorhanden) Zusatzwerte, ohne Doppelte.
+  const withMore = (base, q, limit) => {
+    const more = cfg.extra && cfg.extra.more ? cfg.extra.more(q) : [];
+    const seen = new Set(base.map(v => v.toLowerCase()));
+    return base.concat(more.filter(v => !seen.has(v.toLowerCase()))).slice(0, limit);
   };
 
   // Setzt den Wert UND feuert ein "input"-Event -- ohne das bleibt ein
@@ -7566,6 +7812,8 @@ function attachAutocomplete(el, key, {openOnFocus = true} = {}) {
   // (z.B. rules[i].value im Smart-Playlist-Regel-Editor) auf dem alten Stand,
   // weil eine reine .value-Zuweisung per Skript keine Events ausloest.
   const pick = value => {
+    // Eigene Auswahl-Logik (Tag-Editor: Wert wird zum Chip statt zum Feldinhalt).
+    if (cfg.extra && cfg.extra.onPick) { cfg.extra.onPick(value); close(); return; }
     el.value = value;
     el.dispatchEvent(new Event("input", {bubbles: true}));
     close();
@@ -7575,17 +7823,20 @@ function attachAutocomplete(el, key, {openOnFocus = true} = {}) {
   const openFiltered = () => {
     if (!cfg.key) return;
     const q = el.value.trim().toLowerCase();
-    if (!q) { render(fieldValues(cfg.key).slice(0, 200)); return; }
-    render(fieldValues(cfg.key).filter(v => v.toLowerCase().startsWith(q) && v.toLowerCase() !== q).slice(0, 8));
+    if (!q) { render(withMore(fieldValues(cfg.key), "", 600), openAll); return; }
+    const base = fieldValues(cfg.key).filter(v => v.toLowerCase().startsWith(q) && v.toLowerCase() !== q);
+    render(cfg.extra ? withMore(base, q, 40) : base.slice(0, 8), openFiltered);
   };
   // Klick/Fokus zeigt IMMER alle bereits vergebenen Werte, unabhaengig vom
   // aktuellen Feldinhalt -- sonst wuerde ein schon befuelltes Feld (z.B.
   // Genre "Rock") beim Klick nur noch auf "Rock" beginnende Praefix-Treffer
   // zeigen statt der vollen Liste, aus der man auswaehlen will.
-  const openAll = () => { if (cfg.key) render(fieldValues(cfg.key).slice(0, 200)); };
+  const openAll = () => { if (cfg.key) render(withMore(fieldValues(cfg.key), "", 600).slice(0, cfg.extra ? 600 : 200), openAll); };
 
   const highlight = () => {
-    list.querySelectorAll("li").forEach((li, i) => li.classList.toggle("on", i === active));
+    list.querySelectorAll("li[data-i]").forEach((li, i) => li.classList.toggle("on", i === active));
+    const on = list.querySelector("li.on");
+    if (on) on.scrollIntoView({block: "nearest"});
   };
 
   el.addEventListener("input", openFiltered);
@@ -7718,6 +7969,127 @@ function setTagsPopupLocked(locked) {
 // noch keine DB-Zeile, Server schreibt die Tags trotzdem (siehe
 // _authorize_path in server.py). Navigation und Ergebnis-Uebernahme laufen
 // dann gegen drops/renderDrops statt filtered()/applyRowUpdate.
+// ── Eigene Tags im Tags-Dialog ───────────────────────────────────────────
+// Chips + Eingabefeld (Enter oder Komma fuegt hinzu, Vorschlaege aus allen
+// bisher vergebenen Tags). Einzeltrack: Speichern ersetzt die Tags des Tracks.
+// Mehrfachauswahl: die Chips zeigen die Tags, die ALLE gewaehlten Tracks
+// tragen; Entfernen nimmt einen Tag bei allen weg, Hinzufuegen gibt ihn allen.
+let UT_DRAFT = [], UT_INITIAL = [];
+const utKey = tag => tag.trim().toLowerCase();
+function setupUserTagEditor(tags) {
+  UT_DRAFT = tags.slice();
+  UT_INITIAL = tags.slice();
+  const input = document.getElementById("tagsUserTagInput");
+  if (!input.dataset.acBound) {
+    input.dataset.acBound = "1";
+    attachAutocomplete(input, "ut", {extra: {onPick: v => { addUserTagDraft(v); input.value = ""; }}});
+    input.addEventListener("keydown", ev => {
+      if ((ev.key === "Enter" || ev.key === ",") && input.value.trim()) {
+        ev.preventDefault();
+        addUserTagDraft(input.value);
+        input.value = "";
+      } else if (ev.key === "Backspace" && !input.value && UT_DRAFT.length) {
+        UT_DRAFT.pop();
+        renderUserTagChips();
+      }
+    });
+  }
+  input.value = "";
+  renderUserTagChips();
+}
+function addUserTagDraft(raw) {
+  const tag = String(raw).replace(/,/g, " ").split(/\s+/).join(" ").trim();
+  if (tag && !UT_DRAFT.some(x => utKey(x) === utKey(tag))) UT_DRAFT.push(tag);
+  renderUserTagChips();
+}
+function renderUserTagChips() {
+  const host = document.getElementById("tagsUserTagChips");
+  host.innerHTML = UT_DRAFT.map((tag, i) =>
+    `<span class="moodtag usertag">${esc(tag)}<button type="button" data-utdel="${i}"
+       title="${esc(t("tags.user_tag_remove"))}">×</button></span>`).join("");
+  host.querySelectorAll("[data-utdel]").forEach(b => b.onclick = () => {
+    UT_DRAFT.splice(+b.dataset.utdel, 1);
+    renderUserTagChips();
+  });
+}
+// {add, remove} gegenueber dem Stand beim Oeffnen; Tippen ohne Enter zaehlt mit.
+function userTagChanges() {
+  const pending = document.getElementById("tagsUserTagInput").value.trim();
+  if (pending) addUserTagDraft(pending), document.getElementById("tagsUserTagInput").value = "";
+  const before = new Set(UT_INITIAL.map(utKey)), after = new Set(UT_DRAFT.map(utKey));
+  return {add: UT_DRAFT.filter(x => !before.has(utKey(x))),
+          remove: UT_INITIAL.filter(x => !after.has(utKey(x)))};
+}
+async function saveUserTags(body) {
+  const res = await fetch("/api/user-tags", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  adoptUserTags(data.tags);
+}
+
+// Genre-Dropdown im Tags-Dialog: Kopfbereich "Vorschläge" mit den Treffern
+// der Analyse (r.gs) als Chips, darunter die Werte der Bibliothek (markiert)
+// und dahinter die uebrigen Discogs-Stile, die die Analyse kennt
+// (META.genreStyles). Ein Chip setzt nur den Stil ("Electro House") ins Feld,
+// gespeichert wird wie immer erst mit "Speichern". Ohne Vorschlaege, aber mit
+// verfuegbarer Analyse: ein Chip, der sie fuer genau diesen Track startet.
+let GENRE_AC_ROW = null;          // {r, isDrop} der im Tags-Dialog offenen Zeile
+const GENRE_STYLES = Array.isArray(META.genreStyles) ? META.genreStyles : [];
+const GENRE_AC_EXTRA = {
+  header() {
+    const ctx = GENRE_AC_ROW;
+    if (!ctx) return "";
+    const {r, isDrop} = ctx;
+    const list = r.gs || [];
+    const canAnalyse = apiMode && GENREMOOD_AVAILABLE && !r.gone && (!isDrop || r.nativePath);
+    if (!list.length && !canAnalyse) return "";
+    const cur = document.getElementById("tagsGenre").value.trim().toLowerCase();
+    const chips = list.length
+      ? list.map(([g, p]) => {
+          const name = styleName(g);
+          return `<button type="button" class="gchip${name.toLowerCase() === cur ? " on" : ""}"
+            data-ac-pick="${esc(name)}" title="${esc(g.replace("---", " › "))}">${esc(name)}<span>${
+            esc(t("tags.genre_pct", {p}))}</span></button>`;
+        }).join("")
+      : `<button type="button" class="gchip gchip-analyse" data-genre-analyse
+          title="${esc(t("action.genremood_title"))}">${ICONS.brainCircuit}${esc(t("tags.genre_analyse"))}</button>`;
+    return `<li class="ac-head"><div class="ac-section">${esc(t("tags.genre_suggested"))}</div>
+      <div class="gsuggest">${chips}</div></li>
+      <li class="ac-head"><div class="ac-section">${esc(t("tags.genre_all"))}</div></li>`;
+  },
+  bind(list, rerender) {
+    const btn = list.querySelector("[data-genre-analyse]");
+    const ctx = GENRE_AC_ROW;
+    if (!btn || !ctx) return;
+    btn.onmousedown = ev => ev.preventDefault();
+    btn.onclick = async () => {
+      btn.disabled = true;
+      btn.classList.add("busy");
+      await analyseGenreMood([ctx.r], ctx.isDrop, {workers: 1, quiet: true});
+      // Nur neu zeichnen, wenn der Dialog noch denselben Track zeigt und
+      // das Dropdown offen ist.
+      if (GENRE_AC_ROW && GENRE_AC_ROW.r === ctx.r && list.style.display !== "none") {
+        if (!(ctx.r.gs || []).length) btn.outerHTML = `<span class="dim">${esc(t("tags.genre_none"))}</span>`;
+        else rerender();
+      }
+    };
+  },
+  more: q => q ? GENRE_STYLES.filter(v => v.toLowerCase().includes(q)) : GENRE_STYLES,
+  tag: v => genreInLibrary(v) ? t("tags.genre_in_library") : "",
+};
+// Menge der Bibliotheks-Genres (klein geschrieben), neu gebildet nur, wenn
+// fieldValues() eine neue Liste liefert (nach invalidateFieldValueCache()).
+let _genreLibList = null, _genreLibSet = new Set();
+function genreInLibrary(v) {
+  const list = fieldValues("ge");
+  if (list !== _genreLibList) {
+    _genreLibList = list;
+    _genreLibSet = new Set(list.map(x => x.toLowerCase()));
+  }
+  return _genreLibSet.has(v.toLowerCase());
+}
+
 function openTagsPopup(r, isDrop) {
   // Einmalig pro Element verdrahtet, ueber ein Dataset-Flag abgesichert --
   // openTagsPopup laeuft bei "Vorheriger"/"Nächster" fuer denselben Dialog
@@ -7727,7 +8099,10 @@ function openTagsPopup(r, isDrop) {
   // Elemente also noch nicht.
   for (const f of AUTOCOMPLETE_FIELDS) {
     const el = document.getElementById(f.id);
-    if (el && !el.dataset.acBound) { el.dataset.acBound = "1"; attachAutocomplete(el, f.key); }
+    if (el && !el.dataset.acBound) {
+      el.dataset.acBound = "1";
+      attachAutocomplete(el, f.key, f.id === "tagsGenre" ? {extra: GENRE_AC_EXTRA} : {});
+    }
   }
 
   const ov = document.getElementById("tagsOverlay");
@@ -7759,6 +8134,10 @@ function openTagsPopup(r, isDrop) {
   document.getElementById("tagsAlbumArtist").value = r.aa || "";
   document.getElementById("tagsComposer").value = r.cp || "";
   document.getElementById("tagsGenre").value = r.ge || "";
+  // Fuer den Vorschlags-Kopf im Genre-Dropdown (GENRE_AC_EXTRA).
+  GENRE_AC_ROW = {r, isDrop};
+  document.getElementById("tagsUserTagInput").placeholder = t("tags.user_tags_placeholder");
+  setupUserTagEditor(USER_TAGS.get(r.p) || []);
   document.getElementById("tagsYear").value = r.yr || "";
   document.getElementById("tagsBpm").value = r.bp || "";
   document.getElementById("tagsKey").value = keyLabel(r.ky);
@@ -8001,7 +8380,9 @@ function openTagsPopup(r, isDrop) {
       else if (payloadKey === "track_no" || payloadKey === "track_total") fields[payloadKey] = raw ? parseInt(raw, 10) : 0;
       else fields[payloadKey] = raw;
     }
-    if (!Object.keys(fields).length && !pendingCover) {
+    const utChanges = userTagChanges();
+    const utChanged = utChanges.add.length || utChanges.remove.length;
+    if (!Object.keys(fields).length && !pendingCover && !utChanged) {
       status.textContent = t("tags.no_changes");
       status.className = "";
       return;
@@ -8078,6 +8459,12 @@ function openTagsPopup(r, isDrop) {
         }
       }
 
+      if (utChanged) {
+        await saveUserTags({path: r.p, tags: UT_DRAFT});
+        UT_INITIAL = UT_DRAFT.slice();
+        if (isDrop) renderDrops(); else render();
+      }
+
       // Overlay bleibt bewusst offen -- nur ein kurzes Feedback, damit direkt
       // weiter am selben Track editiert werden kann (z.B. Cover danach).
       status.textContent = t("tags.saved"); status.className = "ok";
@@ -8152,6 +8539,13 @@ function openTagsPopupBulk(rows, isDrop) {
   document.getElementById("tagsPrev").style.display = "none";
   document.getElementById("tagsNext").style.display = "none";
   document.querySelector(".tagslookup").style.display = "none";
+  // Genre-Vorschlaege gelten je Track -- im Mehrfach-Modus gibt es keine.
+  GENRE_AC_ROW = null;
+  // Chips = Tags, die ALLE gewaehlten Tracks tragen (siehe setupUserTagEditor()).
+  const tagSets = rows.map(x => new Set((USER_TAGS.get(x.p) || []).map(utKey)));
+  const common = (USER_TAGS.get(rows[0].p) || []).filter(tag => tagSets.every(set => set.has(utKey(tag))));
+  document.getElementById("tagsUserTagInput").placeholder = t("tags.user_tags_bulk_placeholder");
+  setupUserTagEditor(common);
 
   const img = document.getElementById("tagsCoverImg");
   const empty = document.getElementById("tagsCoverEmpty");
@@ -8255,7 +8649,9 @@ function openTagsPopupBulk(rows, isDrop) {
       else if (payloadKey === "track_no" || payloadKey === "track_total") fields[payloadKey] = raw ? parseInt(raw, 10) : 0;
       else fields[payloadKey] = raw;
     }
-    if (!Object.keys(fields).length && !pendingCover) {
+    const utChanges = userTagChanges();
+    const utChanged = utChanges.add.length || utChanges.remove.length;
+    if (!Object.keys(fields).length && !pendingCover && !utChanged) {
       status.textContent = t("tags.no_changes"); status.className = "";
       return;
     }
@@ -8265,6 +8661,15 @@ function openTagsPopupBulk(rows, isDrop) {
     saveBtn.disabled = true;
     saveBtn.classList.add("busy");
     status.textContent = t("tags.saving"); status.className = "";
+
+    // Eigene Tags in EINEM Aufruf fuer alle Tracks (nur DB, keine Datei).
+    let utError = "";
+    if (utChanged) {
+      try {
+        await saveUserTags({paths: rows.map(x => x.p), add: utChanges.add, remove: utChanges.remove});
+        UT_INITIAL = UT_DRAFT.slice();
+      } catch (err) { utError = err.message; }
+    }
 
     const queue = rows.slice();
     let okCount = 0, failCount = 0, coverSyncMisses = 0;
@@ -8331,9 +8736,10 @@ function openTagsPopupBulk(rows, isDrop) {
     }
 
     status.textContent = t("tags.bulk_saved", {ok: okCount, total: rows.length}) +
-      (failCount ? t("tags.bulk_failed_suffix", {count: failCount}) : ".");
-    status.className = failCount ? "warn" : "ok";
-    saveBtn.classList.add(failCount ? "failed" : "done");
+      (failCount ? t("tags.bulk_failed_suffix", {count: failCount}) : ".") +
+      (utError ? " " + t("tags.user_tags_failed", {error: utError}) : "");
+    status.className = failCount || utError ? "warn" : "ok";
+    saveBtn.classList.add(failCount || utError ? "failed" : "done");
     // Nur die Vormerkung loeschen, nicht die Object-URL freigeben: die
     // Vorschau haengt noch daran und soll das uebernommene Bild
     // weiterzeigen. Aufgeraeumt wird beim Schliessen (close()).
@@ -8428,6 +8834,8 @@ let EDITOR_NAME = "";
 let DAW_NAME = "";
 let MIK_NAME = "";
 let BPMKEY_AVAILABLE = false, BPMKEY_AUTO = false;
+let GENREMOOD_AVAILABLE = false, GENREMOOD_AUTO = false, GENREMOOD_MIN_PERCENT = 5,
+  GENREMOOD_WRITES = false;
 let MUSIC_NAME = "";
 let REKORDBOX_NAME = "";
 let REKORDBOX_PLAYLIST = "";
@@ -9819,12 +10227,13 @@ function settingField(f, value, dflt) {
   }
   const showIf = f.show_if ? ` data-show-if-key="${esc(f.show_if.key)}"` +
     (f.show_if.not_empty ? ` data-show-if-not-empty="1"`
+      : f.show_if.not_value !== undefined ? ` data-show-if-not-value="${esc(f.show_if.not_value)}"`
       : ` data-show-if-contains="${esc(f.show_if.contains)}"`) : "";
   return `<div class="setfield${fieldWidthClass(f)}"${showIf}>${label}${input}
           ${f.help ? `<div class="sethelp">${esc(f.help)}</div>` : ""}</div>`;
 }
 
-// Blendet Felder mit data-show-if-key/-contains (oder -not-empty) ein/aus,
+// Blendet Felder mit data-show-if-key/-contains (oder -not-empty/-not-value) ein/aus,
 // je nachdem, ob der aktuelle (Live-)Wert des referenzierten Feldes den
 // Teilstring enthaelt bzw. ueberhaupt gesetzt ist -- z.B. "Ableton-Vorlage"
 // nur, wenn external_daw auf Ableton zeigt, "Cover aus Music.app
@@ -9837,7 +10246,9 @@ function applyShowIf() {
     const raw = src ? src.value : "";
     const visible = el.dataset.showIfNotEmpty === "1"
       ? raw.trim() !== ""
-      : raw.toLowerCase().includes(el.dataset.showIfContains);
+      : el.dataset.showIfNotValue !== undefined
+        ? raw !== el.dataset.showIfNotValue
+        : raw.toLowerCase().includes(el.dataset.showIfContains);
     el.style.display = visible ? "" : "none";
   });
 }
@@ -10052,6 +10463,10 @@ async function postSettings(url, body) {
     }
     schema.values = data.values;
     BPMKEY_AUTO = !!data.values.bpmkey_auto_drops;
+    GENREMOOD_AUTO = !!data.values.genremood_auto_drops;
+    GENREMOOD_MIN_PERCENT = Number(data.values.genremood_min_percent) || 5;
+    GENREMOOD_WRITES = String(data.values.bpmkey_comment_content || "").includes("energy") ||
+      data.values.genremood_write_mood === "tag";
     // Nur der Shops-Reset liefert "shops" mit -- alle anderen Gruppen
     // aendern die Liste nicht, ALL_SHOPS/schema.shops sollen dann unberuehrt
     // bleiben statt auf einen fehlenden Wert zurueckzufallen.
@@ -10154,6 +10569,7 @@ async function pollScan() {
       (f.removed ? esc(t("scan.removed_suffix", {count: f.removed})) : "") +
       (f.covers_filled ? esc(t("scan.covers_filled_suffix", {count: f.covers_filled})) : "") +
       (f.tag_issues_rechecked ? esc(t("scan.tag_issues_rechecked_suffix", {count: f.tag_issues_rechecked})) : "") +
+      (f.genremood_done ? esc(t("scan.genremood_suffix", {count: f.genremood_done})) : "") +
       ` — <a href="#" id="reloadScan">${esc(t("scan.reload_page"))}</a>`);
     const rl = document.getElementById("reloadScan");
     if (rl) rl.onclick = e => { e.preventDefault(); location.reload(); };
@@ -12211,6 +12627,7 @@ function renderDropBulkBar() {
     })()}
     ${bulkKeySyncShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.clefTreble}</button>` : ""}
     ${bulkBpmKeyShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.audioWaveform}</button>` : ""}
+    ${bulkGenreMoodShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.brainCircuit}</button>` : ""}
     ${!MIK_NAME ? "" : `<button class="iconbtn plain" id="dropBulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
     <span class="sep"></span>
     <button class="iconbtn del" id="dropBulkRemove"
@@ -12231,6 +12648,8 @@ function renderDropBulkBar() {
   if (dropBulkKeySyncBtn) dropBulkKeySyncBtn.onclick = () => writeKeyToFiles(selectedDrops(), true);
   const dropBulkBpmKeyBtn = document.getElementById("dropBulkBpmKey");
   if (dropBulkBpmKeyBtn) dropBulkBpmKeyBtn.onclick = () => analyseBpmKey(selectedDrops(), true);
+  const dropBulkGenreMoodBtn = document.getElementById("dropBulkGenreMood");
+  if (dropBulkGenreMoodBtn) dropBulkGenreMoodBtn.onclick = () => analyseGenreMood(selectedDrops(), true);
   const dropBulkMikBtn = document.getElementById("dropBulkMik");
   if (dropBulkMikBtn) dropBulkMikBtn.onclick = async () => {
     const sel = selectedDrops();
@@ -12536,12 +12955,20 @@ function initDropzone() {
         }
         pt.done(t("drop.pick.done", {ok, plural: ok === 1 ? "" : "s"}) +
           (failed ? t("drop.pick.done_failed_suffix", {failed}) : ""), !!failed && !ok);
-        // Auto-Lauf BPM/Tonart (Einstellung bpmkey_auto_drops) -- bewusst nicht
-        // abgewartet: der Auswahl-Knopf soll sofort wieder frei sein, die
-        // Analyse laeuft im Hintergrund weiter (eine Datei nach der anderen).
-        if (BPMKEY_AUTO && BPMKEY_AVAILABLE) {
-          const fresh = drops.filter(r => r.nativePath && rows.some(x => x.path === r.p));
-          analyseBpmKey(fresh.reverse(), true, {workers: 1}).catch(() => {});
+        // Auto-Laeufe BPM/Tonart und Genre/Stimmung (bpmkey_auto_drops,
+        // genremood_auto_drops) -- bewusst nicht abgewartet: der Auswahl-Knopf
+        // soll sofort wieder frei sein, die Analysen laufen im Hintergrund
+        // weiter (eine Datei nach der anderen). Nacheinander statt parallel:
+        // beide koennen den Kommentar schreiben, gleichzeitig wuerde einer
+        // den anderen ueberschreiben.
+        const autoBpm = BPMKEY_AUTO && BPMKEY_AVAILABLE;
+        const autoGm = GENREMOOD_AUTO && GENREMOOD_AVAILABLE;
+        if (autoBpm || autoGm) {
+          const fresh = drops.filter(r => r.nativePath && rows.some(x => x.path === r.p)).reverse();
+          (async () => {
+            if (autoBpm) await analyseBpmKey(fresh, true, {workers: 1});
+            if (autoGm) await analyseGenreMood(fresh, true, {workers: 1, quiet: true});
+          })().catch(() => {});
         }
       }
     } catch (err) {
@@ -13625,6 +14052,47 @@ function renderPlaylistHeaderValueBox() {
 // lang wie eine Genre-/Interpretenliste. Jede Zeile zaehlt je Code nur
 // einmal (ein Track mit zwei gleichen Codes -- kommt praktisch nicht vor,
 // aber zur Sicherheit -- soll nicht doppelt zaehlen).
+// Alle vergebenen Tags der Bibliothek mit Trackzahl, haeufigste zuerst.
+function allTagEntries() {
+  const counts = new Map();
+  for (const r of live()) {
+    for (const tg of rowTags(r)) {
+      const e = counts.get(tg.id);
+      if (e) e.count++; else counts.set(tg.id, {...tg, count: 1});
+    }
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count || cmpText(a.label, b.label));
+}
+
+// ── Tag-Bubbles im Playlist-Kopf der Liste "Tags" ────────────────────────
+// Wie die Auffaelligkeiten-Bubbles, aber mehrfach waehlbar: gewaehlte Tags
+// sind UND-verknuepft ("Party" + "Deep" = Tracks mit beiden). Die Zahlen
+// beziehen sich auf die ganze Bibliothek, nicht auf die aktuelle Auswahl.
+function renderTagBubbles() {
+  const row = document.getElementById("plHeadTagBubblesRow");
+  if (!row) return;
+  if (state.view !== "tags") { row.hidden = true; return; }
+  const entries = allTagEntries();
+  row.hidden = false;
+  if (!entries.length) {
+    row.innerHTML = `<span class="dim">${esc(t("tags.view_empty"))}</span>`;
+    return;
+  }
+  row.innerHTML = entries.map(e => {
+    const active = state.tagFilter.includes(e.id);
+    return `<span class="genrebubble tagbubble${active ? " active" : ""}" data-tagid="${esc(e.id)}">
+      <span class="moodtag ${e.cls}">${esc(e.label)}</span>
+      <span class="genrecount">${e.count}</span></span>`;
+  }).join("");
+  row.querySelectorAll("[data-tagid]").forEach(el => el.onclick = () => {
+    const id = el.dataset.tagid;
+    state.tagFilter = state.tagFilter.includes(id)
+      ? state.tagFilter.filter(x => x !== id) : [...state.tagFilter, id];
+    state.shown = PAGE;
+    render();
+  });
+}
+
 function renderIssueBubbles() {
   const row = document.getElementById("plHeadIssueBubblesRow");
   if (!row) return;
@@ -13931,6 +14399,7 @@ function askScanOptions() {
     const loudnessEl = document.getElementById("scanOptLoudness");
     const metaEl = document.getElementById("scanOptMeta");
     const tagIssuesEl = document.getElementById("scanOptTagIssues");
+    const genreMoodEl = document.getElementById("scanOptGenreMood");
     const startBtn = document.getElementById("scanOptionsStart");
 
     // "Metadaten Scan" erzwingt nur den Cover-Abgleich mit Music.app
@@ -13940,10 +14409,14 @@ function askScanOptions() {
     // statt wirkungslos anwaehlbar zu sein.
     document.getElementById("scanOptMetaRow").style.display = MUSIC_NAME ? "" : "none";
     if (!MUSIC_NAME) metaEl.checked = false;
+    // Ohne onnxruntime/Modelle gibt es nichts zu analysieren (siehe
+    // genremood.available()) -- Schalter dann gar nicht erst anbieten.
+    document.getElementById("scanOptGenreMoodRow").style.display = GENREMOOD_AVAILABLE ? "" : "none";
+    if (!GENREMOOD_AVAILABLE) genreMoodEl.checked = false;
 
     const syncState = () => {
       const active = dbEl.checked || fullEl.checked;
-      [cutoffEl, loudnessEl, metaEl, tagIssuesEl].forEach(el => { el.disabled = !active; });
+      [cutoffEl, loudnessEl, metaEl, tagIssuesEl, genreMoodEl].forEach(el => { el.disabled = !active; });
       startBtn.disabled = !active;
     };
     dbEl.onchange = () => { if (dbEl.checked) fullEl.checked = false; syncState(); };
@@ -13961,6 +14434,7 @@ function askScanOptions() {
         loudness: loudnessEl.checked,
         meta: metaEl.checked,
         tagIssues: tagIssuesEl.checked,
+        genreMood: genreMoodEl.checked,
       });
     };
   });
@@ -13974,6 +14448,7 @@ document.getElementById("btnScan").onclick = async () => {
     skip_loudness: !choice.loudness,
     force_cover_fill: choice.meta,
     recheck_tags: choice.tagIssues,
+    genremood: choice.genreMood,
   });
 };
 function askRekordboxSyncOptions() {
@@ -14298,6 +14773,7 @@ document.getElementById("plUndo").onclick = () => runUndo("undo");
 document.getElementById("plRedo").onclick = () => runUndo("redo");
 document.getElementById("btnNewPlaylist").onclick = () => createPlaylistNode("playlist");
 document.getElementById("btnNewSmart").onclick = () => createPlaylistNode("smart");
+document.getElementById("btnNewGenerator").onclick = () => createPlaylistNode("generator");
 document.getElementById("btnNewFolder").onclick = () => createPlaylistNode("folder");
 syncLayoutSwitch();
 syncControls();

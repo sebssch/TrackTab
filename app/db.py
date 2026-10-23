@@ -169,6 +169,32 @@ CREATE TABLE IF NOT EXISTS cover_cache (
     ts   REAL
 );
 
+-- Genre-Vorschlaege, Stimmung und Energie (app/genremood.py). Abgeleitete
+-- Messung wie 'waveform', kein Datei-Inhalt -- deshalb eigene Tabelle statt
+-- Spalten in 'files' (die spiegeln die Datei wider und werden je Scan neu
+-- gelesen). genres = JSON [[Stil, Wahrscheinlichkeit], ...] absteigend,
+-- moods = JSON {aggressive, happy, party, relaxed, sad, danceability},
+-- energy = 1..10. Kostet je Track mehrere Sekunden -- laeuft nur auf
+-- Anforderung, nie im Scan.
+CREATE TABLE IF NOT EXISTS genremood (
+    path   TEXT PRIMARY KEY,
+    genres TEXT,
+    moods  TEXT,
+    energy REAL,
+    model  TEXT,
+    ts     REAL
+);
+
+-- Eigene Tags des Nutzers (frei benannt, z. B. "Warm-up", "Peak Time"),
+-- vergeben im Tags-Dialog. Reine Nutzer-Angabe wie favorites -- deshalb eigene
+-- Tabelle, nie in der Datei. Mehrere Zeilen je Pfad (eine je Tag).
+CREATE TABLE IF NOT EXISTS user_tags (
+    path TEXT NOT NULL,
+    tag  TEXT NOT NULL,
+    ts   REAL,
+    PRIMARY KEY (path, tag)
+);
+
 -- Rohes Ereignisprotokoll fuer die spaetere Statistik-Ansicht (Issue #15/#16):
 -- aktuell nur qualifizierende Wiedergaben (>= 30s tatsaechliche Hoerzeit) und
 -- Neuzugaenge in die Music-Bibliothek, siehe app.js/server.py. 'kind' ist ein
@@ -605,7 +631,7 @@ def delete_cached_cover(conn: sqlite3.Connection, path: str) -> None:
 # wandert, die zweite Haelfte (playlist_id) bleibt.
 _PATH_TABLES = ("files", "ignored", "corrected", "waveform",
                 "rekordbox", "rekordbox_pending", "music_added", "cover_cache",
-                "playlist_items", "dup_dismissed")
+                "playlist_items", "dup_dismissed", "genremood", "user_tags")
 
 
 def move_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> bool:
@@ -722,7 +748,7 @@ def reconcile_case_renames(conn: sqlite3.Connection,
 # Daten. Ohne 'files'-Zeile sind sie unerreichbarer Ballast, und sie lassen
 # sich jederzeit neu berechnen bzw. abgleichen.
 _PRUNE_TABLES = ("files", "waveform", "rekordbox", "rekordbox_pending",
-                  "music_added")
+                  "music_added", "genremood")
 
 
 def prune_missing(conn: sqlite3.Connection, existing: set[str]) -> list[str]:
@@ -789,6 +815,82 @@ def set_corrected(conn: sqlite3.Connection, path: str, flag: bool) -> bool:
     return flag
 
 
+def genremood_map(conn: sqlite3.Connection) -> dict[str, dict]:
+    """Alle gespeicherten Genre-/Stimmungs-Analysen: Pfad -> {"g": [[Stil, p],
+    ...], "m": {Stimmung: p}, "e": Energie}. Kaputte JSON-Werte zaehlen als leer."""
+    out: dict[str, dict] = {}
+    for r in conn.execute("SELECT path, genres, moods, energy FROM genremood"):
+        try:
+            genres = json.loads(r["genres"] or "[]")
+        except (TypeError, ValueError):
+            genres = []
+        try:
+            moods = json.loads(r["moods"] or "{}")
+        except (TypeError, ValueError):
+            moods = {}
+        out[r["path"]] = {"g": genres, "m": moods, "e": float(r["energy"] or 0)}
+    return out
+
+
+def paths_needing_genremood(conn: sqlite3.Connection, max_seconds: float,
+                            version: str) -> list[str]:
+    """Erfolgreich gescannte Dateien ohne Genre-/Stimmungs-Analyse oder mit
+    einem aelteren Analysestand (Spalte model != version, z. B. vor einem neu
+    hinzugekommenen Modell), nicht laenger als max_seconds -- Kandidaten fuer
+    den Scan-Schritt jobs._analyse_genremood(). Zu lange Dateien bleiben schon
+    hier draussen, sonst kaeme jede bei jedem Scan erneut als Kandidat."""
+    return [r["path"] for r in conn.execute(
+        "SELECT path FROM files WHERE status = 'ok' AND duration_s <= ? "
+        "AND path NOT IN (SELECT path FROM genremood WHERE model = ?) ORDER BY path",
+        (max_seconds, version))]
+
+
+def user_tags_map(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """Pfad -> eigene Tags (alphabetisch)."""
+    out: dict[str, list[str]] = {}
+    for r in conn.execute("SELECT path, tag FROM user_tags ORDER BY tag COLLATE NOCASE"):
+        out.setdefault(r["path"], []).append(r["tag"])
+    return out
+
+
+def set_user_tags(conn: sqlite3.Connection, path: str, tags: list[str]) -> None:
+    """Ersetzt die eigenen Tags eines Pfads komplett."""
+    conn.execute("DELETE FROM user_tags WHERE path = ?", (path,))
+    now = time.time()
+    conn.executemany("INSERT OR IGNORE INTO user_tags (path, tag, ts) VALUES (?, ?, ?)",
+                     [(path, t, now) for t in tags])
+    conn.commit()
+
+
+def change_user_tags(conn: sqlite3.Connection, paths: list[str],
+                     add: list[str], remove: list[str]) -> None:
+    """Sammelaktion: Tags zu mehreren Pfaden hinzufuegen bzw. entfernen,
+    alle uebrigen Tags der Pfade bleiben."""
+    now = time.time()
+    conn.executemany("INSERT OR IGNORE INTO user_tags (path, tag, ts) VALUES (?, ?, ?)",
+                     [(p, t, now) for p in paths for t in add])
+    conn.executemany("DELETE FROM user_tags WHERE path = ? AND tag = ?",
+                     [(p, t) for p in paths for t in remove])
+    conn.commit()
+
+
+def genremood_energy(conn: sqlite3.Connection, path: str) -> float:
+    """Gespeicherte Energie (1..10) eines Pfads, 0.0 ohne Analyse."""
+    row = conn.execute("SELECT energy FROM genremood WHERE path = ?", (path,)).fetchone()
+    return float(row["energy"] or 0) if row else 0.0
+
+
+def save_genremood(conn: sqlite3.Connection, path: str, genres: list,
+                   moods: dict, energy: float, model: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO genremood (path, genres, moods, energy, model, ts) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (path, json.dumps(genres), json.dumps(moods), float(energy), model,
+         time.time()),
+    )
+    conn.commit()
+
+
 def dup_dismissed_paths(conn: sqlite3.Connection) -> set[str]:
     return {r["path"] for r in conn.execute("SELECT path FROM dup_dismissed")}
 
@@ -847,7 +949,11 @@ def set_merge_dismissed(conn: sqlite3.Connection, field: str, a: str, b: str, fl
 # Nutzer-Entscheidung wie 'ignored'/'favorites'/'corrected' und soll eine
 # voruebergehend nicht erreichbare Datei (externe Platte) ueberleben.
 
-PLAYLIST_KINDS = ("folder", "playlist", "smart")
+# 'generator': Playlist-Generator (app/webui/generator.js). Die Einstellungen
+# (Kurve, Regler, Gates, Slots) stehen wie das Regelwerk einer Smart Playlist
+# in 'rules', die Belegung aber in 'playlist_items' wie bei einer normalen
+# Playlist -- move_path() zieht sie dadurch ohne Sonderfall mit.
+PLAYLIST_KINDS = ("folder", "playlist", "smart", "generator")
 
 
 # Feste Listen, die TrackTab selbst mitbringt: ein Ordner mit je einer Smart

@@ -16,6 +16,7 @@ from pathlib import Path
 from . import __version__
 from . import classify as classify_mod
 from . import config as cfgmod
+from . import genremood as genremood_mod
 from . import tags as tags_mod
 
 _FLAGGED = (classify_mod.VERDICT_FAKE, classify_mod.VERDICT_SUSPECT)
@@ -47,7 +48,8 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
                      corrected: set[str] | None = None,
                      rekordbox: set[str] | None = None,
                      music_added: dict[str, float] | None = None,
-                     dup_dismissed: set[str] | None = None) -> list:
+                     dup_dismissed: set[str] | None = None,
+                     genremood: dict[str, dict] | None = None) -> list:
     """
     Kompakte Struktur fuer das eingebettete JSON.
 
@@ -63,6 +65,10 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
     rekordbox = rekordbox or set()
     music_added = music_added or {}
     dup_dismissed = dup_dismissed or set()
+    genremood = genremood or {}
+    # Genre-Vorschlaege unter dieser Schwelle (Prozent) bleiben weg -- bei 400
+    # Stilen haette sonst fast jede Zeile einen langen Schwanz an 1-%-Treffern.
+    min_p = max(0.0, float(cfg.get("genremood_min_percent", 5) or 0)) / 100.0
     out = []
     for idx, r in enumerate(rows):
         flagged = r["verdict"] != classify_mod.VERDICT_OK
@@ -81,6 +87,7 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
                 spectrum = [p[1] for p in json.loads(r["spectrum"] or "[]")]
             except (TypeError, ValueError):
                 spectrum = []
+        gm = genremood.get(r["path"]) or {}
         out.append({
             "i": idx,
             "p": r["path"],
@@ -126,6 +133,12 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
             "rb": 1 if r["path"] in rekordbox else 0,
             "im": 1 if r["path"] in music_added else 0,
             "da": int(music_added.get(r["path"]) or 0),
+            # Genre-Vorschlaege [[Stil, Prozent], ...] (hoechstens 5),
+            # Energie 1..10 (0 = nicht analysiert), Stimmungen {Name: 0..1}.
+            "gs": [[g, round(p * 100)] for g, p in (gm.get("g") or [])[:5]
+                   if p >= min_p],
+            "eg": round(gm.get("e") or 0.0, 1),
+            "mm": {k: round(v, 2) for k, v in (gm.get("m") or {}).items()},
             # Geloeschte Dateien bleiben in der Datenbank, bis aufgeraeumt wird.
             # Die Oberflaeche soll sie als solche zeigen statt still zu scheitern.
             "gone": 0 if os.path.isfile(r["path"]) else 1,
@@ -194,12 +207,14 @@ def build_html(rows, cfg: dict, ignored: set[str] | None = None,
                music_added: dict[str, float] | None = None,
                playlists: list[dict] | None = None,
                playlist_items: dict[str, list[str]] | None = None,
-               dup_dismissed: set[str] | None = None) -> Path:
+               dup_dismissed: set[str] | None = None,
+               genremood: dict[str, dict] | None = None,
+               user_tags: dict[str, list[str]] | None = None) -> Path:
     path = cfgmod.resolve(cfg["report_path"])
     path.parent.mkdir(parents=True, exist_ok=True)
 
     payload = rows_to_payload(rows, cfg, ignored, corrected, rekordbox,
-                               music_added, dup_dismissed)
+                               music_added, dup_dismissed, genremood)
 
     # Kennzahlen und Histogramm entstehen im Browser, damit sie sich sofort
     # mitbewegen, wenn Tracks ausgeblendet werden.
@@ -220,6 +235,9 @@ def build_html(rows, cfg: dict, ignored: set[str] | None = None,
         # Aktualisierung danach laeuft live ueber den Endpunkt, nicht ueber
         # einen Rebuild -- siehe server._get_playlists().
         "playlists": playlists or [],
+        # Eigene Tags (Pfad -> [Tag]) -- wie playlistItems gebacken, damit die
+        # Tag-Liste beim Laden sofort steht; danach live ueber /api/user-tags.
+        "userTags": user_tags or {},
         "playlistItems": playlist_items or {},
         # Tonart: Camelot -> [Camelot, Open Key, Notennamen] und
         # Schreibweise -> Camelot (Suche/Eingabe), siehe tags.KEY_TABLE.
@@ -227,6 +245,9 @@ def build_html(rows, cfg: dict, ignored: set[str] | None = None,
         "keyTable": {k: list(v) for k, v in tags_mod.KEY_TABLE.items()},
         "keyAliases": tags_mod.key_aliases(),
         "keyNotation": cfg.get("key_notation", "camelot"),
+        # Stilnamen der Genre-Analyse fuer die Genre-Auswahl im Tags-Dialog
+        # (hinter den Bibliotheks-Genres), leer ohne Modelle.
+        "genreStyles": genremood_mod.style_names(),
     }
 
     html = (
@@ -248,6 +269,8 @@ def build_all(conn, cfg: dict) -> dict:
     playlists = db_mod.playlists_all(conn)
     playlist_items = db_mod.playlist_items_map(conn)
     dup_dismissed = db_mod.dup_dismissed_paths(conn)
+    genremood = db_mod.genremood_map(conn)
+    user_tags = db_mod.user_tags_map(conn)
     # Ausgeblendete und manuell korrigierte Faelle sind abgehakt und tauchen
     # deshalb in CSV und Playlist nicht mehr auf. Merken (eine als Merkliste
     # markierte Playlist) ist bewusst unabhaengig davon und haelt Tracks
@@ -258,14 +281,16 @@ def build_all(conn, cfg: dict) -> dict:
     hidden = ignored | corrected
     return {
         "HTML": build_html(rows, cfg, ignored, corrected, rekordbox,
-                           music_added, playlists, playlist_items, dup_dismissed),
+                           music_added, playlists, playlist_items, dup_dismissed,
+                           genremood, user_tags),
         "CSV": build_csv(rows, cfg, hidden),
         "M3U": build_m3u(rows, cfg, hidden),
     }
 
 
 # Aus diesen Dateien backt _template() den Report zusammen.
-_UI_FILES = ("index.html", "app.css", "app.js", "i18n/de.js", "i18n/en.js", "lucide-icons.js")
+_UI_FILES = ("index.html", "app.css", "app.js", "generator.js", "i18n/de.js", "i18n/en.js",
+             "lucide-icons.js")
 
 
 def is_stale(cfg: dict) -> bool:
@@ -310,6 +335,12 @@ def _template() -> str:
     i18n_en = (ui / "i18n" / "en.js").read_text(encoding="utf-8")
     lucide_js = (ui / "lucide-icons.js").read_text(encoding="utf-8")
     app_js = (ui / "app.js").read_text(encoding="utf-8")
-    html = html.replace("<!--__JS__-->", i18n_de + "\n" + i18n_en + "\n" + lucide_js + "\n" + app_js)
+    # Der Playlist-Generator steht in einer eigenen Datei, laeuft aber im
+    # selben <script> NACH app.js: er nutzt dessen Helfer (t(), keyBubble(),
+    # playlistApi(), ...), und app.js ruft seine Funktionen erst bei Bedarf
+    # auf (Funktionsdeklarationen sind im ganzen Skript bekannt).
+    gen_js = (ui / "generator.js").read_text(encoding="utf-8")
+    html = html.replace("<!--__JS__-->", i18n_de + "\n" + i18n_en + "\n" + lucide_js + "\n"
+                        + app_js + "\n" + gen_js)
     html = html.replace("<!--__VERSION__-->", f"v{__version__}")
     return html

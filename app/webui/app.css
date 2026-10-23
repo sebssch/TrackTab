@@ -1393,6 +1393,72 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
   --key-11b:#4BD1F7; --key-11a:#93E3FA;
   --key-12b:#20EAE6; --key-12a:#79F2F0;
 }
+/* ── Energie (1-10) und Stimmung ── aus der Genre-/Stimmungs-Analyse. Farben
+   aus der gemeinsamen --dc-*-Palette, damit Light/Dark ohne eigene Werte
+   stimmen. Energie: zehn Segmente von kuehl (ruhig) nach warm (treibend). */
+.energy { display:inline-flex; align-items:center; gap:6px; font-variant-numeric:tabular-nums;
+          font-size:12px; font-weight:600; }
+.energybar { display:inline-flex; gap:2px; }
+.energybar i { display:block; width:4px; height:12px; border-radius:1.5px; background:var(--line); }
+.energybar i.e1, .energybar i.e2 { background:var(--dc-skyblue); }
+.energybar i.e3, .energybar i.e4 { background:var(--dc-blue); }
+.energybar i.e5, .energybar i.e6 { background:var(--dc-purple); }
+.energybar i.e7, .energybar i.e8 { background:var(--dc-crimson); }
+.energybar i.e9, .energybar i.e10 { background:var(--dc-orange); }
+.moodtag { display:inline-block; margin-right:4px; padding:1px 7px; border-radius:999px;
+           font-size:11px; font-weight:600; white-space:nowrap; }
+.mood-aggressive { color:var(--dc-red);    background:var(--dc-red-bg); }
+.mood-happy      { color:var(--dc-yellow); background:var(--dc-yellow-bg); }
+.mood-party      { color:var(--dc-purple); background:var(--dc-purple-bg); }
+.mood-relaxed    { color:var(--dc-green);  background:var(--dc-green-bg); }
+.mood-sad        { color:var(--dc-slate);  background:var(--dc-slate-bg); }
+/* DJ-Stimmungen: eigene Farben aus derselben Palette, mit Rahmen statt
+   Flaeche -- so bleiben sie von den fuenf Grundstimmungen unterscheidbar. */
+.mood-energetic, .mood-groovy, .mood-dark, .mood-deep, .mood-uplifting, .mood-melancholic,
+.mood-upbeat, .mood-epic, .mood-melodic, .mood-summer, .mood-romantic
+                 { background:transparent; border:1px solid currentColor; padding:0 6px; }
+.mood-energetic  { color:var(--dc-orange); }
+.mood-groovy     { color:var(--dc-dustyrose); }
+.mood-dark       { color:var(--dc-slate); }
+.mood-deep       { color:var(--dc-indigo); }
+.mood-uplifting  { color:var(--dc-skyblue); }
+.mood-melancholic{ color:var(--dc-blue); }
+.mood-upbeat     { color:var(--dc-yellow); }
+.mood-epic       { color:var(--dc-crimson); }
+.mood-melodic    { color:var(--dc-purple); }
+.mood-summer     { color:var(--dc-green); }
+.mood-romantic   { color:var(--dc-brown); }
+/* Eigene Tags: neutral (Rahmen in Textfarbe), damit sie sich von den farbigen
+   erkannten Stimmungen absetzen. Editor im Tags-Dialog = Chips + Eingabe. */
+.moodtag.usertag { color:var(--fg); background:var(--card); border:1px dashed var(--dim); padding:0 6px; }
+.moodtag.usertag button { border:0; background:none; color:var(--dim); cursor:pointer;
+                          padding:0 0 0 4px; font-size:13px; line-height:1; }
+.moodtag.usertag button:hover { color:var(--fake); }
+.utagbox { position:relative; display:flex; flex-wrap:wrap; align-items:center; gap:4px;
+           border:1px solid var(--line); border-radius:8px; padding:4px 6px; background:var(--card); }
+.utagbox #tagsUserTagChips { display:contents; }
+.utagbox input { flex:1; min-width:140px; border:0; outline:none; background:transparent; padding:4px 2px; }
+.tagbubble .moodtag { margin-right:0; }
+
+/* Genre-Dropdown im Tags-Dialog: Kopf "Vorschläge" mit Chips, Abschnitts-
+   Ueberschriften und der Hinweis "in deiner Bibliothek" rechts. */
+.ac-list.ac-rich { max-height:340px; padding:6px; }
+.ac-list li.ac-head { cursor:default; padding:2px 6px 6px; }
+.ac-list li.ac-head:hover { background:none; }
+.ac-section { color:var(--dim); font-size:11px; font-weight:600; letter-spacing:.06em;
+              text-transform:uppercase; margin:4px 0 6px; }
+.ac-list.ac-rich li[data-i] { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+.actag { color:var(--dim); font-size:11px; white-space:nowrap; }
+.gsuggest { display:flex; flex-wrap:wrap; gap:5px; }
+.gchip { display:inline-flex; align-items:center; gap:6px; padding:2px 9px; border-radius:999px;
+         border:1px solid var(--line); background:var(--card); color:var(--fg);
+         font-size:12px; cursor:pointer; line-height:1.6; }
+.gchip span { color:var(--dim); font-variant-numeric:tabular-nums; font-size:11px; }
+.gchip:hover { border-color:var(--accent); }
+.gchip.on { background:var(--accent-bg); border-color:var(--accent); color:var(--accent); }
+.gchip.on span { color:var(--accent); }
+.gchip-analyse svg { width:13px; height:13px; }
+.gchip.busy { opacity:.55; cursor:progress; }
 .keybubble.keymis { border:1.5px dashed rgba(27,27,31,.6); padding:0 6.5px; cursor:help; }
 .keybubble { display:inline-block; min-width:34px; text-align:center; white-space:nowrap;
              padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600;
@@ -1837,3 +1903,138 @@ body { padding-bottom:96px; }
                      overflow:hidden; text-overflow:ellipsis; min-width:0; }
 .drag-badge-count { flex:0 0 auto; font-size:11px; font-weight:600;
                      opacity:.85; }
+
+/* ── Playlist-Generator (generator.js) ─────────────────────────────────────
+   body[data-gen] setzt syncGeneratorPane(), solange ein Generator offen ist:
+   er ersetzt Filter, Tabelle und "weitere laden". Nur Theme-Tokens, damit
+   Light und Dark ohne eigene Regeln stimmen. */
+body[data-gen] #filterPanel, body[data-gen] .tablehead, body[data-gen] #colsMenu,
+body[data-gen] #stickyHead, body[data-gen] .tablewrap, body[data-gen] #more,
+body[data-gen] #plHeadBubblesRow, body[data-gen] #plHeadIssueBubblesRow,
+body[data-gen] #plHeadTagBubblesRow, body[data-gen] #plHeadBubblesExpand,
+body[data-gen] #plHeadMergeSuggestions, body[data-gen] #plHeadMergeToggle,
+body[data-gen] #plUndo, body[data-gen] #plRedo { display:none !important; }
+.genpane { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; }
+.genpane[hidden] { display:none; }
+.genpane svg { flex:0 0 auto; }
+.gentools { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+.genspacer { flex:1 1 auto; }
+.gencover { color:var(--dim); font-size:12.5px; }
+.gendim { color:var(--dim); }
+.genlbl { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+          color:var(--dim); }
+.genempty { padding:48px 16px; text-align:center; color:var(--dim); border:1px dashed var(--line);
+            border-radius:10px; }
+.genempty-icon svg { width:32px; height:32px; }
+.genempty p { max-width:520px; margin:10px auto 16px; }
+
+.gensettings { background:var(--card); border:1px solid var(--line); border-radius:10px; }
+.genhead { display:flex; align-items:center; gap:8px; width:100%; padding:10px 14px;
+           background:none; border:none; color:var(--dim); cursor:pointer; font-size:12px;
+           font-weight:700; letter-spacing:.06em; text-transform:uppercase; }
+.genhead .twist { margin-left:auto; }
+/* Filter nebeneinander, Beschriftung ueber dem Feld. */
+.genfilters { display:flex; flex-wrap:wrap; align-items:flex-start; gap:12px 18px; padding:4px 14px 12px; }
+.genfield { display:flex; flex-direction:column; gap:5px; }
+.genpair { display:inline-flex; align-items:center; gap:6px; }
+.genchips { display:flex; flex-wrap:wrap; gap:6px; padding:0 14px 12px; }
+/* Alle Eingabe-/Auswahlfelder gleich hoch und in derselben Optik wie die
+   Einstellungsfelder (.setfield) -- ohne appearance:none zeichnet macOS die
+   native Select-Chrome mit eigener Hoehe. */
+.geninput { box-sizing:border-box; height:34px; width:200px; padding:0 10px;
+            background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:7px;
+            font-size:13px; font-family:inherit; }
+.geninput:focus { outline:none; border-color:var(--accent); }
+select.geninput { appearance:none; -webkit-appearance:none; background-image:var(--select-arrow);
+                  background-repeat:no-repeat; background-position:right 10px center;
+                  background-size:13px; padding-right:30px; }
+.gennum { width:92px; -moz-appearance:textfield; }
+.gennum::-webkit-inner-spin-button, .gennum::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+.genchip { display:inline-flex; align-items:center; gap:4px; padding:2px 4px 2px 9px; border-radius:999px;
+           background:var(--accent-bg); color:var(--accent); font-size:12.5px; }
+.genchip button { background:none; border:none; color:inherit; cursor:pointer; font-size:14px; line-height:1; }
+.genseg { box-sizing:border-box; display:inline-flex; align-items:stretch; height:34px;
+          border:1px solid var(--line); border-radius:7px; padding:2px; gap:2px; background:var(--bg); }
+.genseg button { border:none; background:none; color:var(--dim); padding:0 10px; border-radius:5px;
+                 cursor:pointer; font-size:12.5px; }
+.genseg button:hover { color:var(--fg); }
+.genseg button.on { background:var(--accent); color:#fff; }
+.genmove { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 14px;
+           border-top:1px solid var(--line); }
+.genfill { margin-left:auto; color:var(--dim); font-variant-numeric:tabular-nums; }
+.genfill b { color:var(--dc-orange); font-size:15px; }
+.gengates { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 14px 12px;
+            padding:10px 12px; border:1px solid var(--dc-orange); border-radius:9px;
+            background:var(--dc-orange-bg); }
+.gengates .genlbl { color:var(--fg); }
+.gengates-title { color:var(--dc-orange) !important; }
+.gengates .genseg button.on { background:var(--dc-orange); }
+.genpill { box-sizing:border-box; height:34px; border:1px solid var(--dc-orange); background:none;
+           color:var(--dc-orange); border-radius:7px; padding:0 10px; cursor:pointer; font-size:12.5px; opacity:.55; }
+.genpill.on { opacity:1; background:var(--dc-orange); color:#fff; }
+.genmood { padding:0 14px 14px; }
+.genmood-head { display:flex; align-items:center; gap:10px; }
+.genmood-title { flex:1 1 auto; text-align:center; color:var(--accent); }
+.genknobs { display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:8px;
+            margin-top:10px; }
+.genknob { position:relative; display:flex; flex-direction:column; align-items:center; gap:2px;
+           cursor:ns-resize; user-select:none; touch-action:none; padding:4px 0; }
+.genknob-name { font-size:11px; font-weight:700; letter-spacing:.05em; text-transform:uppercase;
+                color:var(--dim); }
+.genknob-state { font-size:11.5px; color:var(--dim); }
+.genknob.active .genknob-name, .genknob.active .genknob-state { color:var(--accent); }
+.genknob.active.neg .genknob-name, .genknob.active.neg .genknob-state { color:var(--dc-crimson); }
+.genknob-track { fill:none; stroke:var(--line); stroke-width:3; stroke-linecap:round; }
+.genknob-val { fill:none; stroke:var(--accent); stroke-width:3; stroke-linecap:round; }
+.genknob.neg .genknob-val { stroke:var(--dc-crimson); }
+.genknob-cap { fill:var(--bg); stroke:var(--line); stroke-width:1.5; }
+.genknob-ptr { stroke:var(--fg); stroke-width:2; stroke-linecap:round; }
+.genknob-del { position:absolute; top:0; right:6px; display:none; border:none; background:none;
+               color:var(--dim); cursor:pointer; font-size:14px; line-height:1; }
+.genknob:hover .genknob-del { display:block; }
+
+.genarc { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
+          overflow:hidden; }
+.genarc-head { display:flex; align-items:center; gap:10px; margin-bottom:6px; font-size:12px; }
+.genlegend { display:inline-flex; align-items:center; gap:6px; color:var(--dim); }
+.genlegend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-left:6px; }
+.genlegend .lg-target { background:var(--dc-crimson); }
+.genlegend .lg-actual { background:var(--dc-skyblue); }
+.genarc-svg { display:block; max-width:100%; height:auto; touch-action:none; }
+.genarc-grid { stroke:var(--line); stroke-width:1; stroke-dasharray:2 4; }
+.genarc-axis { fill:var(--dim); font-size:10px; }
+.genarc-area { fill:var(--dc-crimson-bg); opacity:.8; }
+.genarc-line { fill:none; stroke:var(--dc-crimson); stroke-width:2; }
+.genarc-pt { fill:var(--dc-crimson); stroke:var(--card); stroke-width:2; cursor:ns-resize; }
+.genarc-pt:hover { r:8; }
+.genarc-pt.locked { fill:var(--card); stroke:var(--dc-crimson); }
+.genarc-act { fill:var(--dc-skyblue); stroke:var(--card); stroke-width:1.5; pointer-events:auto; }
+
+.genslots { display:flex; flex-direction:column; gap:4px; }
+.genslot { display:flex; align-items:center; gap:12px; padding:6px 12px; min-height:46px;
+           background:var(--card); border:1px solid var(--line); border-radius:9px; cursor:pointer; }
+.genslot:hover { border-color:var(--accent); }
+.genslot.empty { border-style:dashed; background:none; cursor:default; color:var(--dim); }
+.genslot.locked { box-shadow:inset 3px 0 0 var(--dc-orange); }
+.genslot.playing { border-color:var(--accent); background:var(--accent-bg); }
+.genslot.dragover { border-top:2px solid var(--accent); }
+.gennr { width:22px; font-variant-numeric:tabular-nums; color:var(--dim); font-size:12.5px; }
+.gencov { width:36px; height:36px; border-radius:5px; object-fit:cover; flex:0 0 auto;
+          background:var(--line); }
+.genmeta { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }
+.gentitle { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gensub { font-size:12.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.gentarget { font-size:11.5px; color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.genacts { display:flex; gap:2px; opacity:0; transition:opacity .12s; }
+.genslot:hover .genacts, .genslot.empty .genacts { opacity:1; }
+.genlock { color:var(--dim); }
+.genlock.on { color:var(--dc-orange); }
+.genkey { min-width:42px; text-align:center; }
+.genbpm { display:flex; flex-direction:column; align-items:flex-end; min-width:40px;
+          font-weight:700; font-size:16px; font-variant-numeric:tabular-nums; line-height:1.05; }
+.genbpm small { font-size:9px; font-weight:600; letter-spacing:.08em; color:var(--dim); }
+.genconf { display:flex; align-items:center; gap:6px; align-self:flex-start; margin:-1px 0 -1px 44px;
+           padding:2px 9px; border-radius:6px; border:1px solid var(--dc-red); color:var(--dc-red);
+           background:var(--dc-red-bg); font-size:11.5px; font-weight:600; }
+.genconf svg { width:13px; height:13px; }
+.genaddslot { align-self:flex-start; }

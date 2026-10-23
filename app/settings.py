@@ -150,23 +150,30 @@ GROUPS = [
         ],
     },
     {
-        "id": "bpmkey", "title": "BPM & Tonart",
-        "note": "TrackTab misst Tempo und Tonart selbst und schreibt sie in "
-                "die Datei-Tags. Aufruf über „BPM/Tonart analysieren“ in der "
-                "Tabelle und in den Einzelprüfungen. Was in welches Feld "
-                "geschrieben wird, legst du in den Abschnitten darunter fest; "
-                "„Tonart-Feld“ bestimmt außerdem die Schreibweise, in der "
-                "bereits vorhandene Tonarten angeglichen werden.",
+        "id": "bpmkey", "title": "Analyse: BPM, Tonart, Genre & Stimmung",
+        "note": "TrackTab misst Tempo und Tonart sowie Stil, Stimmung und "
+                "Energie selbst — komplett auf diesem Mac. Aufruf über „BPM/"
+                "Tonart analysieren“ und „Genre & Stimmung analysieren“ in der "
+                "Tabelle und in den Einzelprüfungen, für die ganze Bibliothek "
+                "auch im Scan-Dialog. Was in welches Feld geschrieben wird, "
+                "legst du in den Abschnitten darunter fest; „Tonart-Feld“ "
+                "bestimmt außerdem die Schreibweise, in der bereits vorhandene "
+                "Tonarten angeglichen werden.",
         "fields": [
             {"key": "bpmkey_auto_drops", "type": "bool", "width": "half",
-             "label": "Einzelprüfungen automatisch analysieren",
+             "label": "Einzelprüfungen: BPM & Tonart automatisch",
              "help": "Neu hinzugefügte Dateien der Einzelprüfungen werden "
-                     "sofort analysiert und beschrieben."},
+                     "sofort auf Tempo und Tonart analysiert und beschrieben."},
+            {"key": "genremood_auto_drops", "type": "bool", "width": "half",
+             "label": "Einzelprüfungen: Genre & Stimmung automatisch",
+             "help": "Danach auch Stil, Stimmung und Energie (in die Datei nur "
+                     "nach den Abschnitten unten)."},
             {"key": "bpmkey_max_minutes", "type": "number", "width": "half",
+             "break": True,
              "label": "Längere Dateien überspringen", "unit": "min",
              "min": 1, "max": 600, "step": 1,
-             "help": "Dateien über dieser Länge (z. B. DJ-Mixe) werden nicht "
-                     "analysiert."},
+             "help": "Dateien über dieser Länge (z. B. DJ-Mixe) werden von "
+                     "keiner der beiden Analysen gemessen."},
         ],
     },
     {
@@ -213,22 +220,52 @@ GROUPS = [
     },
     {
         "id": "bpmkey_comment", "parent": "bpmkey", "title": "Kommentar-Feld",
+        "note": "Ein gemeinsamer Eintrag für beide Analysen, z. B. „8A - 128 "
+                "- E7“. Jede Analyse ergänzt die Werte, die sie misst; die "
+                "übrigen kommen aus der Datei bzw. der letzten Analyse. Ein "
+                "früherer eigener Eintrag wird ersetzt, nie doppelt geschrieben.",
         "fields": [
             {"key": "bpmkey_comment_content", "type": "select", "width": "half",
              "label": "In Kommentar-Feld schreiben",
              "options": [{"value": "none", "label": "Nichts"},
-                         {"value": "key", "label": "Nur Tonart (z. B. 10A)"},
-                         {"value": "key_bpm", "label": "Tonart und Tempo (z. B. 10A - 126)"}],
+                         {"value": "key", "label": "Tonart (10A)"},
+                         {"value": "key_bpm", "label": "Tonart und Tempo (10A - 126)"},
+                         {"value": "key_bpm_energy", "label": "Tonart, Tempo und Energie (10A - 126 - E7)"},
+                         {"value": "key_energy", "label": "Tonart und Energie (10A - E7)"},
+                         {"value": "energy", "label": "Nur Energie (E7)"}],
              "help": "Die Tonart folgt der Schreibweise unter „Tonart-Feld“, z. B. „1m - 126“ "
-                     "bei Open Key."},
+                     "bei Open Key. Energie (1–10) stammt aus der Genre-/Stimmungs-Analyse."},
             {"key": "bpmkey_comment_existing", "type": "select", "width": "half",
              "label": "Vorhandener Kommentar",
-             "show_if": {"key": "bpmkey_comment_content", "contains": "key"},
+             "show_if": {"key": "bpmkey_comment_content", "not_value": "none"},
              "options": [{"value": "if_empty", "label": "Nur wenn leer"},
                          {"value": "overwrite", "label": "Überschreiben"},
-                         {"value": "prepend", "label": "Voranstellen (Eintrag - Kommentar)"}],
-             "help": "Beim Voranstellen bleibt ein schon vorangestellter, "
-                     "identischer Eintrag unverändert."},
+                         {"value": "prepend", "label": "Voranstellen (Eintrag - Kommentar)"},
+                         {"value": "append", "label": "Anhängen (Kommentar - Eintrag)"}],
+             "help": "Ein früherer eigener Eintrag zählt als leer bzw. wird "
+                     "beim Voranstellen oder Anhängen ersetzt."},
+        ],
+    },
+    {
+        "id": "bpmkey_genremood", "parent": "bpmkey", "title": "Genre & Stimmung",
+        "note": "Stil, Stimmung und Energie erkennen die Essentia-Modelle der "
+                "MTG (Universitat Pompeu Fabra), Lizenz CC BY-NC-SA 4.0 (nur "
+                "nicht-kommerziell). Genre-Vorschläge erscheinen im Tags-Dialog "
+                "über dem Genre-Feld; Energie und Stimmung als eigene Spalten. "
+                "Das Genre schreibt nur ein Klick auf einen Vorschlag.",
+        "fields": [
+            {"key": "genremood_min_percent", "type": "number", "width": "half",
+             "label": "Genre-Vorschläge ab", "unit": "%",
+             "min": 1, "max": 90, "step": 1,
+             "help": "Schwächere Treffer werden nicht vorgeschlagen. Es "
+                     "erscheinen höchstens fünf Vorschläge."},
+            {"key": "genremood_write_mood", "type": "select", "width": "half",
+             "label": "Stimmung in die Datei schreiben",
+             "options": [{"value": "no", "label": "Nein"},
+                         {"value": "tag", "label": "Als Mood-Tag (z. B. Party, Happy)"}],
+             "help": "Schreibt die zutreffenden Stimmungen in das Mood-Feld "
+                     "(MP3/WAV/AIFF: TXXX:MOOD, FLAC: MOOD, M4A: Freiform-Atom). "
+                     "Lesbar z. B. in Mp3tag und MusicBrainz Picard."},
         ],
     },
     {
@@ -469,7 +506,7 @@ def current(cfg: dict | None = None) -> dict:
 
 
 def describe() -> dict:
-    from . import bpmkey, media
+    from . import bpmkey, genremood, media
     ensure_apple_music_column_view()
     defaults = current(_defaults_cfg())
     detected = media.find_audio_editor()
@@ -483,6 +520,9 @@ def describe() -> dict:
             # libsonare vorhanden? Ohne blendet die Oberflaeche die BPM-/Tonart-
             # Analyse aus (siehe bpmkey.available()).
             "bpmkey_available": bpmkey.available(),
+            # onnxruntime + Modelle vorhanden? Sonst Genre-/Stimmungs-Analyse
+            # ausblenden (siehe genremood.available()).
+            "genremood_available": genremood.available(),
             # Kein UI-Feld (kein Setting zum Editieren, nur Anzeige im
             # Backup-Block) -- deshalb hier separat statt ueber _FIELDS/current().
             "backup_keep": int(cfgmod.load().get("backup_keep", 10)),
@@ -651,6 +691,13 @@ def save(incoming: dict) -> dict:
     classes = {k: v for k, v in clean.items() if k in all_class_keys}
     plain = {k: v for k, v in clean.items() if k not in all_class_keys}
     stored.update(plain)
+    # Alte Schluessel aus der Zeit vor der gemeinsamen Analyse-Gruppe: das
+    # Laengenlimit gilt jetzt fuer beide Analysen (bpmkey_max_minutes), die
+    # Energie ist Teil der Kommentar-Auswahl. Sobald diese neu gespeichert
+    # wird, darf config._migrate_energy_comment() sie nicht mehr umdeuten.
+    stored.pop("genremood_max_minutes", None)
+    if "bpmkey_comment_content" in clean:
+        stored.pop("genremood_write_energy", None)
 
     if classes:
         live = cfgmod.load()["cutoff_classes"]

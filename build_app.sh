@@ -27,6 +27,16 @@ else
   echo "Hinweis: kein vendor/ — die App braucht dann ein installiertes ffmpeg."
 fi
 
+# Modelle fuer Genre/Stimmung/Energie (einmalig laden, danach nur Pruefsumme).
+# Schlaegt der Download fehl, entsteht ein Bundle ohne diese Funktion.
+# Laeuft schon ein Download (z. B. in einem zweiten Fenster), nicht parallel
+# in dieselbe .part-Datei laden -- dann ohne die fehlenden Modelle bauen.
+if pgrep -f "fetch_models.sh" >/dev/null; then
+  echo "Hinweis: Modell-Download läuft bereits — Build ohne die noch fehlenden Modelle."
+elif ! ./fetch_models.sh; then
+  echo "Hinweis: Modelle fehlen — die App kommt ohne Genre-/Stimmungs-Analyse."
+fi
+
 rm -rf build dist
 ./.venv/bin/python -m PyInstaller --noconfirm --clean tracktab.spec
 
@@ -45,9 +55,28 @@ for OLD_LINK in "${OLD_LINKS[@]}"; do
     echo "Alte Verknüpfung „$(basename "$OLD_LINK" .app)“ aus /Applications entfernt."
   fi
 done
-if [ -L "$NEW_LINK" ]; then
-  echo "Verknüpfung in /Applications zeigt weiterhin hierher."
+TARGET="$(pwd)/dist/TrackTab.app"
+# Zeigt schon irgendeine Verknuepfung in /Applications hierher (auch unter
+# anderem Namen, z. B. "TrackTab build.app"), ist nichts zu tun.
+EXISTING=""
+for entry in /Applications/*.app; do
+  if [ -L "$entry" ] && [ "$(readlink "$entry")" = "$TARGET" ]; then
+    EXISTING="$entry"; break
+  fi
+done
+if [ -n "$EXISTING" ]; then
+  echo "Verknüpfung „$(basename "$EXISTING" .app)“ in /Applications zeigt weiterhin hierher."
 else
-  ln -s "$(pwd)/dist/TrackTab.app" "$NEW_LINK"
-  echo "Verknüpfung „TrackTab“ in /Applications angelegt."
+  # Liegt unter dem Namen eine ECHTE App (per .dmg installiert), nie daneben
+  # oder hinein verlinken -- ln -s wuerde einem Ordner-Ziel folgen und den
+  # Link IN das installierte Bundle legen. Dann unter eigenem Namen.
+  if [ -e "$NEW_LINK" ]; then
+    NEW_LINK="/Applications/TrackTab build.app"
+  fi
+  if [ -e "$NEW_LINK" ]; then
+    echo "Hinweis: $NEW_LINK existiert bereits und zeigt nicht hierher — keine Verknüpfung angelegt."
+  else
+    ln -s "$TARGET" "$NEW_LINK"
+    echo "Verknüpfung „$(basename "$NEW_LINK" .app)“ in /Applications angelegt."
+  fi
 fi

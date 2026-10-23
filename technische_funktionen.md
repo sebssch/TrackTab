@@ -657,6 +657,51 @@ Die **Begrenzung** (Anzahl / Minuten / MB, ausgewählt nach zuletzt hinzugefügt
 
 Der Regel-Editor arbeitet auf einer **Kopie** des Regelwerks; erst „Speichern" schreibt. Die Live-Vorschau schiebt dafür kurzzeitig ein Probe-Regelwerk durch `recomputeSmart()` und stellt `SMART_CACHE` beim Schließen auf den gespeicherten Stand zurück. Ein Feldwechsel setzt Operator und Wert zurück — ein Textoperator auf einem Zahlenfeld wäre sonst stillschweigend wirkungslos. Die letzte Regelzeile lässt sich nicht entfernen: ein Regelwerk ohne Zeile träfe alles, was als Ergebnis eines Klicks auf „−" niemand erwartet.
 
+### Playlist-Generator — Interna
+
+Eigene Listenart `generator` (`db.PLAYLIST_KINDS`), Client-Code in einer eigenen Datei `app/webui/generator.js`. Sie wird im selben `<script>` **nach** `app.js` eingebettet (`report._template()`, `_UI_FILES`).
+
+**Datenmodell, zweigeteilt:**
+- Die Einstellungen stehen als JSON in `playlists.rules`: `{v, preset, slots: [{e, lock, filled}], filters: {genres, source, bpm, added}, gates: {bpm, half, key}, knobs: {stimmung: -1..1}, mode: "lean"|"all", cohesion: 0..1}`.
+- Die Belegung steht in `playlist_items` wie bei einer normalen Playlist. Slot i bekommt den k-ten Eintrag, wobei k die Zahl der Slots mit `filled` davor ist.
+- **In `rules` stehen bewusst keine Pfade:** `db.move_path()` zieht `playlist_items` bei Umbenennen/Relocate mit, Pfade im JSON würden dabei veralten.
+- Der Server prüft wie bei Smart Playlists nur die Form (`_clean_generator_config()`: Objekt, höchstens 200 Slots, höchstens 50 kB; Auswahl über `_clean_rules_for()`). `/api/playlist-items` nimmt `generator` wie `playlist` an.
+- Gespeichert wird entprellt (400 ms) über die beiden bestehenden Endpunkte, erst `rules`, dann `items`. Kein `_rebuild()`, der Baum zieht live nach.
+
+**Einbindung:** `render()` ruft als Erstes `syncGeneratorPane()` auf.
+- Bei einem `gen:<id>`-View setzt die Funktion `body[data-gen]`, worauf CSS Filterleiste, Tabelle und „weitere laden“ ausblendet. Dann gibt sie `true` zurück und `render()` endet.
+- Neu aufgebaut wird nur beim Wechsel **in** einen Generator, denn `render()` läuft auch aus fremden Anlässen (`syncMarks()` u. a.) und würde sonst ein laufendes Ziehen abbrechen.
+- **Ladereihenfolge:** Weil `app.js` `syncGeneratorPane()` schon beim ersten `render()` aufruft, also bevor `generator.js` ausgewertet ist, enthält die Datei auf oberster Ebene nur Funktionsdeklarationen und `var` ohne Startwert. Ein `let`/`const` läge noch in der Temporal Dead Zone, ein `var x = null` setzte einen schon geöffneten Generator zurück.
+
+**Pool:** analysierte Tracks (`eg > 0`) ohne `gone`/`removed`/`ig`, danach die Vorfilter.
+- Genre: Teilstring in `ge`.
+- Quelle: `playlistRows()`.
+- BPM: Bereich.
+- Hinzugefügt: `da`. Ist ein Zeitraum gesetzt, fällt ein Track mit `da = 0` heraus.
+- Bei `mode: "all"` muss jede Stimmung mit Regler > 0 in `moodNames(r)` stehen und keine mit Regler < 0. Das ist dieselbe Regel wie in der Tags-Spalte.
+
+**Gates** gelten gegen den vorigen belegten Slot. Ist der nächste Slot gesperrt, muss der Kandidat auch zu ihm passen.
+- BPM: ±0 heißt |Δ| ≤ 0,5, ±3 heißt |Δ| ≤ 3. Mit `half` zählt zusätzlich ×2 bzw. ÷2.
+- Tonart (`genKeyOk()`, Camelot, Abstand d auf dem 12er-Kreis):
+  - **streng:** gleicher Buchstabe mit d ≤ 1, oder anderer Buchstabe mit d = 0.
+  - **locker:** gleicher Buchstabe mit d ≤ 2, oder anderer Buchstabe mit d ≤ 1.
+  - Ohne gültige Tonart besteht ein Track ein aktives Tonart-Gate nicht.
+
+**Score** (kleiner ist besser):
+
+`|eg − soll| / 9 − Σ regler · (rang − 0,5) · 0,6 + kohäsion · (1 − cos(gs_vorher, gs)) · 0,5 + 0,3 · [gleicher Interpret in den letzten 3 Slots]`
+
+- Der Stimmungsterm entfällt bei „Muss passen“.
+- `rang` ist der Perzentil-Rang der Stimmung im Pool (`genRanks()`). So werden die Ja/Nein-Köpfe (0..1) und die DJ-Stimmungen mit kleinen Absolutwerten (höchstens ~0,26) ohne feste Skala vergleichbar.
+- `cos` ist die Kosinus-Ähnlichkeit der Stilvektoren (`r.gs`). Hat einer der beiden Tracks keine Stile, gilt 0,5.
+
+**Füllen** (`genFill()`): von links nach rechts, nur ungesperrte Slots.
+- Die Wahl fällt zufällig gewichtet unter den besten fünf Kandidaten, mit Gewicht `exp(−(s − s_best) · 12)` und `genRng()` (mulberry32, „Neu würfeln“ setzt einen neuen Startwert).
+- Gibt es keinen Kandidaten, wird stufenweise gelockert: erst ohne Tonart-Gate, dann ohne BPM-Gate.
+- Die Konflikt-Hinweise in der Liste (`genConflict()`) werden immer aus der aktuellen Belegung berechnet, auch nach Umsortieren von Hand.
+
+**Vorlagen** sind Funktionen f(x ∈ 0..1) → Energie (`genPresetValue()`), abgetastet auf N Slots und auf 0,5 gerundet. Ziehen an einem Punkt schaltet auf `custom`. Ändert sich die Slot-Zahl unter einer Vorlage, wird neu abgetastet, bei `custom` wird hinten angehängt oder gekürzt.
+
 ### Music.app- und Rekordbox-Playlisten — Interna
 
 Beide Äste sind **schreibgeschützt**: angezeigt wird, was dort steht, geändert wird dort nichts. Geladen wird erst beim Aufklappen — der Music-Ast läuft über AppleScript und würde Music.app starten, der Rekordbox-Ast öffnet `master.db`; beides soll nicht als Nebenwirkung eines Seitenaufrufs passieren. Ordner der Fremdsysteme starten zugeklappt: an echtem Material bringt Rekordbox 993 Knoten in Tiefe 4 mit, alles aufgeklappt ergäbe eine über 30.000 px hohe Leiste.
@@ -799,6 +844,26 @@ Der Editor selbst verschiebt oder benennt eine Datei nie um. Räumt aber Music.a
 - **Client:** `analyseBpmKey(rows, isDrop, {workers, quiet})` in `app.js` (Modell `writeKeyToFiles()`), 2 Worker auf Knopfdruck, 1 Worker im Auto-Lauf. Der Auto-Lauf hängt am nativen Datei-Auswahldialog der Einzelprüfungen (nur Zeilen mit `nativePath`) und wird nicht abgewartet. Icon: Lucide `audio-waveform`. `BPMKEY_AUTO` wird beim Laden und nach dem Speichern der Einstellungen gesetzt.
 - **Genauigkeit (Stichprobe, 30 zufällige Bibliothekstracks mit vorhandenen Datei-Tags, Stand libsonare 1.8.2):** Tonart 23 exakt, 2 parallele Dur/Moll, 1 Nachbar auf dem Rad, 4 andere. BPM 19 innerhalb ±1, 7 Oktavfehler (halbes/doppeltes Tempo, meist 64 statt 128), 4 weitere Abweichungen. Dauer 1–4 s je Track. Ein BPM-Bereich mit Oktav-Faltung ist noch nicht eingebaut.
 - **Bundle:** `tracktab.spec` sammelt `libsonare` per `collect_submodules()` und `collect_dynamic_libs()` (Import ist lazy; `libsonare/_ffi.py` sucht `libsonare.dylib` relativ zu seiner Datei). Gemessen: +10 MB (133 → 143 MB).
+
+### Genre, Stimmung & Energie — Interna
+
+- **Modelle:** Essentia-Modelle der MTG (Universitat Pompeu Fabra), Lizenz CC BY-NC-SA 4.0. `discogs-effnet-bsdynamic-1.onnx` (18 MB) nimmt Mel-Stücke `[n, 128, 96]` und liefert zwei Ausgänge: 400 Discogs-Stile (Sigmoid je Stil, Labels `Oberkategorie---Stil` aus dem Modell-JSON) und ein 1280er-Embedding. Darauf laufen sechs kleine Köpfe (`mood_aggressive/happy/party/relaxed/sad-discogs-effnet-1`, `danceability-discogs-effnet-1`, je ~0,5 MB), Softmax über zwei Klassen; welche Spalte „trifft zu“ heißt, steht im JSON (`classes`) und ist je Kopf verschieden. Geladen von `fetch_models.sh` nach `vendor/models/essentia/` (Wiederaufnahme abgebrochener Downloads, `SHA256SUMS`), `build_app.sh` ruft es auf, `tracktab.spec` packt `vendor/` ohnehin mit ein.
+- **Laufzeit:** `onnxruntime` (CPU), Lazy-Import wie libsonare, Sessions je Modell gecacht, Inferenz unter `_INFER_LOCK`, Stapel zu 64 Stücken. `genremood.available()` = Laufzeit importierbar UND alle Modelldateien da; `settings.describe()` liefert `genremood_available`.
+- **Mel-Frontend (Nachbau von Essentias `TensorflowInputMusiCNN`, aus dem Essentia-Quelltext abgelesen):** 16 kHz Mono (ffmpeg, `pan`-Gewichtung wie `spectral._downmix_filter`); Frames 512/256, erster Frame beginnt bei −256 (FrameCutter `startFromZero=false`), Ränder mit Nullen, letzter Frame, sobald seine Mitte das Signalende erreicht; Hann symmetrisch (Nenner N−1), nicht normiert; Betragsspektrum, **quadriert** (`MelBands type="power"`); 96 Bänder 0–8000 Hz, Bandgrenzen Slaney-Mel, Dreiecke linear in Hz, `unit_tri` (Gewicht ÷ theoretische Dreiecksfläche `(Δ₁+Δ₂)/2`); danach `log10(1 + 10000·x)`. Stücke zu 128 Frames, Sprung 62, unvollständiger Rest entfällt. Vorhersagen und Mood-Wahrscheinlichkeiten werden über alle Stücke gemittelt.
+- **DJ-Stimmungen:** zusätzlich der Kopf `mtg_jamendo_moodtheme-discogs-effnet-1` (56 Stimmungen/Themen, Sigmoid je Klasse, ~2,7 MB). Gespeichert werden nur `THEMES` (energetic, groovy, dark, deep, uplifting, melancholic, upbeat, epic, melodic, summer, romantic) — Film-/Werbe-Themen sagen beim Auflegen nichts, happy/sad/party/relaxing decken die Ja/Nein-Köpfe ab. Der Kopf liefert kleine Absolutwerte (14 Testtracks: Median 0,01, Maximum 0,26), deshalb keine 0,5-Grenze: angezeigt und in den Mood-Tag geschrieben werden je Track die `THEME_TOP` = 2 stärksten ab `THEME_FLOOR` = 0,05 (`theme_hits()`, im Client `moodNames()`). `ANALYSIS_VERSION` (Spalte `genremood.model`) ändert sich mit jedem neuen Modell; `db.paths_needing_genremood()` nimmt Zeilen mit älterem Stand in den Scan-Schritt auf.
+- **Genre-Auswahl im Tags-Dialog:** kein eigenes Element mehr, sondern eine Erweiterung des Autovervollständigen-Dropdowns (`attachAutocomplete(el, key, {extra})`, nur `tagsGenre` nutzt `GENRE_AC_EXTRA`): Kopf „Vorschläge“ mit Chips (`data-ac-pick`), danach die Bibliotheks-Genres (markiert über `genreInLibrary()`) und die übrigen Stilnamen des Modells (`META.genreStyles` aus `genremood.style_names()`, braucht nur die JSON-Datei).
+- **Eigene Tags:** Tabelle `user_tags` (path, tag, ts; mehrere Zeilen je Pfad), reine Nutzer-Angabe wie `favorites`, nie in der Datei; in `_PATH_TABLES`, bewusst nicht in `_PRUNE_TABLES`. `GET /api/user-tags` liefert `{tags: {Pfad: [Tag]}}`, `POST /api/user-tags` nimmt `{path, tags}` (ersetzen, Tags-Dialog) oder `{paths, add, remove}` (Mehrfachauswahl); freigegeben über `_authorize_path()` (Bibliothek + eigene Dateiauswahl), Namen getrimmt, ohne Doppelte (Groß/Klein egal), max. 60 Zeichen. Gebacken als `META.userTags`, im Client `USER_TAGS` (`adoptUserTags()`); `_rebuild()` nach jeder Änderung, damit ein Neuladen den Stand zeigt.
+- **Tags je Zeile / Liste „Tags“ / Suche:** `rowTags(r)` = erkannte Stimmungen + DJ-Stimmungen (`moodNames()`) + eigene Tags, ids `m:<name>` bzw. `u:<Tag>`. Spalte `mm` heißt in der Oberfläche „Tags“. VIEWS-Eintrag `tags` (Baumknoten neben Genre/Album/Künstler, Zahl = verschiedene Tags), Kopfzeile `renderTagBubbles()`/`#plHeadTagBubblesRow`, Filter `state.tagFilter` (UND, beim Listenwechsel zurückgesetzt). Suche: `/Energie` (`eg` in `NUMERIC_OP_FIELDS`, verglichen wird der gerundete Wert) und `/Stimmung`, `/Mood`, `/Tag`, `/Tags` (Filterart `tags`: Beschriftung per `matchesFieldValue()` oder englischer Name; `mm` in `INSTANT_VALUE_FIELDS`, Werte aus `allTagEntries()`).
+- **Kommentar „Anhängen“:** `bpmkey_comment_existing = "append"` hängt den gemeinsamen Eintrag hinten an; `_split_own_entry()` erkennt einen früheren eigenen Eintrag vorn und hinten.
+- **Mixed In Key** schreibt seine Energie (1–10) in `TXXX:EnergyLevel` (ID3) bzw. `----:com.apple.iTunes:energylevel` (MP4), dazu eigene JSON-Daten in `GEOB:Energy` bzw. `----:com.mixedinkey.mixedinkey:energy`. TrackTab liest und schreibt diese Felder nicht; seine Energie ist ein eigenes Maß und steht nur im Kommentar-Eintrag (`E7`).
+- **Energie 1–10:** `1 + 9 · (0,4·Lautheit + 0,25·aggressive + 0,2·party + 0,15·danceability)`, Lautheit = RMS des 16-kHz-Signals, −30…−8 dBFS linear auf 0…1. Heuristik zum Vorsortieren, Gewichte in `_ENERGY_WEIGHTS`.
+- **Speicher:** Tabelle `genremood` (path, genres JSON Top 10, moods JSON, energy, model, ts) — abgeleitete Messung wie `waveform`, deshalb keine Spalten in `files`. Steht in `_PATH_TABLES` (wandert bei `move_path()` mit) und `_PRUNE_TABLES`. Auch Einzelprüfungen ohne `files`-Zeile werden abgelegt, damit ein späterer Import das Ergebnis schon vorfindet. `rows_to_payload()` liefert `gs` (höchstens 5 Stile ≥ `genremood_min_percent`, `[[Label, Prozent]]`), `eg` (Energie) und `mm` (Stimmungen); die Markierungsmengen aus `_mark_sets()` tragen dafür `genremood_map()` mit.
+- **Einstellungen:** eine gemeinsame Gruppe `bpmkey` mit beiden Analysen („Analyse: BPM, Tonart, Genre & Stimmung“, Unterabschnitte `bpmkey_key`/`bpmkey_bpm`/`bpmkey_comment`/`bpmkey_genremood`). Längenlimit `bpmkey_max_minutes` und Kommentar `bpmkey_comment_*` gelten für beide; die Schlüssel heißen aus Kompatibilität mit gespeicherten Einstellungen weiter `bpmkey_*`. Die frühere Option `genremood_write_energy: comment` rechnet `config._migrate_energy_comment()` in `bpmkey_comment_content` ein (`key_bpm` → `key_bpm_energy` usw.), bis die Kommentar-Auswahl neu gespeichert wird (`settings.save()` entfernt den alten Schlüssel dann). `show_if` kennt dafür neu `not_value`.
+- **Gemeinsamer Kommentar-Eintrag:** `tags.plan_comment(cfg, current, key_txt, bpm, energy, measured)` baut den Eintrag aus den Teilen von `bpmkey_comment_content` (`tags.COMMENT_PARTS`). Jede Analyse übergibt, was sie misst (`measured`), und den besten bekannten Rest: `bpmkey.plan_fields()` die gespeicherte Energie (`db.genremood_energy()`), `genremood.plan_fields()` Tonart und BPM aus der Datei. Enthält die Auswahl keinen der gemessenen Teile, bleibt der Kommentar unangetastet. `_split_own_entry()` erkennt einen früheren eigenen Eintrag an seinen Teilen am Anfang oder Ende (Tonart jeder Schreibweise, BPM 40–250, `E1`–`E10`) — aber nur Teile der Arten, die laut Einstellung hineingehören; bei „nur Energie“ bleibt ein vorhandenes `8A - 128` freier Text. Fehlt Tonart oder BPM in den Tag-Feldern, wird der Wert aus dem bisherigen Eintrag übernommen statt verworfen. Bei „nur wenn leer“ zählt der Eintrag als leer, bei „voranstellen“/„anhängen“ wird er ersetzt.
+- **In die Datei (optional):** `genremood.plan_fields(cfg, result, existing, existing_mood)` ist rein. Energie über den gemeinsamen Kommentar-Eintrag (oben); `genremood_write_mood = "tag"` schreibt die Stimmungen ≥ 0,5 als englischen Text („Party, Happy“) in `TXXX:MOOD` (ID3 — TrackTab speichert v2.3, mutagen verwirft dort `TMOO`), Vorbis `MOOD` bzw. MP4-Freiform `----:com.apple.iTunes:MOOD` (`tags.read_mood()`, Feld `mood` in `write_tags()`). Das Genre schreibt die Analyse nie selbst — nur der Klick auf einen Vorschlag im Tags-Dialog setzt den Stil (ohne Oberkategorie) ins Genre-Feld.
+- **Endpunkt:** `POST /api/genremood {path}` (`_post_genremood()`), je Datei ein Aufruf, Gerüst wie `_post_bpmkey()`: Messen und Datei-Schreiben außerhalb von `self.lock`, kurzer Lock-Abschnitt für `save_genremood()` (+ `update_tags()`/`refresh_stat()` bei Schreibzugriff), `_compact_rows()`, `_rebuild()`. Antwort: `status` (`written`/`unchanged`/`skipped`/`unavailable`), `result` (Rohergebnis), `fields`, `row`.
+- **Bibliotheks-Scan:** Schalter „Genre, Stimmung & Energie“ im Scan-Dialog (`/api/scan {genremood: true}`, CLI `scan --genremood`) hängt `jobs._analyse_genremood()` als letzten Schritt an: alle `files`-Zeilen mit `status = 'ok'`, `duration_s` ≤ Limit und ohne `genremood`-Eintrag (`db.paths_without_genremood()`), zwei Threads (einer dekodiert, während der andere rechnet), Phase `genre & stimmung` im Scan-Status, Abbruch behält das Gemessene. Schreibt bewusst nur in die DB, nie in Dateien (unabhängig von Kommentar- und Mood-Einstellungen). Gemessen: rund 1 s je Track.
+- **Client:** `analyseGenreMood(rows, isDrop, {workers, quiet})` (Modell `analyseBpmKey()`), Einzelprüfungen übernehmen `result` per `genreMoodToRow()`. Spalten `eg` (`energyCell()`, zehn Segmente) und `mm` (`moodNames()`, Badges); Vorschläge im Genre-Dropdown `GENRE_AC_EXTRA`. Der Auto-Lauf für Einzelprüfungen läuft **nach** dem BPM-/Tonart-Auto-Lauf statt parallel — beide können den Kommentar schreiben. Icon: Lucide `brain-circuit`.
 
 ### Player mit Waveform — Interna
 
@@ -1074,6 +1139,7 @@ Hängt an jeder Antwort, auch an den von Hand gebauten (Audio-Range-Streaming, Z
 | `/api/rewrite` | Bitrate-Korrektur durchführen |
 | `/api/convert` | Format konvertieren (`{paths, target: "mp3_320"\|"aiff", trash_original}`, `trash_original` Standard `true`) — autorisiert über `_authorize_path` (deckt Haupttabelle UND Einzelprüfung ab). Antwort positionsgleich zu `paths`, je Eintrag `status` `converted`/`skip`/`error` (`reason` `upscale`/`already_target` bei `skip`), `original_kept` (= `!trash_original`), plus `music_relinked`/`music_error`/`rekordbox` bei einer DB-Zeile. **Backt den Report neu**, nur wenn mindestens eine DB-Zeile betroffen war |
 | `/api/tags` | Tags bearbeiten — Titel/Interpret/Album/Albumkünstler/Komponist/Genre/Jahr/BPM/Kommentar/Tracknummer/-gesamtzahl in Datei + DB schreiben (bei einem noch nicht gescannten, per `open-file-pick` autorisierten Pfad nur in die Datei) |
+| `/api/genremood` | Genre-Vorschläge, Stimmung und Energie messen (Essentia-Modelle über onnxruntime), immer in die Tabelle `genremood`, in die Datei nur nach den `genremood_write_*`-Einstellungen — ein Pfad je Aufruf; `status`: `written`/`unchanged`/`skipped` (zu lang)/`unavailable` |
 | `/api/bpmkey` | BPM und Tonart per libsonare messen und nach den `bpmkey_*`-Einstellungen in die Datei (und, falls vorhanden, die DB-Zeile) schreiben — ein Pfad je Aufruf; `status`: `written`/`unchanged`/`skipped` (zu lang)/`unavailable` |
 | `/api/fix-tag-issues` | Sicher automatisch behebbare Auffälligkeiten einer Datei beheben (`{path}`) — `taganomaly.fix_safe()`, schreibt bei DB-Zeile sowohl die betroffenen Tag-Spalten als auch `tag_issues` zurück; ohne DB-Zeile (Einzelprüfung) liefert die Antwort `fields`/`issues` statt einer kompakten Zeile, der Client pflegt seine lokale Kopie selbst nach |
 | `/api/genre-rename` / `/api/artist-rename` | Benennt ein Genre/einen Künstler für ALLE betroffenen Tracks um (`{old, new}`) — dünne Wrapper um `_rename_tag_value()`. Siehe [Aufräumen — Interna](#aufräumen--interna) |
@@ -1477,8 +1543,8 @@ Erzeugt HTML/CSV/M3U aus DB-Zeilen.
 | `build_html(rows, cfg, ignored=None, favorites=None, corrected=None, rekordbox=None, music_added=None, playlists=None, playlist_items=None)` | Baut `meta` (Zeitstempel, Gesamtzahl, live aus der Konfiguration gelesene Klassengrenzen, Lautheits-Referenzband, `favoriteLists` aus `cfg["favorite_lists"]`) und injiziert `meta`+Payload als JSON in die Platzhalter `/*__META__*/null`/`/*__DATA__*/null` |
 | `build_all(conn, cfg)` | Orchestriert alle drei Ausgaben; `hidden = ignored ∪ corrected` für CSV/M3U (ohne Favoriten), während die HTML `favorites` getrennt für clientseitige Filter/Listen erhält |
 | *(META-Schlüssel)* | Neben Zeitstempel/Schwellwerten/`favoriteLists` werden auch `playlists` und `playlistItems` eingebacken — damit Seitenbaum und zuletzt geöffneter Knoten schon vor dem ersten `/api/playlists`-Fetch stehen. Aktualisiert wird danach **nicht** über einen Rebuild, sondern live über den Endpunkt (dasselbe Hybrid-Muster wie bei den Merklisten) |
-| `_template()` | Fügt `index.html` + `app.css` (an `<!--__CSS__-->`) + `app.js` (an `<!--__JS__-->`) zu einer einzigen, komplett eigenständigen Datei zusammen |
-| `is_stale(cfg)` | Ob `report.html` älter ist als eine der drei Quelldateien in `app/webui/`. Gebraucht von `desktop.main()`: aus einem Bundle heraus lässt sich `report` nicht von Hand aufrufen, eine frisch gebaute App zeigte sonst stumm die alte Oberfläche |
+| `_template()` | Fügt `index.html` + `app.css` (an `<!--__CSS__-->`) + i18n, Lucide-Icons, `app.js` und `generator.js` (an `<!--__JS__-->`) zu einer einzigen, komplett eigenständigen Datei zusammen |
+| `is_stale(cfg)` | Ob `report.html` älter ist als eine der Quelldateien in `app/webui/` (`_UI_FILES`). Gebraucht von `desktop.main()`: aus einem Bundle heraus lässt sich `report` nicht von Hand aufrufen, eine frisch gebaute App zeigte sonst stumm die alte Oberfläche |
 
 **Gotcha:** Kennzahlen/Histogramm werden bewusst **clientseitig im Browser** berechnet, nicht serverseitig — damit sie sich sofort aktualisieren, wenn ein Track ausgeblendet oder korrigiert wird, ohne Neuladen.
 
@@ -1635,6 +1701,17 @@ BPM-/Tonart-Analyse über die optionale Bibliothek libsonare, siehe „BPM- & To
 | `analyse(path, max_seconds)` | ffmpeg → Mono 22.050 Hz → libsonare. `{bpm: int, camelot: str, confidence: float}`; wirft `TooLongError` bei Dateien über dem Limit, `RuntimeError` ohne libsonare, bei zu kurzer oder nicht dekodierbarer Datei |
 | `plan_fields(cfg, result, existing)` | Reine Entscheidung, welche Felder (`bpm`/`key`/`comment`) nach den `bpmkey_*`-Einstellungen geschrieben werden |
 
+#### `app/genremood.py`
+
+Genre-Vorschläge, Stimmung und Energie über die Essentia-Modelle (onnxruntime), siehe „Genre, Stimmung & Energie — Interna“.
+
+| Funktion | Zweck |
+|---|---|
+| `available()` | `True`, wenn `onnxruntime` importierbar ist und alle Modelldateien in `vendor/models/essentia/` liegen |
+| `analyse(path, max_seconds)` | ffmpeg → Mono 16 kHz → `_melspec()` → `_patches()` → EffNet + Köpfe. `{genres: [[Label, p]], moods: {…}, energy, model}`; `TooLongError` über dem Limit |
+| `plan_fields(cfg, result, existing, existing_mood)` | Reine Entscheidung, ob Energie (Kommentar) und Stimmung (Mood-Tag) geschrieben werden |
+| `style_name(label)` / `mood_text(moods)` | „Electronic---Electro House“ → „Electro House“; zutreffende Stimmungen als Tag-Text |
+
 #### `app/rename.py`
 
 Baut aus den Metadaten einer Datei einen Dateinamen nach `cfg["rename_pattern"]` und benennt sie um — der Knopf „Dateien automatisch umbenennen" in den Einzelprüfungen. Verschiebt nie in einen anderen Ordner und rührt den Audio-Stream nicht an; die vierte und letzte Stelle, an der überhaupt eine Musikdatei verändert wird (neben `media.move_to_trash()`, `rewrite.py` und `tags.py`).
@@ -1725,13 +1802,14 @@ argparse-Dispatcher; Subcommands entsprechen 1:1 der Befehlsübersicht oben.
 
 #### `app/webui/`
 
-Vier Quelldateien, von `report._template()` per reiner String-Ersetzung (kein Build-Schritt/Bundler) zu einer einzigen Datei zusammengefügt:
+Mehrere Quelldateien, von `report._template()` per reiner String-Ersetzung (kein Build-Schritt/Bundler) zu einer einzigen Datei zusammengefügt:
 
 | Datei | Rolle |
 |---|---|
 | `index.html` | Seiten-Grundgerüst mit den Platzhaltern `<!--__CSS__-->`, `<!--__JS__-->`, `/*__META__*/null`, `/*__DATA__*/null` |
 | `app.css` | Gesamtes Styling, wird in den `<head>` der finalen HTML inline eingefügt |
 | `i18n/de.js` | Deutsche UI-Texte als `I18N_DE`-Objekt, vor `app.js` in denselben `<script>`-Block eingebettet (muss vor `app.js` geladen sein) |
+| `generator.js` | Playlist-Generator (Listenart `generator`): Pool, Gates, Score, Energiekurve, Slots, Regler. Läuft NACH `app.js` im selben `<script>`, siehe [Playlist-Generator — Interna](#playlist-generator--interna) |
 | `app.js` | Gesamte Client-Logik: Tabellen-Rendering/Sortierung/Filter, Wellenform je Bibliothekszeile (Bearbeiten-Ansicht, `waveViews`) + eigenstaendiger Einzelpruefungs-Player (`players`), globaler Mediaplayer + Warteschlange (`queueState`, beide Ansichten, siehe [Der globale Mediaplayer — Interna](#der-globale-mediaplayer--interna)), Einstellungen-Rendering (konsumiert das `GROUPS`-Schema), Drag-&-Drop, `localStorage`-Fallback ohne Server, Shop-Suchtext-Aufbereitung (DJ-Pool-Zusatz-Entfernung), Scan-Steuerung, Übersetzungen (`t()`/`resolveLang()`, siehe Einstellung `ui_language`), Fortschritts-Toasts (`progressToast()`, u. a. bei „Dateien öffnen", Sammel-Neuanalyse, Rekordbox-/Music-Abgleich) |
 
 Nicht im Detail dokumentiert (JS/CSS-Interna außerhalb des Scopes dieses Dokuments) — wer den `localStorage`-Fallback oder die Shop-Suchtext-Logik ändern will, muss direkt in `app.js` nachsehen, dort existiert keine Python-Entsprechung.

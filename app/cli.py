@@ -85,7 +85,7 @@ def cmd_scan(args) -> int:
 
     conn = db_mod.connect(cfg)
     workers = cfgmod.worker_count()
-    state = {"task": None}
+    state = {"task": None, "gm_task": None}
 
     with _progress() as progress:
         def on_progress(done, total, phase):
@@ -93,6 +93,12 @@ def cmd_scan(args) -> int:
                 console.print(f"{total:,} Dateien zu analysieren "
                               f"[dim]· {workers} parallele Prozesse[/dim]\n")
                 state["task"] = progress.add_task("Analyse", total=total)
+            if phase == "genre & stimmung":
+                if state["gm_task"] is None and total:
+                    state["gm_task"] = progress.add_task("Genre & Stimmung", total=total)
+                if state["gm_task"] is not None:
+                    progress.update(state["gm_task"], completed=done)
+                return
             if state["task"] is not None:
                 progress.update(state["task"], completed=done)
 
@@ -103,6 +109,7 @@ def cmd_scan(args) -> int:
             limit=args.limit,
             prune=args.prune,
             on_progress=on_progress,
+            genremood=args.genremood,
         )
 
     if not result["found"]:
@@ -125,6 +132,9 @@ def cmd_scan(args) -> int:
     if result.get("covers_updated"):
         console.print(f"[dim]{result['covers_updated']} Cover mit Music.app "
                       f"abgeglichen (geändert/entfernt)[/dim]")
+    if result.get("genremood_done") or result.get("genremood_failed"):
+        console.print(f"[dim]Genre & Stimmung: {result['genremood_done']} "
+                      f"analysiert, {result['genremood_failed']} fehlgeschlagen[/dim]")
 
     console.print()
     _print_summary(conn)
@@ -410,6 +420,9 @@ def build_parser() -> argparse.ArgumentParser:
     s.add_argument("--covers", action="store_true",
                    help="Nur Cover-Abgleich mit Music.app für ALLE bekannten "
                         "Dateien ohne Cover (kein Neu-Scan der Audiodateien)")
+    s.add_argument("--genremood", action="store_true",
+                   help="Danach Genre, Stimmung und Energie für alle Dateien "
+                        "ohne Ergebnis analysieren (nur Datenbank, ~1 s je Datei)")
     s.set_defaults(func=cmd_scan)
 
     c = sub.add_parser("check", help="Einzelne Dateien im Detail prüfen")

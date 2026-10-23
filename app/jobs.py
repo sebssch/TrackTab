@@ -7,9 +7,12 @@ des Laufs weiter antworten kann.
 """
 from __future__ import annotations
 
+import itertools
+import os
 import threading
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import (FIRST_COMPLETED, ProcessPoolExecutor,
+                                ThreadPoolExecutor, as_completed, wait)
 
 from . import config as cfgmod
 from . import db as db_mod
@@ -25,7 +28,8 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
              on_progress=None, should_cancel=None, cover_scan: bool = False,
              skip_spectral: bool = False, skip_loudness: bool = False,
              force_cover_fill: bool = False,
-             recheck_tag_issues: bool = False) -> dict:
+             recheck_tag_issues: bool = False,
+             genremood: bool = False) -> dict:
     """
     Analysiert die Bibliothek inkrementell.
 
@@ -39,6 +43,9 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
     Audiodateien neu vermessen werden sollen (kein Dateisystem-Durchlauf,
     arbeitet rein aus der DB, siehe app/coverfill.py). Uebergeht dabei
     zusaetzlich die 'cover_auto_fill'-Einstellung, da explizit angefordert.
+
+    genremood=True haengt als letzten Schritt die Genre-/Stimmungs-Analyse
+    fuer alle Dateien ohne Ergebnis an (siehe _analyse_genremood()).
     """
     report = on_progress or (lambda *a: None)
     cancelled = should_cancel or (lambda: False)
@@ -85,6 +92,7 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
             _backfill_keys(conn, result)
             _fill_covers(conn, cfg, result, force=force_cover_fill)
             _recheck_tag_issues(conn, cfg, result, enabled=recheck_tag_issues)
+            _analyse_genremood(conn, cfg, result, genremood, report, cancelled)
             return result
 
         batch: list[dict] = []
@@ -121,6 +129,8 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
         _backfill_keys(conn, result)
         _fill_covers(conn, cfg, result, force=force_cover_fill)
         _recheck_tag_issues(conn, cfg, result, enabled=recheck_tag_issues)
+        if not result["cancelled"]:
+            _analyse_genremood(conn, cfg, result, genremood, report, cancelled)
         return result
     finally:
         conn.close()
@@ -201,6 +211,70 @@ def _recheck_tag_issues(conn, cfg: dict, result: dict, enabled: bool) -> None:
     except Exception:                                      # noqa: BLE001
         return
     result["tag_issues_rechecked"] = stats["total"]
+
+
+def _analyse_genremood(conn, cfg: dict, result: dict, enabled: bool,
+                       report, cancelled) -> None:
+    """Genre, Stimmung und Energie fuer alle erfolgreich gescannten Dateien
+    nachtragen, die noch kein Ergebnis oder eines mit aelterem Analysestand
+    haben (Tabelle 'genremood', genremood.ANALYSIS_VERSION) -- nur auf
+    ausdruecklichen Wunsch (Schalter im Scan-Dialog, 'genremood' im
+    /api/scan-Aufruf), weil es rund eine Sekunde je Datei kostet.
+
+    Schreibt bewusst NUR in die Datenbank, nie in die Dateien, unabhaengig von
+    genremood_write_*: ein Bibliotheks-Scan soll nicht ungefragt tausende
+    Dateien veraendern, an denen Music.app/Rekordbox haengen. Wer Energie oder
+    Stimmung in der Datei haben will, nimmt die Aktion in der Tabelle.
+
+    Ein Abbruch behaelt alles bis dahin Gemessene; der naechste Lauf macht
+    beim Rest weiter. Zwei Threads: waehrend einer rechnet (genremood haelt
+    dafuer seinen eigenen Lock), dekodiert der andere schon die naechste
+    Datei. Einzelfehler (kaputte Datei) zaehlen nur mit, wie bei
+    _fill_covers() darf hier nichts den Scan kippen.
+    """
+    result["genremood_done"] = 0
+    result["genremood_failed"] = 0
+    if not enabled:
+        return
+    from . import genremood
+    if not genremood.available():
+        return
+    # Gemeinsames Laengenlimit mit der BPM-/Tonart-Analyse.
+    max_seconds = float(cfg.get("bpmkey_max_minutes") or 10) * 60
+    todo = [p for p in db_mod.paths_needing_genremood(
+        conn, max_seconds, genremood.ANALYSIS_VERSION) if os.path.isfile(p)]
+    total = len(todo)
+    report(0, total, "genre & stimmung")
+
+    def measure(path):
+        try:
+            return path, genremood.analyse(path, max_seconds), None
+        except Exception as exc:                           # noqa: BLE001
+            return path, None, exc
+
+    done = 0
+    pending = iter(todo)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        running = {pool.submit(measure, p) for p in itertools.islice(pending, 2)}
+        while running:
+            finished, running = wait(running, return_when=FIRST_COMPLETED)
+            for future in finished:
+                path, res, _exc = future.result()
+                done += 1
+                if res is not None:
+                    db_mod.save_genremood(conn, path, res["genres"], res["moods"],
+                                          res["energy"], res["model"])
+                    result["genremood_done"] += 1
+                else:
+                    result["genremood_failed"] += 1
+                report(done, total, "genre & stimmung")
+            if cancelled():
+                result["cancelled"] = True
+                for future in running:
+                    future.cancel()
+                break
+            for p in itertools.islice(pending, len(finished)):
+                running.add(pool.submit(measure, p))
 
 
 class ScanJob:

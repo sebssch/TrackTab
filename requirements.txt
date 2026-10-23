@@ -21,6 +21,12 @@ Pillow>=10.0        # Cover-Pruefung/-Verkleinerung bei Auffaelligkeiten (app/ta
 # Projekt, haeufige Releases).
 libsonare==1.8.2 ; sys_platform == "darwin" and platform_machine == "arm64"
 
+# Genre-Vorschlaege, Stimmung, Energie (app/genremood.py). Optional wie
+# libsonare: fehlt das Paket oder fehlen die Modelle (./fetch_models.sh),
+# blendet die Oberflaeche die Funktion aus. Offizielle Wheels nur fuer
+# Apple Silicon ab macOS 14.
+onnxruntime>=1.24 ; sys_platform == "darwin" and platform_machine == "arm64"
+
 # Nur fuer die Doppelklick-App: NSApplication-Huelle um den Server (app/macapp.py).
 # Erst damit beantwortet die App den Quit-Apple-Event, also Cmd+Q, "Beenden"
 # im Dock-Menue und das Abmelden. Fehlt das Paket, laeuft alles weiter --

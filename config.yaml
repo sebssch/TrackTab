@@ -157,17 +157,31 @@ key_notation: "camelot"
 # Die Tonart wird in Feld und Kommentar in der Schreibweise von key_notation
 # geschrieben. Neue Einzelpruefungs-Dateien automatisch analysieren:
 bpmkey_auto_drops: true
-# Dateien laenger als diese Minuten werden nicht analysiert (DJ-Mixe).
+# Dateien laenger als diese Minuten werden nicht analysiert (DJ-Mixe) -- gilt
+# auch fuer die Genre-/Stimmungs-Analyse.
 bpmkey_max_minutes: 10
 # Tonart ins Tonart-Feld schreiben: yes (ueberschreibt) | if_empty (nur wenn
 # dort noch keine Tonart steht) | no.
 bpmkey_write_key: "yes"
 # Dasselbe fuer die BPM im BPM-Feld.
 bpmkey_write_bpm: "yes"
-# Kommentar-Feld: none | key ("10A") | key_bpm ("10A - 126").
+# Gemeinsamer Kommentar-Eintrag von BPM-/Tonart- und Genre-/Stimmungs-Analyse:
+# none | key ("10A") | key_bpm ("10A - 126") | key_bpm_energy ("10A - 126 - E7")
+# | key_energy ("10A - E7") | energy ("E7").
 bpmkey_comment_content: "none"
-# Bei vorhandenem Kommentar: if_empty | overwrite | prepend (voranstellen).
+# Bei vorhandenem Kommentar: if_empty | overwrite | prepend (voranstellen) |
+# append (anhaengen).
 bpmkey_comment_existing: "overwrite"
+
+# Genre-Vorschlaege, Stimmung und Energie (app/genremood.py, Essentia-Modelle
+# der MTG, Lizenz CC BY-NC-SA 4.0). Ergebnisse stehen immer in der Datenbank.
+# Laengenlimit und Kommentar teilt sie mit der BPM-/Tonart-Analyse oben.
+# Neue Einzelpruefungs-Dateien automatisch analysieren:
+genremood_auto_drops: false
+# Genre-Vorschlaege unter dieser Wahrscheinlichkeit (Prozent) ausblenden.
+genremood_min_percent: 5
+# Stimmungen als Mood-Tag schreiben (TXXX:MOOD bzw. MOOD): no | tag.
+genremood_write_mood: "no"
 
 # Akzentfarbe der Oberflaeche (aktive Knoepfe, Player-Fortschritt, ...).
 # Eine von: blue, cyan, teal, indigo, violet, purple, fuchsia, pink.

@@ -10,7 +10,8 @@ datas = [
 
 import os
 if os.path.isdir("vendor"):
-    datas.append(("vendor", "vendor"))   # statisches ffmpeg/ffprobe
+    datas.append(("vendor", "vendor"))   # statisches ffmpeg/ffprobe und die
+                                         # Essentia-Modelle (fetch_models.sh)
 
 # Einzige Quelle der Versionsnummer ist app/__init__.py -- nicht hier
 # zusaetzlich pflegen, sonst laufen App-Anzeige und Bundle-Version auseinander.
@@ -40,13 +41,25 @@ try:
 except Exception:
     print("HINWEIS: libsonare nicht installiert -- Bundle ohne BPM-/Tonart-Analyse.")
 
+# onnxruntime (Genre-/Stimmungs-Analyse, app/genremood.py) -- gleiche Lage
+# wie libsonare: optional, lazy importiert, mit nativer Bibliothek im Paket.
+_ort_binaries, _ort_hidden = [], []
+try:
+    import onnxruntime  # noqa: F401
+    from PyInstaller.utils.hooks import collect_dynamic_libs
+    _ort_binaries = collect_dynamic_libs("onnxruntime")
+    _ort_hidden = collect_submodules("onnxruntime")
+except Exception:
+    print("HINWEIS: onnxruntime nicht installiert -- Bundle ohne Genre-/Stimmungs-Analyse.")
+
 a = Analysis(
     ["desktop_main.py"],
     pathex=[],
-    binaries=_sonare_binaries,
+    binaries=_sonare_binaries + _ort_binaries,
     datas=datas,
     hiddenimports=["app.analyzer", "app.classify", "app.spectral", "app.probe",
-                   "app.macapp", "app.bpmkey"] + _encodings + _sonare_hidden,
+                   "app.macapp", "app.bpmkey", "app.genremood"]
+                  + _encodings + _sonare_hidden + _ort_hidden,
     hookspath=[],
     excludes=["tkinter", "matplotlib", "pytest", "PyInstaller"],
     noarchive=False,
