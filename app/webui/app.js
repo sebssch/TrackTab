@@ -203,6 +203,10 @@ function energyCell(eg) {
   return `<span class="energy" title="${esc(t("col.energy"))} ${n}/10"><span class="energybar">${segs}</span>${n}</span>`;
 }
 
+// Eigene Energiekurven des Playlist-Generators ({id, name, points}), aus
+// /api/settings (generator_curves), gespeichert ueber /api/generator-curves.
+let GENERATOR_CURVES = [];
+
 // Eigene Tags (Pfad -> [Tag]), gebacken in META.userTags und nach jeder
 // Aenderung komplett vom Server uebernommen (adoptUserTags()).
 let USER_TAGS = new Map(Object.entries((META && META.userTags) || {}));
@@ -402,6 +406,9 @@ const DEFAULT_COL_WIDTHS = {po:50, v:105, co:90, kb:105, mk:75, cf:110, st:75, l
 let state = {
   view: "all",
   q: "", groupAlbums: false, pinned: false,
+  // Panel "Erweiterte Suche" unter der Suchleiste aufgeklappt (siehe
+  // syncAdvSearch()) -- je Browser gemerkt (saveFilters()).
+  advOpen: false,
   // Aktiver Bubble-Filter einer der drei "Aufraeumen"-Boxen (Genre/Album/
   // Interpret) -- {field, entry}, bewusst nicht persistiert (localStorage/
   // config), gilt nur fuer die laufende Sitzung wie state.q.
@@ -548,6 +555,7 @@ function saveFilters() {
     localStorage.setItem(LS_FILTERS, JSON.stringify({
       view: state.view,
       groupAlbums: state.groupAlbums,
+      advOpen: !!state.advOpen,
       sort: state.sort, dir: state.dir,
       layout: state.layout,
       editFilterSnapshot: state.editFilterSnapshot || null,
@@ -704,7 +712,7 @@ function applyLayout(next) {
   if (tbForCollapse) {
     tbForCollapse.querySelectorAll("tr.detail.expanded").forEach(det => {
       const tr = det.previousElementSibling;
-      if (tr && tr.classList.contains("row")) tr.classList.remove("expanded");
+      if (tr && tr.classList.contains("row")) { tr.classList.remove("expanded"); spanLinksIntoDetail(tr, false); }
       det.remove();
     });
   }
@@ -924,6 +932,7 @@ function loadFilters() {
     if (VIEWS.some(v => v.id === s.view)) state.view = s.view;
     for (const k of ["sort"]) if (s[k] !== undefined) state[k] = s[k];
     if (typeof s.groupAlbums === "boolean") state.groupAlbums = s.groupAlbums;
+    if (typeof s.advOpen === "boolean") state.advOpen = s.advOpen;
     if (s.dir === 1 || s.dir === -1) state.dir = s.dir;
     if (typeof s.shuffle === "boolean") queueState.shuffle = s.shuffle;
     if (typeof s.repeatTrack === "boolean") queueState.repeatTrack = s.repeatTrack;
@@ -1075,11 +1084,14 @@ const ICONS = {
   editor: SVG('<line x1="4" y1="20" x2="4" y2="12"/><line x1="9" y1="20" x2="9" y2="6"/>' +
               '<line x1="14" y1="20" x2="14" y2="15"/><line x1="19" y1="20" x2="19" y2="9"/>'),
   edit: SVG(LUCIDE_ICONS["square-pen"]),
-  clefTreble: SVG(LUCIDE_ICONS["clef-treble"]),
-  audioWaveform: SVG(LUCIDE_ICONS["audio-waveform"]),
+  // Nach Aufgabe benannt statt nach Motiv: BPM/Tonart messen, Genre &
+  // Stimmung messen, Tonart-Schreibweise angleichen. Ein Symboltausch
+  // geschieht so nur hier, nicht an jeder Verwendungsstelle.
+  analyseBpmKey: SVG(LUCIDE_ICONS["clef-treble"]),
+  analyseGenreMood: SVG(LUCIDE_ICONS["party-popper"]),
+  keySync: SVG(LUCIDE_ICONS["replace"]),
   pencil: SVG(LUCIDE_ICONS["pencil"]),
   sparkles: SVG(LUCIDE_ICONS["sparkles"]),
-  brainCircuit: SVG(LUCIDE_ICONS["brain-circuit"]),
   pencilRuler: SVG(LUCIDE_ICONS["pencil-ruler"]),
   eye: SVG(LUCIDE_ICONS.eye),
   eyeOff: SVG(LUCIDE_ICONS["eye-off"]),
@@ -1394,8 +1406,8 @@ const TREE_ICONS = {
 //   view   state.view-Wert -- oder null bei Ordnern/Wurzel (nur auf/zu)
 //   node   die Datenbankzeile bei eigenen Listen, sonst undefined
 //   kids   Unterknoten
-const PLAYLIST_ICONS = {playlist: "sym:list-music", folder: "sym:square-library", smart: "sym:settings",
-                        generator: "sym:chart-spline"};
+const PLAYLIST_ICONS = {playlist: "sym:list-music", folder: "sym:square-library", smart: "sym:book-a",
+                        generator: "sym:book-headphones"};
 
 // Icon-Auswahl fuer Playlisten/Merklisten (Baum-Badge + Auswahl-Dialog) laeuft
 // vollstaendig ueber das lokal vendorte Lucide-Lexikon LUCIDE_ICONS (siehe
@@ -2153,7 +2165,12 @@ function sortKeys(rows, keyFn) {
 // Neuaufbau der Tabelle spuerbar, und der Inhalt aendert sich ohnehin nur,
 // wenn sich Messwerte oder Markierungen aendern.
 
-const SMART_TYPES = {TEXT: "text", NUM: "num", ENUM: "enum", BOOL: "bool", DATE: "date"};
+// LEVEL: Energie-Stufe 1..10 als Auswahl (verglichen wird der gerundete
+// Wert, wie ihn die Energie-Spalte zeigt -- r.eg selbst hat Nachkommastellen,
+// "ist gleich 8" traefe als Zahl fast nie). TAGS: ein vorhandener Tag
+// (Stimmung oder eigener Tag, ids aus rowTags()).
+const SMART_TYPES = {TEXT: "text", NUM: "num", ENUM: "enum", BOOL: "bool", DATE: "date",
+  LEVEL: "level", TAGS: "tags"};
 
 // Feldkatalog. 'key' ist das Feld der kompakten Zeile (siehe
 // report.rows_to_payload), 'label' kommt wo moeglich aus FIELD_LABELS, damit
@@ -2178,7 +2195,11 @@ function smartFields() {
     {key: "p",  type: SMART_TYPES.TEXT, label: FIELD_LABELS.p},
     {key: "yr", type: SMART_TYPES.NUM,  label: FIELD_LABELS.yr},
     {key: "bp", type: SMART_TYPES.NUM,  label: FIELD_LABELS.bp},
-    {key: "eg", type: SMART_TYPES.NUM,  label: t("col.energy")},
+    {key: "eg", type: SMART_TYPES.LEVEL, label: t("col.energy"),
+     options: () => Array.from({length: 10}, (_, i) => ({v: String(i + 1), l: String(i + 1)}))},
+    {key: "mm", type: SMART_TYPES.TAGS, label: t("col.mood"),
+     options: () => allTagEntries().sort((a, b) => cmpText(a.label, b.label))
+       .map(e => ({v: e.id, l: e.label}))},
     // Tonart: Auswahl der 24 Tonarten in der eingestellten Schreibweise; die
     // Regel speichert den Camelot-Wert (v), damit sie nach einem Wechsel der
     // Schreibweise weiter greift.
@@ -2206,7 +2227,21 @@ const SMART_OPS = {
   [SMART_TYPES.ENUM]: ["is", "is_not"],
   [SMART_TYPES.BOOL]: ["is"],
   [SMART_TYPES.DATE]: ["in_last_days", "before_days", "after_days"],
+  [SMART_TYPES.LEVEL]: ["is", "is_not", "at_least", "at_most"],
+  [SMART_TYPES.TAGS]: ["has", "has_not"],
 };
+// Energie-Regeln von vor der Stufen-Auswahl (Zahlenfeld, ops eq/ne/gt/lt)
+// auf die Stufen umsetzen, sobald der Regel-Editor sie oeffnet. Bis dahin
+// wertet evalSmartRule() sie unveraendert als Zahl aus.
+function upgradeSmartRule(rule) {
+  if (rule.field !== "eg" || !["eq", "ne", "gt", "lt"].includes(rule.op)) return rule;
+  const v = Number(rule.value);
+  const lvl = x => String(Math.min(10, Math.max(1, x)));
+  if (!isFinite(v)) return {...rule, op: "is", value: "5"};
+  if (rule.op === "gt") return {...rule, op: "at_least", value: lvl(Math.floor(v) + 1)};
+  if (rule.op === "lt") return {...rule, op: "at_most", value: lvl(Math.ceil(v) - 1)};
+  return {...rule, op: rule.op === "ne" ? "is_not" : "is", value: lvl(Math.round(v))};
+}
 
 function smartFieldByKey(key) {
   return smartFields().find(f => f.key === key) || null;
@@ -2250,6 +2285,18 @@ function evalSmartRule(r, rule) {
   if (field.type === SMART_TYPES.BOOL) {
     return (!!raw) === (String(rule.value) === "1");
   }
+  if (field.type === SMART_TYPES.TAGS) {
+    const hit = rowTags(r).some(tg => tg.id === rule.value);
+    return rule.op === "has_not" ? !hit : hit;
+  }
+  if (field.type === SMART_TYPES.LEVEL && SMART_OPS[SMART_TYPES.LEVEL].includes(rule.op)) {
+    // 0 = nicht analysiert: keine Stufe, trifft nur "ist nicht".
+    const level = Math.round(Number(raw) || 0), want = Number(rule.value);
+    if (!level) return rule.op === "is_not";
+    if (rule.op === "at_least") return level >= want;
+    if (rule.op === "at_most") return level <= want;
+    return rule.op === "is_not" ? level !== want : level === want;
+  }
   if (field.type === SMART_TYPES.ENUM) {
     if (rule.field === "fam" && rule.value === "lossless") {
       const hit = r.fam === "lossless";
@@ -2262,7 +2309,7 @@ function evalSmartRule(r, rule) {
       ? SMART_FORMAT_LEGACY[rule.value] : rule.value;
     return rule.op === "is_not" ? value !== want : value === want;
   }
-  if (field.type === SMART_TYPES.NUM) {
+  if (field.type === SMART_TYPES.NUM || field.type === SMART_TYPES.LEVEL) {
     const num = Number(raw);
     const want = Number(rule.value) * (field.scale || 1);
     if (!isFinite(num) || !isFinite(want)) return false;
@@ -2373,7 +2420,8 @@ function ruleRowHtml(rule, index) {
         `<option value="1"${String(rule.value) === "1" ? " selected" : ""}>${esc(t("smart.yes"))}</option>` +
         `<option value="0"${String(rule.value) === "0" ? " selected" : ""}>${esc(t("smart.no"))}</option></select>`;
     }
-    if (field.type === SMART_TYPES.ENUM) {
+    if (field.type === SMART_TYPES.ENUM || field.type === SMART_TYPES.LEVEL
+        || field.type === SMART_TYPES.TAGS) {
       return `<select class="ruleval" data-rulevalue="${index}">` +
         field.options().map(o =>
           `<option value="${esc(o.v)}"${o.v === rule.value ? " selected" : ""}>${esc(o.l)}</option>`
@@ -2385,9 +2433,12 @@ function ruleRowHtml(rule, index) {
       `value="${esc(rule.value ?? "")}">`;
   })();
   const einheit = field.type === SMART_TYPES.DATE ? t("smart.unit_days") : (field.unit || "");
+  // Feldauswahl alphabetisch -- die Reihenfolge von smartFields() folgt der
+  // Herkunft der Felder, nicht dem, wonach man sucht.
+  const sorted = fields.slice().sort((a, b) => cmpText(a.label, b.label));
   return `<div class="rulerow">
     <select class="rulefield" data-rulefield="${index}">${
-      fields.map(f => `<option value="${esc(f.key)}"${f.key === field.key ? " selected" : ""}>${esc(f.label)}</option>`).join("")
+      sorted.map(f => `<option value="${esc(f.key)}"${f.key === field.key ? " selected" : ""}>${esc(f.label)}</option>`).join("")
     }</select>
     <select class="ruleop" data-ruleop="${index}">${
       ops.map(op => `<option value="${esc(op)}"${op === rule.op ? " selected" : ""}>${esc(smartOpLabel(op))}</option>`).join("")
@@ -2403,7 +2454,7 @@ function openRulesDialog(node) {
   const ov = document.getElementById("rulesOverlay");
   const spec = parseSmartRules(node) || {match: "all", rules: [], limit: {}};
   // Kopie, damit Abbrechen wirklich nichts hinterlaesst.
-  let rules = (spec.rules || []).map(x => ({...x}));
+  let rules = (spec.rules || []).map(x => upgradeSmartRule({...x}));
   if (!rules.length) rules = [{field: "v", op: "is", value: "FAKE"}];
   const limit = {enabled: false, kind: "count", value: 25, by: "added", ...(spec.limit || {})};
 
@@ -2458,7 +2509,11 @@ function openRulesDialog(node) {
       // Feldwechsel setzt Operator und Wert zurueck -- ein Textoperator auf
       // einem Zahlenfeld waere sonst stillschweigend wirkungslos.
       rules[i] = {field: el.value, op: (SMART_OPS[field.type] || ["is"])[0], value: ""};
-      if (field.type === SMART_TYPES.ENUM) rules[i].value = field.options()[0].v;
+      if (field.type === SMART_TYPES.ENUM || field.type === SMART_TYPES.LEVEL
+          || field.type === SMART_TYPES.TAGS) {
+        const first = field.options()[0];
+        rules[i].value = first ? first.v : "";
+      }
       if (field.type === SMART_TYPES.BOOL) rules[i].value = "1";
       draw();
     });
@@ -3365,7 +3420,7 @@ function viewRows(view) {
 
 // Nur fuer Listen exportierbar, bei denen ein Export als Playlist Sinn
 // ergibt -- "gone" (Datei fehlt) haette keine spielbaren Pfade, "corrected"
-// deckt der Toolbar-Knopf "M3U8 Export" bereits ab.
+// deckt der Toolbar-Knopf "Playlist Export" (M3U8) bereits ab.
 const SYS_EXPORTABLE_VIEWS = new Set(["all", "ignored", "duplicates", "grp:genre", "grp:album", "grp:artist"]);
 function sysMenuItems(view) {
   const items = [{icon: ICONS.columns3, label: t("cols.view_menu"), action: () => setViewColumnView(view)}];
@@ -3950,6 +4005,12 @@ async function initStorage() {
         // hier die Wahrheit, die localStorage-Fassung aus loadFilters() war
         // nur die Ueberbrueckung bis hierher.
         if (Array.isArray(s.column_views)) adoptColumnViewsFromServer(s);
+        // Eigene Energiekurven des Generators (generator.js). Ein schon
+        // geoeffneter Generator braucht sie fuer seine Verlauf-Auswahl.
+        if (Array.isArray(s.generator_curves)) {
+          GENERATOR_CURVES = s.generator_curves;
+          if (typeof GEN !== "undefined" && GEN) genRender();
+        }
         lastColumnStoreKey = columnStoreKey();
         // Eigene Spaltenkonfiguration der Einzelprueflungen -- unabhaengig
         // vom obigen Block, kein Ansicht-Split (siehe state.dropColumns).
@@ -4077,7 +4138,9 @@ const VALUE_AC_DEBOUNCE_MS = 200;
 // aus DATA und waeren ohne Schwellwert eine unbrauchbar lange Liste.
 const INSTANT_VALUE_FIELDS = new Set(["v", "mm"]);
 
-function attachSearchFilterAutocomplete(el, list) {
+// onApply (optional): wohin der Text nach einem uebernommenen Vorschlag geht --
+// ohne Angabe in die Hauptsuche (state.q), der Generator gibt seinen Liederpool an.
+function attachSearchFilterAutocomplete(el, list, onApply) {
   let items = [], active = -1, tokStart = -1, tokEnd = -1, debounceTimer = 0;
 
   const close = () => {
@@ -4152,6 +4215,7 @@ function attachSearchFilterAutocomplete(el, list) {
     close();
     el.focus();
     el.setSelectionRange(pos, pos);
+    if (onApply) { onApply(el.value); return; }
     state.q = el.value.toLowerCase(); state.shown = PAGE; render();
   };
 
@@ -4347,24 +4411,44 @@ function syncTableWidths(measureLinks = true) {
   syncDetailWidth();
 }
 
-// Der aufgeklappte Bereich (Spektrum, Gruende, Player mit Waveform) gehoert
-// zur Zeile, nicht zu einer Spalte -- er soll beim horizontalen Scrollen
-// stehenbleiben statt mit der Tabelle wegzurutschen. Dafuer klebt er wie die
-// fixierten Spalten (CSS: tr.detail td > .grid) und wird exakt auf den Platz
-// zwischen ihnen begrenzt: von der Trennlinie der Auswahlspalte bis zu der
-// vor der Aktionsspalte. Beide Breiten stehen erst zur Laufzeit fest --
-// "Öffnen" misst sich nach den sichtbaren Aktionen (syncLinksWidth), und der
-// Sichtbereich haengt an der Fensterbreite. Je Tabelle getrennt, weil die
-// Einzelpruefungen ihre eigene .tablewrap haben.
+// Der aufgeklappte Bereich (Gruende, Player mit Waveform) gehoert zur Zeile,
+// nicht zu einer Spalte -- er soll beim horizontalen Scrollen stehenbleiben
+// statt mit der Tabelle wegzurutschen. Dafuer klebt er am linken Rand (CSS:
+// .detail .grid) und ist genau so breit wie der sichtbare Ausschnitt der
+// .tablewrap; die haengt an der Fensterbreite und steht erst zur Laufzeit
+// fest -- und aendert sich auch ohne Fenster-Resize (Seitenleiste ziehen,
+// Einzelpruefungen ein-/ausblenden), deshalb ein ResizeObserver je
+// .tablewrap. Je Tabelle getrennt, weil die Einzelpruefungen ihre eigene
+// .tablewrap haben. Eine gerade unsichtbare Tabelle (Breite 0) behaelt ihren
+// letzten Wert, sonst klappte ein Track dort auf Breite 0 auf.
+const _wrapWidthObserver = new ResizeObserver(entries => {
+  for (const e of entries) setWrapWidth(e.target);
+});
+const _observedWraps = new WeakSet();
+function setWrapWidth(wrap) {
+  if (wrap.clientWidth > 0) wrap.style.setProperty("--wrapw", wrap.clientWidth + "px");
+  const links = wrap.querySelector("thead th.links");
+  const lw = links ? links.getBoundingClientRect().width : 0;
+  if (lw > 0) wrap.style.setProperty("--linksw", lw + "px");
+  const sel = wrap.querySelector("thead th.sel");
+  const sw = sel ? sel.getBoundingClientRect().width : 0;
+  if (sw > 0) wrap.style.setProperty("--selw", sw + "px");
+}
+
+// Aufgeklappt reicht die Aktionsspalte ("Öffnen") per rowspan ueber Zeile
+// UND Detailzeile: ihre Gruppen (Öffnen/Suche/Merken) ziehen die Zeile dann
+// nicht mehr in die Hoehe, sondern stehen neben der Waveform. Die Detailzelle
+// ist dafuer eine Spalte schmaler (colspan - 1 an beiden Aufklapp-Stellen).
+// Muss bei JEDEM Ein-/Aushaengen einer Detailzeile laufen -- auch beim
+// Wiedereinhaengen nach render(), die Zeile ist dann frisch gebaut.
+function spanLinksIntoDetail(tr, expanded) {
+  const links = tr.querySelector(":scope > td.links");
+  if (links) links.rowSpan = expanded ? 2 : 1;
+}
 function syncDetailWidth() {
   document.querySelectorAll(".tablewrap").forEach(wrap => {
-    const sel = wrap.querySelector("thead th.sel");
-    const links = wrap.querySelector("thead th.links");
-    if (!sel || !links) return;
-    const left = sel.getBoundingClientRect().width;
-    const free = wrap.clientWidth - left - links.getBoundingClientRect().width;
-    wrap.style.setProperty("--detailleft", Math.round(left) + "px");
-    wrap.style.setProperty("--detailw", Math.max(240, Math.round(free)) + "px");
+    if (!_observedWraps.has(wrap)) { _observedWraps.add(wrap); _wrapWidthObserver.observe(wrap); }
+    setWrapWidth(wrap);
   });
 }
 
@@ -5134,6 +5218,10 @@ function matchesDateFilter(rowValue, rawValue, exactEmpty) {
   if (exactEmpty) return !rowValue;
   if (!rowValue) return false;  // 0 = nie hinzugefuegt, zaehlt bei keinem Datumsfilter als Treffer
   rawValue = rawValue.trim();
+  // "30d": in den letzten 30 Tagen -- relativ zu jetzt, damit ein gespeicherter
+  // Liederpool des Generators ("zuletzt hinzugefuegt") nicht veraltet.
+  const rel = /^(\d+)d$/i.exec(rawValue);
+  if (rel) return rowValue >= Date.now() / 1000 - Number(rel[1]) * 86400;
   const op = rawValue.startsWith(">") ? ">" : rawValue.startsWith("<") ? "<" : null;
   const range = parseDateRange(op ? rawValue.slice(1) : rawValue);
   if (!range) return true;  // unparsbar -> Filter wirkungslos statt Absturz
@@ -5334,10 +5422,18 @@ function applyFilters(r, filters) {
 function matchesSearch(r, q) {
   if (!applyFilters(r, ACTIVE_DEFAULT_FILTERS)) return false;
   if (!q) return true;
-  const {free, filters} = parseSearchQuery(q);
+  return matchesParsedQuery(r, parseSearchQuery(q));
+}
+// Eine bereits geparste Abfrage (parseSearchQuery()) ohne die Standard-
+// Suchfilter -- fuer den Liederpool des Generators, der seine eigene Abfrage
+// hat und nicht von den Filtern der Suchleiste abhaengen soll. Das Ergebnis
+// von parseSearchQuery() einmal holen und dann je Zeile hierher: der Cache
+// dort haelt nur die zuletzt geparste Abfrage.
+function matchesParsedQuery(r, parsed) {
+  const {free, filters} = parsed;
   // Mehrere freie Elemente sind UND-verknuepft -- jedes muss fuer sich in
   // Interpret+Titel+Album+Pfad vorkommen (Reihenfolge egal).
-  const sc = scopeEntry(r);
+  const sc = free.length ? scopeEntry(r) : null;
   for (const el of free) if (!matchesAnyValue(sc.text, el.values, sc)) return false;
   return applyFilters(r, filters);
 }
@@ -5373,6 +5469,7 @@ function renderSearchChips() {
   const defaultChips = ACTIVE_DEFAULT_FILTERS.map(f =>
     `<span class="chip searchchip defaultchip" data-defaultchip="${f.defaultId}" title="${esc(t("search.chip.default_title"))}">${esc(chipLabel(f))}<span class="rm">×</span></span>`).join("");
   box.innerHTML = queryChips + defaultChips;
+  syncAdvSearch();
   box.querySelectorAll("[data-qchip]").forEach(el => el.querySelector(".rm").onclick = () => {
     const f = filters[+el.dataset.qchip];
     state.q = (state.q.slice(0, f.start) + state.q.slice(f.end)).replace(/\s+/g, " ").trim();
@@ -5388,6 +5485,225 @@ function renderSearchChips() {
     render();
   });
 }
+
+// ── Erweiterte Suche ──────────────────────────────────────────────────────
+// Alle /Parameter der Suche als eigene Eingabefelder: ein aufklappbares Panel
+// unter der Suchleiste (#advSearch) und -- dieselben Bausteine -- der
+// Liederpool des Playlist-Generators (generator.js). Bewusst KEIN eigener
+// Filterzustand: die Wahrheit bleibt der Suchtext. Die Felder zeigen, was dort
+// steht (advSyncPanel()), und eine Eingabe schreibt den passenden
+// "/Parameter Wert"-Ausdruck in den Text zurueck (advApplyField()). Textsuche
+// mit Parametern bleibt damit der Normalfall, das Panel ist nur eine zweite
+// Schreibweise derselben Abfrage, beides laesst sich mischen.
+// Verneinte Ausdruecke ("/No /Genre X") haben kein eigenes Feld und bleiben
+// beim Bearbeiten unangetastet; nur die Schalter (Cover, Music, ...) kennen
+// "nein" als Auswahl. "help" verweist auf den Suchhilfe-Eintrag: daraus
+// kommen der geschriebene Parametername (erste Schreibweise, in der Sprache
+// der Oberflaeche) und der Platzhalter (die Beispiele ohne Parameternamen).
+// "ac" = Feld fuer die Wertvorschlaege (fieldValuesForAutocomplete()).
+const ADV_FIELDS = [
+  {key: "a", help: "artist", label: "field.artist", ac: "a"},
+  {key: "t", help: "title_field", label: "field.title"},
+  {key: "al", help: "album", label: "field.album", ac: "al"},
+  {key: "ge", help: "genre", label: "field.genre", ac: "ge"},
+  {key: "ky", help: "key", label: "field.key", ac: "ky"},
+  {key: "bp", help: "bpm", label: "field.bpm"},
+  {key: "eg", help: "energy", label: "col.energy"},
+  {key: "mm", help: "mood", label: "col.mood", ac: "mm"},
+  {key: "yr", help: "year", label: "field.year"},
+  {key: "du", help: "duration", label: "field.duration"},
+  {key: "da", help: "added", label: "field.added"},
+  {key: "aa", help: "album_artist", label: "field.album_artist", ac: "aa"},
+  {key: "cp", help: "composer", label: "field.composer", ac: "cp"},
+  {key: "cm", help: "comment", label: "field.comment"},
+  {key: "p", help: "path", label: "field.path"},
+  {key: "ext", help: "file", label: "field.file", ac: "__ext"},
+  {key: "v", help: "status", label: "col.status", ac: "v"},
+  {key: "kb", help: "declared", label: "field.declared"},
+  {key: "cf", help: "confidence", label: "field.confidence"},
+  {key: "cv", help: "cover", label: "col.cover", flag: true},
+  {key: "im", help: "music", label: "col.in_music", flag: true},
+  {key: "rb", help: "rekordbox", label: "col.rekordbox", flag: true},
+  {key: "ig", help: "hidden", label: "views.ignored", flag: true},
+];
+const ADV_BY_KEY = Object.fromEntries(ADV_FIELDS.map(d => [d.key, d]));
+// Welche geparsten Filter (parseSearchQuery()) zu einem Feld gehoeren.
+function advMatches(def, f) {
+  if (def.flag) return f.kind === "flag" && f.field === def.key;
+  if (def.key === "ext") return f.kind === "ext";
+  return f.kind !== "flag" && f.kind !== "exclude" && f.field === def.key;
+}
+// Geschriebener Parametername: erste Schreibweise aus der Suchhilfe, solange
+// der Parser sie kennt -- sonst (Uebersetzung ohne passenden Alias) die
+// deutsche Grundform, die er immer kennt.
+function advToken(def) {
+  const tok = t(`search.help.${def.help}.token`).split(",")[0].trim();
+  const word = tok.slice(1).toLowerCase().replace(/ü/g, "ue");
+  if (tok[0] === "/" && ALIAS_LOOKUP.has(word)) return tok;
+  return "/" + (Object.keys(SEARCH_FIELD_ALIASES).find(k => SEARCH_FIELD_ALIASES[k] === def.key)
+    || [...FLAG_ALIASES].find(([, v]) => v === def.key)?.[0] || (def.key === "ext" ? "datei" : def.key));
+}
+function advPlaceholder(def) {
+  return t(`search.help.${def.help}.example`).split("·")
+    .filter(part => !/\/no\b/i.test(part))
+    .map(part => part.replace(/\/\S+\s*/g, "").trim()).filter(Boolean).join(" · ");
+}
+// Wert eines Filters so, wie er im Suchtext steht (inkl. Anfuehrungszeichen,
+// Klammern, "="), ohne den Parameternamen davor.
+function advRawValue(orig, f) {
+  const seg = orig.slice(f.start, f.end);
+  const m = /^\/\S*?(?=[\s("“”„‟«»=]|$)\s*/.exec(seg);
+  return m ? seg.slice(m[0].length) : seg;
+}
+// Mehrere Woerter ohne Klammer/Anfuehrungszeichen gehoeren im Feld
+// zusammen -- im Suchtext waeren es sonst ein Wert plus freier Text.
+function advQuoteValue(v) {
+  v = v.trim();
+  if (!v || isQuote(v[0]) || v[0] === "(" || v[0] === "=" || !/\s/.test(v)) return v;
+  return `"${v}"`;
+}
+// Neuer Suchtext, nachdem ein Feld geaendert wurde: alle bisherigen
+// (nicht verneinten) Ausdruecke dieses Parameters raus, der neue ans Ende.
+// Schalter ersetzen auch ihre verneinte Form ("/No /Cover").
+function advApplyField(orig, def, value) {
+  const {filters} = parseSearchQuery(orig.toLowerCase());
+  const cut = filters.filter(f => advMatches(def, f) && (def.flag || !f.negate))
+    .sort((a, b) => b.start - a.start);
+  let q = orig;
+  for (const f of cut) q = q.slice(0, f.start) + q.slice(f.end);
+  let expr = "";
+  if (def.flag) {
+    if (value === "yes") expr = advToken(def);
+    else if (value === "no") expr = `${t("search.help.exclude.token")} ${advToken(def)}`;
+  } else {
+    const v = advQuoteValue(value || "");
+    if (v) expr = `${advToken(def)} ${v}`;
+  }
+  return [q, expr].join(" ").replace(/\s+/g, " ").trim();
+}
+function advPanelHtml(prefix, exclude = []) {
+  const fields = ADV_FIELDS.filter(d => !exclude.includes(d.key)).map(d => {
+    const label = `<span class="advlbl">${esc(t(d.label))}</span>`;
+    // Schalter als Segmentauswahl statt Dropdown -- drei feste Werte sind
+    // so mit einem Klick erreichbar. Der Wert steht in data-value (advValue()).
+    if (d.flag) {
+      return `<div class="advfield">${label}<span class="advseg" data-advkey="${d.key}" data-value="">${
+        [["", "advsearch.flag_any"], ["yes", "advsearch.flag_yes"], ["no", "advsearch.flag_no"]].map(([v, k]) =>
+          `<button type="button" data-advval="${v}"${v ? "" : ` class="on"`}>${esc(t(k))}</button>`).join("")}</span></div>`;
+    }
+    return `<label class="advfield">${label}<input type="text" class="advinput" data-advkey="${d.key}"
+        autocomplete="off" spellcheck="false" placeholder="${esc(advPlaceholder(d))}"></label>`;
+  }).join("");
+  return `<div class="advgrid">${fields}</div>
+    <div class="advfoot"><span class="path">${esc(t("advsearch.hint"))}</span>
+      <button type="button" class="act small" data-advreset>${esc(t("advsearch.reset"))}</button></div>`;
+}
+// Wert eines Felds -- Eingabefeld oder Segmentauswahl (Schalter).
+function advValue(el) { return el.classList.contains("advseg") ? el.dataset.value : el.value; }
+function advSetValue(el, val) {
+  if (!el.classList.contains("advseg")) { el.value = val; return; }
+  el.dataset.value = val;
+  el.querySelectorAll("[data-advval]").forEach(b => b.classList.toggle("on", b.dataset.advval === val));
+}
+
+// Felder aus dem Suchtext fuellen. Das Feld mit dem Fokus bleibt stehen,
+// sonst spraenge beim Tippen die Schreibmarke. Liefert die Zahl belegter
+// Felder (Zaehler am Knopf).
+function advSyncPanel(panel, orig) {
+  const {filters} = parseSearchQuery((orig || "").toLowerCase());
+  let used = 0;
+  for (const def of ADV_FIELDS) {
+    const hits = filters.filter(f => advMatches(def, f));
+    const val = def.flag ? (hits[0] ? (hits[0].negate ? "no" : "yes") : "")
+      : (hits.find(f => !f.negate) ? advRawValue(orig, hits.find(f => !f.negate)) : "");
+    if (val) used++;
+    const el = panel && panel.querySelector(`[data-advkey="${def.key}"]`);
+    if (el && el !== document.activeElement && advValue(el) !== val) advSetValue(el, val);
+  }
+  return used;
+}
+// Eingaben verdrahten. getQuery/setQuery kapseln, wo der Suchtext liegt
+// (Suchleiste oder Generator-Einstellungen). Getippt wird verzoegert
+// uebernommen, eine Auswahl (Schalter, Vorschlag, Enter/Verlassen) sofort.
+function advBindPanel(panel, getQuery, setQuery) {
+  let timer = 0;
+  const commit = el => {
+    clearTimeout(timer);
+    const def = ADV_BY_KEY[el.dataset.advkey];
+    const next = advApplyField(getQuery(), def, advValue(el));
+    if (next !== getQuery()) setQuery(next);
+  };
+  panel.addEventListener("input", ev => {
+    const el = ev.target.closest("input[data-advkey]");
+    if (!el) return;
+    clearTimeout(timer);
+    timer = setTimeout(() => commit(el), 300);
+  });
+  panel.addEventListener("change", ev => {
+    const el = ev.target.closest("[data-advkey]");
+    if (el) commit(el);
+  });
+  advAttachSuggestions(panel);
+  panel.addEventListener("click", ev => {
+    const seg = ev.target.closest("[data-advval]");
+    if (seg) {
+      const el = seg.closest(".advseg");
+      advSetValue(el, seg.dataset.advval);
+      commit(el);
+      return;
+    }
+    if (!ev.target.closest("[data-advreset]")) return;
+    clearTimeout(timer);
+    let q = getQuery();
+    for (const def of ADV_FIELDS) q = advApplyField(q, def, "");
+    panel.querySelectorAll("[data-advkey]").forEach(el => advSetValue(el, ""));
+    if (q !== getQuery()) setQuery(q);
+  });
+}
+// Wertvorschlaege: dieselbe Liste wie im Tags-Dialog (attachAutocomplete(),
+// z. B. das Genre-Feld) statt der Browser-Datalist -- gleiche Optik in der
+// ganzen Oberflaeche. Werte ueber den Schluessel "q:<feld>" aus
+// fieldValuesForAutocomplete() (dieselben wie die Suchleiste). Nach jedem
+// Aufbau der Felder aufrufen; ein schon verdrahtetes Feld bleibt unberuehrt.
+function advAttachSuggestions(panel) {
+  panel.querySelectorAll("input[data-advkey]").forEach(el => {
+    const def = ADV_BY_KEY[el.dataset.advkey];
+    if (def.ac) attachAutocomplete(el, "q:" + def.ac);
+  });
+}
+
+// Panel der Suchleiste.
+function advMainQuery() { return document.getElementById("q").value; }
+function advSetMainQuery(v) {
+  const qEl = document.getElementById("q");
+  qEl.value = v;
+  state.q = v.toLowerCase();
+  state.shown = PAGE;
+  render();
+}
+function syncAdvSearch() {
+  const panel = document.getElementById("advSearch");
+  const btn = document.getElementById("btnAdvSearch");
+  if (!panel || !btn) return;
+  btn.classList.toggle("on", !!state.advOpen);
+  panel.hidden = !state.advOpen;
+  if (state.advOpen && !panel.dataset.built) {
+    panel.innerHTML = advPanelHtml("main");
+    panel.dataset.built = "1";
+    advAttachSuggestions(panel);
+  }
+  const used = advSyncPanel(state.advOpen ? panel : null, advMainQuery());
+  const badge = btn.querySelector(".countbadge");
+  badge.textContent = used || "";
+  badge.hidden = !used;
+}
+(function initAdvSearch() {
+  const panel = document.getElementById("advSearch");
+  const btn = document.getElementById("btnAdvSearch");
+  if (!panel || !btn) return;
+  advBindPanel(panel, advMainQuery, advSetMainQuery);
+  btn.onclick = () => { state.advOpen = !state.advOpen; saveFilters(); syncAdvSearch(); };
+})();
 
 // Album-Gruppenschluessel wie in Music.app: Albumkuenstler (Fallback Artist)
 // + Album. Kein Album-Tag -> null, wird nie gruppiert (sonst faellt jede
@@ -5737,32 +6053,18 @@ function clipCell(r) {
   return `<span class="cliptag" title="${esc(t("detail.true_peak_clip_title", {tp: String(r.tp.toFixed(1)).replace(".",",")}))}">${esc(t("col.clip"))}</span>`;
 }
 
-function spectrumSVG(r) {
-  if (!r.sp || !r.sp.length) return `<div class='path'>${esc(t("detail.no_spectrum"))}</div>`;
-  const W = 340, H = 110, pad = 18, n = r.sp.length, nyq = r.sr / 2000;
-  const max = Math.max(...r.sp);
-  const y = v => pad + (Math.min(0, Math.max(-110, v - max)) / -110) * (H - pad*2);
-  const pts = r.sp.map((v,i) => `${pad + (i/(n-1))*(W-pad*2)},${y(v).toFixed(1)}`).join(" ");
-  const cx = pad + (r.co / nyq) * (W - pad*2);
-  const ticks = [16,18,20].map(f => {
-    const x = pad + (f/nyq)*(W-pad*2);
-    return `<line x1="${x}" y1="${pad}" x2="${x}" y2="${H-pad}" stroke="var(--line)" stroke-dasharray="2,3"/>
-            <text x="${x}" y="${H-4}" font-size="9" fill="var(--dim)" text-anchor="middle">${f}k</text>`;
-  }).join("");
-  return `<svg viewBox="0 0 ${W} ${H}" style="width:180px;max-width:100%;height:auto">
-    ${ticks}
-    <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="1.2"/>
-    <line x1="${cx}" y1="${pad-6}" x2="${cx}" y2="${H-pad}" stroke="var(--fake)" stroke-width="1.5"/>
-    <text x="${cx}" y="${pad-9}" font-size="10" fill="var(--fake)" text-anchor="middle">${r.co} kHz</text>
-  </svg>`;
-}
-
 // Zell-Renderer je reorderbarer Spalte (OPTIONAL_COLUMNS-Keys) — 1:1 aus den
 // frueher fest verketteten Zeilen-Templates uebernommen, jetzt datengetrieben
 // nach state.colOrder statt fixer Reihenfolge.
 // Position je Zeile in der aktuellen Liste, einmal je render() gebildet
 // (listPositionMap()), damit die Zelle nicht je Zeile die Liste durchsucht.
 let POS_MAP = null;
+// "Liegt in Rekordbox/Music.app" als kleines Programm-Symbol statt Haken.
+// Ohne Server gibt es /api/appicon nicht -- dann bleibt es beim Haken.
+function presenceMark(which, title) {
+  return `<span class="rbyes" title="${esc(title)}">${apiMode
+    ? `<img class="appicon appicon-sm" src="/api/appicon?which=${which}" alt="">` : "✓"}</span>`;
+}
 const CELL_RENDERERS = {
   po: r => {
     const at = POS_MAP ? POS_MAP.get(posKeyOf(r)) : undefined;
@@ -5780,8 +6082,8 @@ const CELL_RENDERERS = {
   lu: r => `<td class="num">${loudnessCell(r)}</td>`,
   tp: r => `<td class="num">${clipCell(r)}</td>`,
   du: r => `<td class="num">${fmtTime(r.du)}</td>`,
-  rb: r => `<td class="num">${r.rb ? `<span class="rbyes" title="${esc(t("badge.in_rekordbox"))}">✓</span>` : ""}</td>`,
-  im: r => `<td class="num">${r.im ? `<span class="rbyes" title="${esc(t("badge.in_music_app"))}">✓</span>` : ""}</td>`,
+  rb: r => `<td class="num">${r.rb ? presenceMark("rekordbox", t("badge.in_rekordbox")) : ""}</td>`,
+  im: r => `<td class="num">${r.im ? presenceMark("music", t("badge.in_music_app")) : ""}</td>`,
   da: r => `<td class="num">${esc(fmtDate(r.da))}</td>`,
   // r.gone ausschliessen: die Datei fehlt am gespeicherten Pfad, /api/cover
   // liefert dann 410 -- ohne diese Pruefung haengt ein kaputtes Bild-Icon in
@@ -5807,7 +6109,8 @@ const CELL_RENDERERS = {
   ge: r => `<td>${esc(r.ge || "")}</td>`,
   yr: r => `<td class="num">${r.yr || ""}</td>`,
   // Ganze Werte ohne ",0" ("130"), echte Nachkommastellen bleiben ("127,5").
-  bp: r => `<td class="num">${r.bp ? String(Math.round(r.bp * 10) / 10).replace(".", ",") : ""}</td>`,
+  bp: r => `<td class="num bpmcell">${r.bp ? `<span class="bpmval">${
+      String(Math.round(r.bp * 10) / 10).replace(".", ",")}<small>${esc(t("field.bpm"))}</small></span>` : ""}</td>`,
   ky: r => `<td>${keyBubble(r.ky, r.kr)}</td>`,
   eg: r => `<td>${energyCell(r.eg)}</td>`,
   mm: r => `<td>${rowTags(r).map(tg =>
@@ -5831,7 +6134,7 @@ const CELL_RENDERERS = {
     </div></div></td>`;
   },
   a: r => `<td>${esc(r.a || "")}</td>`,
-  t: r => `<td>${esc(r.t || "")}</td>`,
+  t: r => `<td class="titlecell">${esc(r.t || "")}</td>`,
   // Zweites Argument: nur die Haupttabelle bindet den Klick-Handler fuer
   // data-copy, in renderDrops bleibt der Pfad deshalb ein schlichter Text.
   // Die Statushinweise schliessen sich je Tabelle gegenseitig aus (gone/mc
@@ -5919,6 +6222,23 @@ function currentListNode() {
   };
 }
 
+// "Track neu analysieren" einer Bibliothekszeile -- frueher ein eigenes Icon
+// in der Aktionsleiste, jetzt Eintrag im "Weitere Optionen"-Menue.
+async function rescanRow(r) {
+  const before = r.v;
+  const pt = progressToast(t("toast.reanalysing"), {indeterminate: true});
+  try {
+    const result = await reanalyse([r]);
+    pt.done(verdictOf(r) === before
+      ? t("toast.reanalysed_same", {verdict: labels[verdictOf(r)]})
+      : t("toast.reanalysed_changed", {verdict: labels[verdictOf(r)], before: labels[before]}));
+    if (result.rekordboxRunning) note(t("toast.rekordbox_check_skipped_running"), "soft");
+    render();
+  } catch (err) {
+    pt.fail(t("toast.analysis_failed", {error: err.message}));
+  }
+}
+
 function rowMoreMenuItems(r) {
   const items = [];
   // "Zu Playlist hinzufuegen" sitzt als eigenes Icon im "top"-Aktionsblock
@@ -5952,20 +6272,26 @@ function rowMoreMenuItems(r) {
   }
   if (apiMode && keyNeedsSync(r)) {
     items.push({
-      icon: ICONS.clefTreble, cls: "", title: t("action.write_key_title", {example: keyNotationExample()}),
+      icon: ICONS.keySync, cls: "", title: t("action.write_key_title", {example: keyNotationExample()}),
       label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r]),
     });
   }
   if (!r.gone && apiMode && BPMKEY_AVAILABLE) {
     items.push({
-      icon: ICONS.audioWaveform, cls: "", title: t("action.bpmkey_title"),
+      icon: ICONS.analyseBpmKey, cls: "", title: t("action.bpmkey_title"),
       label: t("rowmenu.bpmkey"), action: () => analyseBpmKey([r]),
     });
   }
   if (!r.gone && apiMode && GENREMOOD_AVAILABLE) {
     items.push({
-      icon: ICONS.brainCircuit, cls: "", title: t("action.genremood_title"),
+      icon: ICONS.analyseGenreMood, cls: "", title: t("action.genremood_title"),
       label: t("rowmenu.genremood"), action: () => analyseGenreMood([r]),
+    });
+  }
+  if (!r.gone && apiMode && !r.ext) {
+    items.push({
+      icon: ICONS.pickaxe, cls: "", title: t("action.rescan"),
+      label: t("rowmenu.rescan"), action: () => rescanRow(r),
     });
   }
   if (!r.gone) {
@@ -6222,9 +6548,6 @@ function render() {
             `<a class="iconbtn plain" href="${fileURL(r.p)}" title="${esc(t("action.open_in_music"))}">${ICONS.itunes}</a>`}
           ${(r.gone || !apiMode) ? "" :
             `<button class="iconbtn plain" data-tags="${r.i}" title="${esc(t("action.edit_tags"))}">${ICONS.edit}</button>`}
-          ${(r.gone || !apiMode) ? "" :
-            `<button class="iconbtn plain" data-rescan="${r.i}"
-                     title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>`}
           ${rowMoreMenuItems(r).length ? `<span class="sep" data-sep="1"></span>
           <button class="iconbtn plain" data-more="${r.i}" title="${esc(t("action.more_options"))}">${ICONS.moreVert}</button>` : ""}
         </div>`}
@@ -6266,7 +6589,7 @@ function render() {
   if (expandedByIdx.size) {
     expandedByIdx.forEach((det, idx) => {
       const freshTr = tb.querySelector(`tr.row[data-i="${idx}"]`);
-      if (freshTr) { freshTr.classList.add("expanded"); freshTr.after(det); }
+      if (freshTr) { freshTr.classList.add("expanded"); spanLinksIntoDetail(freshTr, true); freshTr.after(det); }
       // sonst: die Zeile ist aus der aktuellen Ansicht/den Filtern gefallen --
       // der verwaiste Player bleibt dann unangetastet ausserhalb des DOM.
     });
@@ -6425,16 +6748,20 @@ function render() {
     // Nichts.
     if (r.ext) return;
     const next = tr.nextElementSibling;
-    if (next && next.classList.contains("detail")) { next.remove(); tr.classList.remove("expanded"); return; }
+    if (next && next.classList.contains("detail")) {
+      next.remove(); tr.classList.remove("expanded"); spanLinksIntoDetail(tr, false); return;
+    }
     const det = document.createElement("tr");
     det.className = "detail expanded";
     // 3 feste Spalten (Checkbox, Fuellzelle, Öffnen) + aktuell sichtbare
     // optionale Spalten (inkl. Status, seit der auch ausblendbar ist) --
     // dynamisch statt fest verdrahtet, sonst faellt die Detailzeile (inkl.
     // Player/Waveform) hinter der echten Tabellenbreite zurueck, sobald sich
-    // die Spaltenzahl aendert.
+    // die Spaltenzahl aendert. Minus 1: "Öffnen" reicht per rowspan in die
+    // Detailzeile hinein (spanLinksIntoDetail()).
     const visibleCols = 3 + OPTIONAL_COLUMNS.length - state.hiddenCols.length;
-    det.innerHTML = `<td colspan="${visibleCols}">${detailHTML(r)}</td>`;
+    det.innerHTML = `<td colspan="${visibleCols - 1}">${detailHTML(r)}</td>`;
+    spanLinksIntoDetail(tr, true);
     tr.after(det);
     tr.classList.add("expanded");
     mountLibraryPlayer(det, r);
@@ -6566,25 +6893,6 @@ function render() {
     openTagsPopup(DATA[+b.dataset.tags]);
   });
 
-  tb.querySelectorAll("[data-rescan]").forEach(b => b.onclick = async ev => {
-    ev.stopPropagation();
-    const r = DATA[+b.dataset.rescan];
-    const before = r.v;
-    b.disabled = true;
-    const pt = progressToast(t("toast.reanalysing"), {indeterminate: true});
-    try {
-      const result = await reanalyse([r]);
-      pt.done(verdictOf(r) === before
-        ? t("toast.reanalysed_same", {verdict: labels[verdictOf(r)]})
-        : t("toast.reanalysed_changed", {verdict: labels[verdictOf(r)], before: labels[before]}));
-      if (result.rekordboxRunning) note(t("toast.rekordbox_check_skipped_running"), "soft");
-      render();
-    } catch (err) {
-      b.disabled = false;
-      pt.fail(t("toast.analysis_failed", {error: err.message}));
-    }
-  });
-
   tb.querySelectorAll("[data-more]").forEach(b => b.onclick = ev => {
     ev.stopPropagation();
     openRowMoreMenu(DATA[+b.dataset.more], b);
@@ -6705,13 +7013,13 @@ function renderBulkBar() {
     ${selRows.some(hasAutoFixableTagIssues) ? `<button class="iconbtn plain" id="bulkFixTags"
         title="${esc(t("bulk.action_fix_tag_issues"))}">${TREE_ICONS.tag_issues}</button>` : ""}
     <button class="iconbtn plain" id="bulkConvert" title="${esc(t("bulk.convert_title"))}">${ICONS.convert}</button>
-    ${bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.clefTreble}</button>` : ""}
-    ${bulkBpmKeyShown(selRows, false) ? `<button class="iconbtn plain" id="bulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.audioWaveform}</button>` : ""}
-    ${bulkGenreMoodShown(selRows, false) ? `<button class="iconbtn plain" id="bulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.brainCircuit}</button>` : ""}
+    ${bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.keySync}</button>` : ""}
     <span class="sep"></span>
-    ${!MIK_NAME ? "" : `<button class="iconbtn plain" id="bulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
-    <span class="sep"></span>
+    ${bulkBpmKeyShown(selRows, false) ? `<button class="iconbtn plain" id="bulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.analyseBpmKey}</button>` : ""}
+    ${bulkGenreMoodShown(selRows, false) ? `<button class="iconbtn plain" id="bulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}</button>` : ""}
     <button class="iconbtn plain" id="bulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>
+    ${!MIK_NAME ? "" : `<span class="sep"></span>
+    <button class="iconbtn plain" id="bulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
     ${anyNonGone ? `<span class="sep"></span>
     <button class="iconbtn ig" id="bulkIgnore" title="${esc(t("bulk.hide_title"))}">${ICONS.eyeOff}</button>
     <button class="iconbtn ig" id="bulkShow" title="${esc(t("bulk.show_title"))}">${ICONS.eye}</button>
@@ -7720,6 +8028,9 @@ function groupCounts(key) {
 }
 
 function fieldValues(key) {
+  // Felder der erweiterten Suche: dieselben Werte wie die Vorschlaege der
+  // Suchleiste (Status-Beschriftungen, Tags, Dateiendungen, ...).
+  if (key.startsWith("q:")) return fieldValuesForAutocomplete(key.slice(2));
   // Eigene Tags: alle bisher vergebenen, fuer den Tag-Editor im Tags-Dialog.
   if (key === "ut") {
     const all = new Map();
@@ -8020,6 +8331,27 @@ function userTagChanges() {
   return {add: UT_DRAFT.filter(x => !before.has(utKey(x))),
           remove: UT_INITIAL.filter(x => !after.has(utKey(x)))};
 }
+// Eigenen Tag in ALLEN Tracks umbenennen (Bearbeiten-Knopf der Tag-Bubbles).
+// Gibt es den neuen Namen schon, werden beide zusammengefuehrt. Laeuft ueber
+// die Sammel-Form von /api/user-tags (add/remove je Pfad).
+async function renameUserTag(oldTag) {
+  const props = await askPlaylistProps(t("tags.rename_title", {name: oldTag}), {name: oldTag}, false);
+  const name = props && props.name ? props.name.trim() : "";
+  if (!name || name === oldTag) return;
+  const paths = [...USER_TAGS].filter(([, tags]) => tags.includes(oldTag)).map(([p]) => p);
+  if (!paths.length) return;
+  try {
+    await saveUserTags({paths, add: [name], remove: [oldTag]});
+  } catch (err) {
+    note(t("tags.rename_failed", {msg: err.message}), true);
+    return;
+  }
+  // Ein aktiver Filter auf den alten Namen zeigt sonst ins Leere.
+  state.tagFilter = state.tagFilter.map(id => id === "u:" + oldTag ? "u:" + name : id);
+  render();
+  note(t("tags.renamed", {old: oldTag, name, count: paths.length}));
+}
+
 async function saveUserTags(body) {
   const res = await fetch("/api/user-tags", {method: "POST",
     headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
@@ -8053,7 +8385,7 @@ const GENRE_AC_EXTRA = {
             esc(t("tags.genre_pct", {p}))}</span></button>`;
         }).join("")
       : `<button type="button" class="gchip gchip-analyse" data-genre-analyse
-          title="${esc(t("action.genremood_title"))}">${ICONS.brainCircuit}${esc(t("tags.genre_analyse"))}</button>`;
+          title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}${esc(t("tags.genre_analyse"))}</button>`;
     return `<li class="ac-head"><div class="ac-section">${esc(t("tags.genre_suggested"))}</div>
       <div class="gsuggest">${chips}</div></li>
       <li class="ac-head"><div class="ac-section">${esc(t("tags.genre_all"))}</div></li>`;
@@ -9177,6 +9509,9 @@ async function addToRekordboxPlaylist(rows, btn, opts = {}) {
     if (errCount) extra.push(t("toast.rekordbox_errors_suffix", {count: errCount}));
     note(t("toast.rekordbox_added", {count: data.added.length, playlist: esc(data.playlist || targetName)})
        + (extra.length ? `, ${extra.join(", ")}` : "") + ".");
+    // My Tags (Einstellung rekordbox_mytags): die Tracks sind trotzdem in der
+    // Playlist, deshalb nur ein gelber Hinweis statt eines Fehlers.
+    if (data.mytag_error) note(t("toast.rekordbox_mytag_failed", {error: esc(data.mytag_error)}), "soft", true);
     // Scroll-Position sichern: tb.innerHTML in render() baut die ganze
     // Tabelle neu auf und reisst dabei den Fokus vom geklickten Knopf los —
     // ohne diese Sicherung springt die Seite dabei ganz nach oben.
@@ -10580,8 +10915,7 @@ async function pollScan() {
 // ── Detailansicht (geteilt von Tabelle und Einzelprüfungen) ──────────────
 function detailHTML(r) {
   return `<div class="grid">
-    <div class="spectrum">${spectrumSVG(r)}</div>
-    <div style="flex:1;min-width:260px">
+    <div class="detailbody">
       <ul class="reasons">${reasonsOf(r).map(x => "<li>"+esc(x)+"</li>").join("")}</ul>
       ${playerHTML(r)}
       ${r.lu ? `<div class="path" style="margin-top:8px">
@@ -10921,14 +11255,64 @@ function paintWaveEntry(entry) {
 // Einfarbig gebacken -- die Fallunterscheidung nach frac, die frueher den
 // ganzen Balkendurchlauf pro Zeitschritt erzwang, uebernimmt jetzt das
 // Einfaerben in paintWaveEntry().
-function drawPlainWave(ctx, w, h, peaks) {
-  const mid = h/2, n = peaks.length, bw = w/n;
-  const barW = Math.max(bw - 0.5, 0.6);
-  ctx.fillStyle = theme().wave;
-  for (let i = 0; i < n; i++) {
-    const bh = Math.max(1, peaks[i] * (h - 6));
-    ctx.fillRect(i*bw, mid - bh/2, barW, bh);
+// Geglaettete, gefuellte Huellkurve statt einzelner Balken: erst je
+// Pixelspalte der hoechste Peak (bei weniger Peaks als Spalten linear
+// interpoliert), dann ein Gauss-Kern (WAVE_SMOOTH_SIGMA), zuletzt
+// auf den alten Hoechstwert zurueckskaliert (Sigma in Pixeln, eine Stuetzstelle je Pixel) -- Glaetten druckt die Spitzen
+// sonst sichtbar flacher. Gezeichnet als EIN Pfad mit Kurvenstuecken
+// (oben hin, gespiegelt zurueck), das "source-atop"-Einfaerben in
+// paintWaveEntry() wirkt darauf unveraendert.
+const WAVE_SMOOTH_SIGMA = 0.7;   // 3 (bei 2 px je Stuetzstelle), 1,5 und 0,8 waren zu weich
+function smoothedColumns(peaks, cols) {
+  const n = peaks.length, raw = new Float32Array(cols);
+  for (let x = 0; x < cols; x++) {
+    const a = x * n / cols, b = (x + 1) * n / cols;
+    let v = 0;
+    if (b - a >= 1) {
+      for (let i = Math.floor(a); i < Math.min(n, Math.ceil(b)); i++) v = Math.max(v, peaks[i]);
+    } else {
+      const f = Math.min(n - 1, a), i0 = Math.floor(f), i1 = Math.min(n - 1, i0 + 1);
+      v = peaks[i0] + (peaks[i1] - peaks[i0]) * (f - i0);
+    }
+    raw[x] = v;
   }
+  const r = Math.ceil(WAVE_SMOOTH_SIGMA * 3), kern = [];
+  let ksum = 0;
+  for (let k = -r; k <= r; k++) { const g = Math.exp(-(k*k) / (2*WAVE_SMOOTH_SIGMA*WAVE_SMOOTH_SIGMA)); kern.push(g); ksum += g; }
+  const out = new Float32Array(cols);
+  let rawMax = 0, outMax = 0;
+  for (let x = 0; x < cols; x++) {
+    let acc = 0;
+    for (let k = -r; k <= r; k++) acc += raw[Math.min(cols - 1, Math.max(0, x + k))] * kern[k + r];
+    out[x] = acc / ksum;
+    if (raw[x] > rawMax) rawMax = raw[x];
+    if (out[x] > outMax) outMax = out[x];
+  }
+  if (outMax > 0) { const f = rawMax / outMax; for (let x = 0; x < cols; x++) out[x] *= f; }
+  return out;
+}
+function drawPlainWave(ctx, w, h, peaks) {
+  const mid = h/2, amp = (h - 6) / 2;
+  const cols = Math.max(2, Math.round(w));   // eine Stuetzstelle je Pixel, sonst verwischen Transienten
+  const v = smoothedColumns(peaks, cols);
+  const xAt = i => i * w / (cols - 1);
+  const yAt = i => Math.max(0.5, v[i] * amp);
+  ctx.fillStyle = theme().wave;
+  ctx.beginPath();
+  ctx.moveTo(0, mid - yAt(0));
+  for (let i = 1; i < cols; i++) {
+    const xm = (xAt(i - 1) + xAt(i)) / 2, ym = mid - (yAt(i - 1) + yAt(i)) / 2;
+    ctx.quadraticCurveTo(xAt(i - 1), mid - yAt(i - 1), xm, ym);
+  }
+  ctx.lineTo(w, mid - yAt(cols - 1));
+  ctx.lineTo(w, mid + yAt(cols - 1));
+  for (let i = cols - 2; i >= 0; i--) {
+    const xm = (xAt(i + 1) + xAt(i)) / 2, ym = mid + (yAt(i + 1) + yAt(i)) / 2;
+    ctx.quadraticCurveTo(xAt(i + 1), mid + yAt(i + 1), xm, ym);
+  }
+  ctx.lineTo(0, mid + yAt(0));
+  ctx.closePath();
+  ctx.fill();
 }
 
 // Duenne Fortschrittslinie statt (wie bei drawPlainWave) die Balkenfarbe hart
@@ -12402,7 +12786,7 @@ function renderDrops() {
   }).join("");
 
   const selectable = dropSelectable();
-  host.innerHTML = `<div class="tablewrap droptablewrap"><table>
+  host.innerHTML = `<div class="tablewrap droptablewrap"><table class="trk">
     <thead><tr>
       <th class="sel" style="width:36px">${selectable.length
         ? `<input type="checkbox" id="dropSelAll" title="${esc(t("drop.select_all_title"))}">` : ""}</th>
@@ -12459,11 +12843,15 @@ function renderDrops() {
   tb.querySelectorAll("tr.row").forEach(tr => tr.onclick = ev => {
     if (ev.target.closest("a") || ev.target.closest("button") || ev.target.closest("input")) return;
     const next = tr.nextElementSibling;
-    if (next && next.classList.contains("detail")) { next.remove(); tr.classList.remove("expanded"); return; }
+    if (next && next.classList.contains("detail")) {
+      next.remove(); tr.classList.remove("expanded"); spanLinksIntoDetail(tr, false); return;
+    }
     const r = drops[+tr.dataset.drop];
     const det = document.createElement("tr");
     det.className = "detail expanded";
-    det.innerHTML = `<td colspan="${3 + (statusHidden ? 0 : 1) + cols.length}">${detailHTML(r)}</td>`;
+    // Minus 1 wie in der Haupttabelle: "Öffnen" reicht per rowspan hinein.
+    det.innerHTML = `<td colspan="${2 + (statusHidden ? 0 : 1) + cols.length}">${detailHTML(r)}</td>`;
+    spanLinksIntoDetail(tr, true);
     tr.after(det);
     tr.classList.add("expanded");
     mountDropPlayer(det, r);
@@ -12609,7 +12997,6 @@ function renderDropBulkBar() {
     <span>${esc(t("bulk.selected_count", {count: rows.length.toLocaleString("de-DE")}))}</span>
     <button class="iconbtn plain" id="dropBulkTags"
             title="${esc(t("bulk.edit_tags_title"))}">${ICONS.edit}</button>
-    <button class="iconbtn plain" id="dropBulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>
     <button class="iconbtn plain" id="dropBulkConvert" title="${esc(t("drop.bulk_convert_title"))}">${ICONS.convert}</button>
     ${(() => {
       // Bewusst nur bei GENAU einem ausgewaehlten Track: anders als bei
@@ -12625,10 +13012,13 @@ function renderDropBulkBar() {
         : `<button class="iconbtn plain" id="dropBulkFix" disabled
                    title="${esc(t("drop.bulk_fix_disabled_hint"))}">${ICONS.fix}</button>`;
     })()}
-    ${bulkKeySyncShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.clefTreble}</button>` : ""}
-    ${bulkBpmKeyShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.audioWaveform}</button>` : ""}
-    ${bulkGenreMoodShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.brainCircuit}</button>` : ""}
-    ${!MIK_NAME ? "" : `<button class="iconbtn plain" id="dropBulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
+    ${bulkKeySyncShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.keySync}</button>` : ""}
+    <span class="sep"></span>
+    ${bulkBpmKeyShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.analyseBpmKey}</button>` : ""}
+    ${bulkGenreMoodShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}</button>` : ""}
+    <button class="iconbtn plain" id="dropBulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>
+    ${!MIK_NAME ? "" : `<span class="sep"></span>
+    <button class="iconbtn plain" id="dropBulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
     <span class="sep"></span>
     <button class="iconbtn del" id="dropBulkRemove"
             title="${esc(t("drop.bulk_remove_title"))}">${ICONS.trash}</button>
@@ -14078,12 +14468,22 @@ function renderTagBubbles() {
     row.innerHTML = `<span class="dim">${esc(t("tags.view_empty"))}</span>`;
     return;
   }
+  // Die ganze Bubble traegt die Stimmungsfarbe (e.cls = mood-<name>); eigene
+  // Tags (u:) bleiben neutral und bekommen wie die Genre-Bubbles einen
+  // Bearbeiten-Knopf (Umbenennen in allen Tracks, renameUserTag()).
   row.innerHTML = entries.map(e => {
     const active = state.tagFilter.includes(e.id);
-    return `<span class="genrebubble tagbubble${active ? " active" : ""}" data-tagid="${esc(e.id)}">
-      <span class="moodtag ${e.cls}">${esc(e.label)}</span>
-      <span class="genrecount">${e.count}</span></span>`;
+    const own = e.id.startsWith("u:");
+    return `<span class="tagbubble ${e.cls}${active ? " active" : ""}" data-tagid="${esc(e.id)}">
+      <span class="tagbubble-label">${esc(e.label)}</span>
+      <span class="tagbubble-count">${e.count}</span>${own && apiMode
+        ? `<button type="button" class="genrerename" data-tagedit="${esc(e.label)}"
+                   title="${esc(t("tags.rename_title", {name: e.label}))}">${ICONS.edit}</button>` : ""}</span>`;
   }).join("");
+  row.querySelectorAll("[data-tagedit]").forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    renameUserTag(el.dataset.tagedit);
+  });
   row.querySelectorAll("[data-tagid]").forEach(el => el.onclick = () => {
     const id = el.dataset.tagid;
     state.tagFilter = state.tagFilter.includes(id)

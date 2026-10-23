@@ -3,6 +3,31 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.9.0] - 2026-10-23
+
+### Added
+- Genre, Stimmung und Energie: TrackTab erkennt Stil, Stimmung und Energie (1–10) lokal mit den Essentia-Modellen der MTG (onnxruntime, Modelle über `fetch_models.sh`). Aufruf im Zeilenmenü, in den Sammelleisten und als Option im Scan-Dialog; Genre-Vorschläge im Genre-Feld des Tags-Dialogs, Energie und Stimmung auf Wunsch im Kommentar bzw. im Mood-Feld der Datei. Neue Spalten Energie und Tags, neue Liste „Tags“ mit eigenen Tags.
+- Playlist-Generator (neue Listenart): baut ein Set entlang einer Energiekurve mit Übergangsregeln (BPM, halbes/doppeltes Tempo, Tonart streng/locker), Stimmungsreglern und Kohäsion; gesperrte Slots bleiben beim Neu-Würfeln stehen.
+- Generator: Energiekurve mit Skala E1–E10 — ein Klick setzt die Soll-Energie eines Slots, Ziehen zeichnet über mehrere Slots. Eigene Kurven lassen sich unter einem Namen speichern und in jedem Generator wählen (passen sich an die Slotzahl an). Jeder belegte Slot zeigt die Waveform seines Tracks.
+- Generator: Der Liederpool ist eine Suchabfrage in derselben Syntax wie die Suchleiste (z. B. `/Genre House /BPM 120-128 /Add 30d`), dazu optional eine eigene Playlist als Quelle. Ältere Generatoren werden beim Öffnen automatisch umgestellt.
+- Erweiterte Suche: Über „Erweitert“ neben der Suchhilfe stehen alle Suchparameter als Eingabefelder bereit (mit Wertvorschlägen, Ja/Nein-Felder als Segmentauswahl). Felder und Suchtext bleiben synchron und lassen sich mischen; dasselbe Panel steht im Liederpool des Generators.
+- Suche: `/Add 30d` findet Tracks, die in den letzten 30 Tagen hinzugekommen sind.
+- Smart Playlists: Regel „Energie“ als Stufe 1–10 (ist, ist nicht, mindestens, höchstens) und Regel „Tags“ mit allen vorhandenen Stimmungen und eigenen Tags.
+- Liste „Tags“: Eigene Tags lassen sich über einen Bearbeiten-Knopf in allen Tracks umbenennen bzw. zusammenführen.
+- Rekordbox: Beim Übertragen in eine Rekordbox-Playlist werden Stimmungen und eigene Tags auf Wunsch als „My Tag“ gesetzt (Einstellung; die gewählte My-Tag-Spalte muss in Rekordbox existieren).
+- Einstellungen → Kommentar-Feld: neue Option „Fehlendes ergänzen“ — vorhandene Werte bleiben stehen, nur fehlende Teile kommen nach dem gewählten Schema dazu (`8A - 128` → `8A - 128 - E7`).
+
+### Changed
+- Tracklisten (Bibliothek und Einzelprüfungen): Jede Zeile und die Kopfzeile sind eigene, abgerundete Karten mit Abstand. Titel halbfett, BPM groß mit Beschriftung, „In Music“ und „Rekordbox“ als kleine App-Symbole statt Haken, größere Auswahl-Checkboxen.
+- Aufgeklappter Track: ohne Spektrum-Grafik; die Waveform nutzt die volle Breite und wird als leicht geglättete Hüllkurve gezeichnet. Die Aktionsspalte läuft neben dem aufgeklappten Bereich bis ans Kartenende durch.
+- Badges für Tags, Tonart und Genre sind leicht abgerundete Rechtecke; Stimmungen füllen ihre Badge ganz in ihrer Farbe.
+- Icons: Smart Playlist „book-a“, Playlist-Generator „book-headphones“, „BPM/Tonart analysieren“ Notenschlüssel, „Genre & Stimmung analysieren“ Konfetti, „Tonart-Schreibweise angleichen“ „replace“. In der Listen-Kopfzeile trennt ein Strich die Listenarten vom Ordner.
+- „M3U8 Export“ heißt „Playlist Export“, im Listenmenü „Playlist exportieren“.
+- „Track neu analysieren“ steht im ⋯-Menü der Zeile. In den Sammelleisten stehen BPM/Tonart, Genre & Stimmung und Neu analysieren als eigene, abgetrennte Gruppe.
+- Smart Playlists: Die Feldauswahl im Regel-Editor ist alphabetisch sortiert.
+- Generator: Übergänge und Stimmung als eigene Abschnitte (Beschriftung über den Feldern, Tempo als Auswahl „Aus | ½ · 2×“), Slotzahl mit −/+, Quelle ohne die festen Prüflisten, Track-Energie in der Designfarbe, Erklärung der Kohäsion per Fragezeichen.
+- Abhängigkeiten aktualisiert: pyrekordbox 0.5.0 (Modul heißt jetzt `pyrekordbox.masterdb`, Code entsprechend umgestellt), libsonare 1.9.1, Pillow 13.0, numpy 2.5.4, SQLAlchemy 2.1.6, python-dateutil 3.0, pyinstaller-hooks-contrib 2026.9. Geprüft: BPM-/Tonart-Messung, Cover-Prüfung und Rekordbox-Lese- und Schreibwege liefern dieselben Ergebnisse wie vorher, `calibrate` (MP3 und Lossless 100 %) und ein Test-Build laufen durch.
+
 ## [1.8.0] - 2026-10-10
 
 ### Added

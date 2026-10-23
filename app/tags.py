@@ -151,22 +151,26 @@ def _token_kind(token: str) -> str:
     return ""
 
 
-def _split_own_entry(comment: str, parts: tuple[str, ...]) -> tuple[str, dict]:
+def _split_own_entry(comment: str, parts: tuple[str, ...]) -> tuple[str, dict, str]:
     """Trennt einen eigenen Eintrag am Anfang oder Ende vom uebrigen Text
-    ("8A - 128 - E7 - Lieblingsmix" -> ("Lieblingsmix", {key, bpm, energy})).
+    ("8A - 128 - E7 - Lieblingsmix" -> ("Lieblingsmix", {key, bpm, energy}, "front")).
     Als eigener Eintrag zaehlen nur Teile der Arten, die laut Einstellung
     (`parts`) hineingehoeren -- bei "nur Energie" bleiben "8A - 128" also
-    freier Text und gehen nicht verloren. Rueckgabe: (Rest, gefundene Werte)."""
-    tokens = comment.split(_COMMENT_SEP)
+    freier Text und gehen nicht verloren. Rueckgabe: (Rest, gefundene Werte,
+    Lage des Eintrags "front"/"back"/"" -- "Fehlendes ergaenzen" fuellt ihn
+    an derselben Stelle auf)."""
+    tokens = comment.split(_COMMENT_SEP) if comment else []
     found: dict = {}
     i, j = 0, len(tokens)
     while i < j and _token_kind(tokens[i]) in parts:
         found.setdefault(_token_kind(tokens[i]), tokens[i].strip())
         i += 1
+    front = i > 0
     while j > i and _token_kind(tokens[j - 1]) in parts:
         found.setdefault(_token_kind(tokens[j - 1]), tokens[j - 1].strip())
         j -= 1
-    return _COMMENT_SEP.join(tokens[i:j]).strip(), found
+    where = "front" if front else ("back" if j < len(tokens) else "")
+    return _COMMENT_SEP.join(tokens[i:j]).strip(), found, where
 
 
 def plan_comment(cfg: dict, current: str, key_txt: str, bpm: int,
@@ -189,7 +193,7 @@ def plan_comment(cfg: dict, current: str, key_txt: str, bpm: int,
     current = (current or "").strip()
     if is_junk_comment(current):
         current = ""
-    rest, found = _split_own_entry(current, parts)
+    rest, found, where = _split_own_entry(current, parts)
     # Fehlt ein Wert in den Tag-Feldern, steht aber schon im bisherigen
     # Eintrag (z. B. "8A - 128" von Hand oder aus einem anderen Programm),
     # bleibt er erhalten statt still zu verschwinden.
@@ -201,6 +205,20 @@ def plan_comment(cfg: dict, current: str, key_txt: str, bpm: int,
     if not text:
         return None
     mode = cfg.get("bpmkey_comment_existing", "overwrite")
+    if mode == "complete":
+        # Fehlendes ergaenzen: was im Eintrag schon steht, bleibt wortgleich
+        # (auch wenn die Messung etwas anderes ergibt), nur fehlende Teile
+        # kommen in der Reihenfolge des Schemas dazu -- am selben Ende wie
+        # der vorhandene Eintrag, ohne Eintrag hinten an den Kommentar.
+        entry = _COMMENT_SEP.join(found.get(p) or values[p] for p in parts
+                                  if found.get(p) or values[p])
+        if not rest:
+            new = entry
+        elif where == "front":
+            new = f"{entry}{_COMMENT_SEP}{rest}"
+        else:
+            new = f"{rest}{_COMMENT_SEP}{entry}"
+        return new if new != current else None
     if mode == "if_empty":
         new = text if not rest else current
     elif mode == "prepend":

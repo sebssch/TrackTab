@@ -1923,6 +1923,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_columns()
         elif route == "/api/column-views":
             self._post_column_views()
+        elif route == "/api/generator-curves":
+            self._post_generator_curves()
         elif route == "/api/column-assign":
             self._post_column_assign()
         elif route == "/api/drop-columns":
@@ -2505,6 +2507,20 @@ class _Handler(BaseHTTPRequestHandler):
 
         cfg = cfgmod.load()
         playlist_name = str(cfg.get("rekordbox_playlist") or "")
+        # My Tags: erkannte Stimmungen (dieselbe Regel wie die Tags-Spalte,
+        # genremood.mood_names()) und eigene Tags je Pfad. None = Einstellung
+        # aus, die My Tags in Rekordbox bleiben dann unberuehrt.
+        mytags: dict | None = None
+        if cfg.get("rekordbox_mytags"):
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    moods = db_mod.genremood_map(conn)
+                    user_tags = db_mod.user_tags_map(conn)
+                finally:
+                    conn.close()
+            mytags = {p: genremood_mod.mood_names((moods.get(p) or {}).get("m") or {})
+                         + user_tags.get(p, []) for p in paths}
         try:
             # Die beiden Locks NACHEINANDER, nicht ineinander (siehe
             # Reihenfolge-Regel bei _rekordbox_lock): der Rekordbox-Schreib-
@@ -2513,7 +2529,8 @@ class _Handler(BaseHTTPRequestHandler):
             # mark_rekordbox_present() ist ein reiner Praesenz-Cache.
             with self._rekordbox_lock:
                 result = rekordbox_mod.add_tracks_to_playlist(
-                    paths, playlist_name, metadata, playlist_id or None)
+                    paths, playlist_name, metadata, playlist_id or None,
+                    mytags, str(cfg.get("rekordbox_mytag_category") or "").strip() or "TrackTab")
             if result["added"]:
                 with self.lock:
                     conn = db_mod.connect(cfg)
@@ -4803,6 +4820,22 @@ class _Handler(BaseHTTPRequestHandler):
             self._fail(f"Ungültige Anfrage: {exc}")
             return
         self._json({"ok": True, **saved})
+
+    def _post_generator_curves(self) -> None:
+        """Eigene Energiekurven des Generators am Stueck ersetzen (anlegen,
+        ueberschreiben, loeschen). Unter self.lock wie die Spalten-Endpunkte:
+        Lese-Aendere-Schreibe auf config.local.yaml."""
+        try:
+            payload = json.loads(self._body(200_000).decode("utf-8"))
+            with self.lock:
+                curves = settings_mod.save_generator_curves(payload.get("curves") or [])
+        except ValueError as exc:
+            self._fail(str(exc))
+            return
+        except (KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        self._json({"ok": True, "generator_curves": curves})
 
     def _post_column_assign(self) -> None:
         """Einer Liste eine gespeicherte Spaltenansicht zuordnen (leere 'id' =

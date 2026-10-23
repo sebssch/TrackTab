@@ -113,10 +113,12 @@
             aria-hidden="true"><path d="M16 5H3"/><path d="M11 12H3"/><path d="M11 19H3"/><path d="M21 16V5"/><circle cx="18" cy="16" r="3"/></svg></button>
         <button class="treeadd" id="btnNewSmart" data-i18n-title="tree.new_smart" title="Neue Smart Playlist"><svg viewBox="0 0 24 24" width="15" height="15"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            aria-hidden="true"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915"/><circle cx="12" cy="12" r="3"/></svg></button>
+            aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="m8 13 4-7 4 7"/><path d="M9.1 11h5.7"/></svg></button>
         <button class="treeadd" id="btnNewGenerator" data-i18n-title="gen.new" title="Neuer Playlist-Generator"><svg viewBox="0 0 24 24" width="15" height="15"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-            aria-hidden="true"><path d="M3 3v16a2 2 0 0 0 2 2h16"/><path d="M7 16c.5-2 1.5-7 4-7 2 0 2 3 4 3 2.5 0 4.5-5 5-7"/></svg></button>
+            aria-hidden="true"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H19a1 1 0 0 1 1 1v18a1 1 0 0 1-1 1H6.5a1 1 0 0 1 0-5H20"/><path d="M8 12v-2a4 4 0 0 1 8 0v2"/><circle cx="15" cy="12" r="1"/><circle cx="9" cy="12" r="1"/></svg></button>
+        <!-- Listen links, Ordner rechts davon abgesetzt -->
+        <span class="treehead-sep" aria-hidden="true"></span>
         <button class="treeadd" id="btnNewFolder" data-i18n-title="tree.new_folder" title="Neuer Ordner"><svg viewBox="0 0 24 24" width="15" height="15"
             fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
             aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 7v10"/><path d="M11 7v10"/><path d="m15 7 2 10"/></svg></button>
@@ -164,6 +166,9 @@
       <button class="act small" id="btnSearchHelp" data-i18n-title="search.help.title" title="Suchhilfe"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
           fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
           aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg></span> <span data-i18n="search.help.title">Suchhilfe</span></button>
+      <button class="act small" id="btnAdvSearch" data-i18n-title="advsearch.button_title" title="Erweiterte Suche: alle Parameter als Eingabefelder"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
+          fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
+          aria-hidden="true"><path d="M10 5H3"/><path d="M12 19H3"/><path d="M14 3v4"/><path d="M16 17v4"/><path d="M21 12h-9"/><path d="M21 19h-5"/><path d="M21 5h-7"/><path d="M8 10v4"/><path d="M8 12H3"/></svg></span> <span data-i18n="advsearch.button">Erweitert</span> <span class="countbadge" hidden></span></button>
       <label class="toggle" style="color:var(--dim)"><input type="checkbox" id="groupAlbums">
         <span class="toggle-track"><span class="toggle-thumb"></span></span>
         <span data-i18n="filter.group_albums_label">nach Album gruppieren</span></label>
@@ -172,8 +177,10 @@
           aria-hidden="true"><path d="M4 12.15V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.706.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2h-3.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="m5 16-3 3 3 3"/><path d="m9 22 3-3-3-3"/></svg></span> <span data-i18n="export.csv_button">CSV Export</span></button>
       <button class="act" id="m3usel"><span class="btnicon"><svg viewBox="0 0 24 24" width="15" height="15"
           fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-          aria-hidden="true"><path d="M11.65 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v10.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 20v-7l3 1.474"/><circle cx="6" cy="20" r="2"/></svg></span> <span data-i18n="export.m3u_button">M3U8 Export</span></button>
+          aria-hidden="true"><path d="M11.65 22H18a2 2 0 0 0 2-2V8a2.4 2.4 0 0 0-.706-1.706l-3.588-3.588A2.4 2.4 0 0 0 14 2H6a2 2 0 0 0-2 2v10.35"/><path d="M14 2v5a1 1 0 0 0 1 1h5"/><path d="M8 20v-7l3 1.474"/><circle cx="6" cy="20" r="2"/></svg></span> <span data-i18n="export.m3u_button">Playlist Export</span></button>
     </div>
+    <!-- Erweiterte Suche: alle /Parameter als Felder, schreibt in #q (syncAdvSearch()) -->
+    <div id="advSearch" class="advsearch" hidden></div>
     <div id="searchChips" class="chipsrow"></div>
     <div id="bulkbar" style="display:none"></div>
   </div>
@@ -185,9 +192,9 @@
   </div>
   <div class="panel" id="colsMenu" style="display:none"></div>
 
-  <div id="stickyHead"><div id="stickyHeadScroll"><table><thead><tr></tr></thead></table></div></div>
+  <div id="stickyHead"><div id="stickyHeadScroll"><table class="trk"><thead><tr></tr></thead></table></div></div>
   <div class="tablewrap">
-    <table>
+    <table class="trk">
       <thead><tr>
         <th class="sel" style="width:54px"><input type="checkbox" id="selAll" data-i18n-title="table.select_all_title" title="Alle angezeigten auswählen"></th>
         <th data-k="v" style="width:90px" data-i18n="col.status">Status</th>

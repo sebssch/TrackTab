@@ -274,6 +274,12 @@ def defaults() -> dict:
         # wird, wenn der Track dort analysiert ist ("rgb" oder "3band") --
         # sonst automatisch die graue Standard-Waveform.
         "rekordbox_waveform_style": "rgb",
+        # Beim Hinzufuegen zu einer Rekordbox-Playlist erkannte Stimmungen
+        # und eigene Tags als Rekordbox-"My Tag" setzen -- in der My-Tag-
+        # Spalte rekordbox_mytag_category (muss in Rekordbox existieren,
+        # Rekordbox hat vier feste Spalten, die sich nur umbenennen lassen).
+        "rekordbox_mytags": False,
+        "rekordbox_mytag_category": "TrackTab",
         # DAW fuer "In DAW oeffnen" (Logic, Ableton, ...) -- anders als
         # Editor/MIK/Rekordbox keine automatische Suche (kein einheitlicher
         # Name zum Erraten). Leer = der Knopf bleibt komplett ausgeblendet
@@ -336,6 +342,12 @@ def defaults() -> dict:
         # Ansicht (Bearbeiten/Player) getrennt -- eine Spaltenansicht ist nur
         # ein Satz Spalten und laesst sich in beiden Ansichten zuweisen.
         "column_views": [],
+
+        # Eigene Energiekurven des Playlist-Generators ("Verlauf" -> Kurve
+        # speichern). Je Eintrag {id, name, points: [Energie je Slot]} --
+        # die Punkte werden beim Anwenden auf die Slotzahl des jeweiligen
+        # Generators umgerechnet (generator.js, genPresetValue()).
+        "generator_curves": [],
 
         # Die Spaltenansicht, die jede Liste ohne eigene Zuordnung bekommt
         # ("Standardliste", im Einstellungs-Dialog waehlbar). Leer = die im
@@ -512,6 +524,8 @@ def _normalize_columns(cfg: dict) -> None:
 
     if not isinstance(cfg.get("column_views"), list):
         cfg["column_views"] = []
+    if not isinstance(cfg.get("generator_curves"), list):
+        cfg["generator_curves"] = []
     if not isinstance(cfg.get("column_view_assign"), dict):
         cfg["column_view_assign"] = {}
     if not isinstance(cfg.get("column_view_default"), str):

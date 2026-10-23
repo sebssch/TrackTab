@@ -131,6 +131,12 @@ rekordbox_min_cutoff_khz: 19.0 # Tracks darunter (oder ohne Messwert) loesen ein
 # Waveform-Stil aus Rekordbox-Analysedaten fuer den Player: rgb oder 3band.
 # Nur wirksam, wenn der Track in Rekordbox analysiert ist -- sonst grauer Fallback.
 rekordbox_waveform_style: "rgb"
+# Stimmungen + eigene Tags beim Playlist-Push als Rekordbox-"My Tag" setzen.
+# Die Spalte muss in Rekordbox existieren (vier feste Spalten, eine davon
+# umbenennen) -- sie gehoert dann TrackTab: nicht mehr zutreffende Tags darin
+# werden entfernt, andere Spalten bleiben unberuehrt.
+rekordbox_mytags: false
+rekordbox_mytag_category: "TrackTab"
 
 # --- Ausgabe ---
 # --- Darstellung (Web-UI) ---
@@ -170,7 +176,8 @@ bpmkey_write_bpm: "yes"
 # | key_energy ("10A - E7") | energy ("E7").
 bpmkey_comment_content: "none"
 # Bei vorhandenem Kommentar: if_empty | overwrite | prepend (voranstellen) |
-# append (anhaengen).
+# append (anhaengen) | complete (Fehlendes ergaenzen: vorhandene Werte bleiben,
+# nur fehlende Teile kommen dazu, "8A - 128" -> "8A - 128 - E7").
 bpmkey_comment_existing: "overwrite"
 
 # Genre-Vorschlaege, Stimmung und Energie (app/genremood.py, Essentia-Modelle

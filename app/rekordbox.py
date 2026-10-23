@@ -157,9 +157,9 @@ def _resolve_master_db_path() -> Path:
     Rekordbox speichert dort aber z.B. auch Tastaturkuerzel (keyMappings)
     und Tabellenspalten-Layouts (TableHeader-*) ohne DEVICESETUP, was einen
     AttributeError ausloest (pyrekordbox/config.py:read_rekordbox_settings,
-    Stand 0.4.4 -- auch im master-Branch auf GitHub noch nicht behoben, an
-    echtem Material bestaetigt). Betrifft vermutlich jede Installation mit
-    angepassten Tastenkuerzeln/Tabellenspalten, nicht nur einen Einzelfall.
+    seit 0.4.4 und in 0.5.0 unveraendert, an echtem Material bestaetigt).
+    Betrifft vermutlich jede Installation mit angepassten
+    Tastenkuerzeln/Tabellenspalten, nicht nur einen Einzelfall.
 
     Eigener, toleranter Parser: liest ausschliesslich 'masterDbDirectory'
     und ueberspringt alle anderen (moeglicherweise kaputten) Eintraege.
@@ -192,7 +192,7 @@ def _resolve_master_db_path() -> Path:
 
 def _stub_pyrekordbox_config(pyrekordbox_mod) -> None:
     """
-    Verhindert, dass Rekordbox6Database() beim Start intern erneut
+    Verhindert, dass MasterDatabase() beim Start intern erneut
     get_config()/update_config() aufruft und denselben Fehler wie oben
     ausloest -- 'path' wird unten ohnehin immer explizit vorgegeben, der
     Inhalt dieses Platzhalters wird also nie gelesen. Nur gesetzt, wenn der
@@ -226,7 +226,7 @@ def _open(pyrekordbox_mod):
         db_path = _resolve_master_db_path()
         _backup_master_db(db_path)
         _stub_pyrekordbox_config(pyrekordbox_mod)
-        return pyrekordbox_mod.Rekordbox6Database(path=db_path)
+        return pyrekordbox_mod.MasterDatabase(path=db_path)
     except RekordboxUnavailable:
         raise
     except Exception as exc:                          # noqa: BLE001
@@ -295,7 +295,7 @@ def _add_content_fresh(db, path: str, **kwargs):
     soft-geloeschte Zeile existiert. pyrekordbox' add_content() lehnt jeden
     vorhandenen FolderPath ab, auch tote -- Rekordbox selbst legt in diesem
     Fall eine neue Zeile an (siehe _live_content()). Der Nachbau folgt
-    add_content() aus pyrekordbox 0.4.4 Feld fuer Feld.
+    add_content() aus pyrekordbox Feld fuer Feld (in 0.4.4 und 0.5.0 gleich).
     """
     try:
         return db.add_content(path, **kwargs)
@@ -308,7 +308,7 @@ def _add_content_fresh(db, path: str, **kwargs):
             return live
     import datetime
     from uuid import uuid4
-    from pyrekordbox.db6 import tables
+    from pyrekordbox.masterdb import models as tables
 
     p = Path(path)
     file_type_string = p.suffix.lstrip(".").upper()
@@ -340,13 +340,13 @@ def collection_paths() -> set[str]:
         lambda db: {c.FolderPath for c in db.get_content() if c.FolderPath and _live(c)})
 
 
-_cached_db = None            # (Rekordbox6Database, master_db_path, mtime)
+_cached_db = None            # (MasterDatabase, master_db_path, mtime)
 _cache_lock = threading.Lock()
 
 
 def _open_cached(pyrekordbox_mod):
     """
-    Haelt eine einzelne Rekordbox6Database-Verbindung offen und erneuert sie
+    Haelt eine einzelne MasterDatabase-Verbindung offen und erneuert sie
     nur, wenn sich master.db seitdem geaendert hat -- anders als _open()
     (fuer seltene Vorgaenge wie Praesenz-Abgleich/Playlist-Schreibzugriff)
     waere ein Voll-Backup+Neuoeffnen bei JEDER einzelnen Cue-/Waveform-
@@ -366,7 +366,7 @@ def _open_cached(pyrekordbox_mod):
                 pass
         _backup_master_db(db_path)
         _stub_pyrekordbox_config(pyrekordbox_mod)
-        db = pyrekordbox_mod.Rekordbox6Database(path=db_path)
+        db = pyrekordbox_mod.MasterDatabase(path=db_path)
         _cached_db = (db, db_path, mtime)
         return db
 
@@ -839,7 +839,7 @@ def _get_or_create_key(db, name: str):
     if live:
         return min(live, key=lambda k: k.Seq if k.Seq is not None else 1 << 30)
     from uuid import uuid4
-    from pyrekordbox.db6 import tables
+    from pyrekordbox.masterdb import models as tables
     seqs = [k.Seq for k in db.get_key() if _live(k) and k.Seq is not None]
     key = tables.DjmdKey.create(
         ID=db.generate_unused_id(tables.DjmdKey), ScaleName=name,
@@ -924,7 +924,113 @@ def _content_tag_kwargs(db, row, with_key: bool = True) -> dict:
     return kwargs
 
 
-# Attribute-Werte von DjmdPlaylist (pyrekordbox.db6.tables.PlaylistType).
+# ── My Tag ──────────────────────────────────────────────────────────────────
+# Aufbau an echtem Material abgelesen (DjmdMyTag, eine Tabelle fuer beides):
+#   Kategorie (Spalte im My-Tag-Fenster): Attribute=1, ParentID="root",
+#     ID "1".."4", UUID = ID, Seq 1..4. Rekordbox hat genau VIER feste
+#     Spalten ("Genre", "Components", "Situation", "Untitled Column" ab
+#     Werk) -- umbenennen ja, hinzufuegen nein. Eine fuenfte Kategorie
+#     anzulegen waere in Rekordbox unsichtbar; deshalb wird die Kategorie nie
+#     angelegt, sondern per Name gesucht (wie die Ziel-Playlist).
+#   Tag: Attribute=0, ParentID = ID der Kategorie, ID zufaellig (wie bei
+#     Interpreten), UUID uuid4, Seq fortlaufend je Kategorie. Geloeschte Tags
+#     bleiben als Soft-Delete stehen, neu angelegte gleichen Namens bekommen
+#     eine neue Zeile daneben.
+#   Zuordnung DjmdSongMyTag: ID UND UUID je eine uuid4, TrackNo leer.
+_RB_MYTAG_CATEGORY, _RB_MYTAG_TAG = 1, 0
+
+
+class MyTagCategoryNotFound(RuntimeError):
+    """Die eingestellte My-Tag-Kategorie gibt es in Rekordbox nicht."""
+
+
+def _mytag_category(db, name: str):
+    """Lebende My-Tag-Kategorie (Spalte) zu einem Namen, Gross/Klein egal --
+    oder MyTagCategoryNotFound. Legt nie eine an (siehe oben: vier feste
+    Spalten)."""
+    wanted = (name or "").strip().casefold()
+    for row in db.get_my_tag(ParentID="root"):
+        if (_live(row) and row.Attribute == _RB_MYTAG_CATEGORY
+                and (row.Name or "").strip().casefold() == wanted):
+            return row
+    raise MyTagCategoryNotFound(
+        f"My-Tag-Spalte „{name}“ gibt es in Rekordbox nicht. Rekordbox hat "
+        "vier feste My-Tag-Spalten — eine davon in Rekordbox umbenennen "
+        "(Rechtsklick auf den Spaltenkopf im My-Tag-Fenster) und es erneut "
+        "versuchen.")
+
+
+def _mytag_children(db, category) -> dict[str, object]:
+    """Lebende Tags einer Kategorie, Schluessel = Name in Kleinschrift. Bei
+    zwei lebenden Tags gleichen Namens (von Hand in Rekordbox angelegt) gilt
+    der mit der kleinsten Seq, wie in _get_or_create_key()."""
+    out: dict[str, object] = {}
+    rows = [r for r in db.get_my_tag(ParentID=category.ID)
+            if _live(r) and r.Attribute == _RB_MYTAG_TAG and (r.Name or "").strip()]
+    for row in sorted(rows, key=lambda r: r.Seq if r.Seq is not None else 1 << 30):
+        out.setdefault(row.Name.strip().casefold(), row)
+    return out
+
+
+def _mytag_get_or_create(db, category, children: dict, name: str):
+    """Tag unter der Kategorie per Name (Gross/Klein egal) oder neu -- nie ein
+    Namensdoppelgaenger. 'children' (aus _mytag_children()) wird ergaenzt."""
+    key = name.casefold()
+    if key in children:
+        return children[key]
+    from uuid import uuid4
+    from pyrekordbox.masterdb import models as tables
+    seqs = [r.Seq for r in children.values() if r.Seq is not None]
+    tag = tables.DjmdMyTag.create(
+        ID=str(db.generate_unused_id(tables.DjmdMyTag)), Seq=(max(seqs) + 1) if seqs else 1,
+        Name=name, Attribute=_RB_MYTAG_TAG, ParentID=category.ID, UUID=str(uuid4()))
+    db.add(tag)
+    db.flush()
+    children[key] = tag
+    return tag
+
+
+def _sync_mytags(db, category, children: dict, content, names: list[str], now) -> dict:
+    """Gleicht die My Tags EINES Tracks innerhalb der Kategorie auf 'names'
+    ab: fehlende Zuordnungen anlegen, nicht mehr zutreffende soft-loeschen.
+    Andere Kategorien bleiben unberuehrt -- die eingestellte Spalte gehoert
+    TrackTab, alles andere dem Nutzer. Liefert {"added": n, "removed": n}."""
+    from uuid import uuid4
+    from pyrekordbox.masterdb import models as tables
+    wanted: dict[str, str] = {}
+    for n in names:
+        n = (n or "").strip()
+        if n:
+            wanted.setdefault(n.casefold(), n)
+    cat_tag_ids = {str(r.ID) for r in db.get_my_tag(ParentID=category.ID)}
+    links = [s for s in db.get_my_tag_songs(ContentID=content.ID)
+             if _live(s) and str(s.MyTagID) in cat_tag_ids]
+    have: dict[str, object] = {}
+    stale = []
+    by_id = {str(r.ID): r for r in children.values()}
+    for link in links:
+        tag = by_id.get(str(link.MyTagID))
+        key = (tag.Name or "").strip().casefold() if tag is not None else None
+        # Zuordnung auf einen toten Tag oder ein Duplikat derselben Zuordnung
+        # faellt ebenfalls weg.
+        if key is None or key not in wanted or key in have:
+            stale.append(link)
+        else:
+            have[key] = link
+    added = 0
+    for key, name in wanted.items():
+        if key in have:
+            continue
+        tag = _mytag_get_or_create(db, category, children, name)
+        db.add(tables.DjmdSongMyTag.create(
+            ID=str(uuid4()), MyTagID=str(tag.ID), ContentID=str(content.ID),
+            UUID=str(uuid4()), created_at=now, updated_at=now))
+        added += 1
+    _soft_delete(db, stale, now)
+    return {"added": added, "removed": len(stale)}
+
+
+# Attribute-Werte von DjmdPlaylist (pyrekordbox.masterdb.models.PlaylistType).
 # Als eigene Konstanten statt eines Imports: der Wert steht so auch dann in
 # unserem Code, wenn pyrekordbox fehlt und das Modul gar nicht laedt.
 _RB_PLAYLIST, _RB_FOLDER, _RB_SMART = 0, 1, 4
@@ -999,8 +1105,8 @@ def _smart_contents(db, node):
     """
     from datetime import datetime
     from dateutil.relativedelta import relativedelta
-    from pyrekordbox.db6.smartlist import Operator, SmartList
-    from pyrekordbox.db6.tables import DjmdContent
+    from pyrekordbox.masterdb.smartlist import Operator, SmartList
+    from pyrekordbox.masterdb.models import DjmdContent
 
     sl = SmartList()
     sl.parse(node.SmartList)
@@ -1084,7 +1190,9 @@ def playlist_tracks(playlist_id: str) -> list[dict]:
 
 def add_tracks_to_playlist(paths: list[str], playlist_name: str,
                             metadata: dict | None = None,
-                            playlist_id: str | None = None) -> dict:
+                            playlist_id: str | None = None,
+                            mytags: dict | None = None,
+                            mytag_category: str = "") -> dict:
     """
     Fuegt Tracks zu einer BESTEHENDEN Rekordbox-Playlist hinzu. Legt die
     Playlist nicht an -- ein unbekannter Name ist ein Fehler, kein Auto-Create.
@@ -1097,8 +1205,15 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
     Vorrang vor dem Namen: Namen sind in Rekordbox nicht eindeutig. Ordner und
     Smart Playlists werden abgelehnt (dort laesst sich nichts hinzufuegen).
 
+    'mytags' (optional, Pfad -> Liste von Tag-Namen) gleicht fuer jeden
+    uebertragenen Track -- neu hinzugefuegt wie schon vorhanden -- die My Tags
+    in der Spalte 'mytag_category' ab (siehe _sync_mytags()). None = My Tags
+    bleiben unberuehrt. Fehlt die Spalte, werden die Tracks trotzdem
+    hinzugefuegt; der Grund steht dann in "mytag_error".
+
     Liefert {"added": [...], "skipped": [...], "errors": {pfad: meldung},
-    "playlist": name}.
+    "playlist": name, "mytags": {"tracks", "added", "removed"},
+    "mytag_error": meldung oder None}.
     """
     metadata = metadata or {}
     playlist_name = (playlist_name or "").strip()
@@ -1136,6 +1251,19 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
                 "mehrdeutigen Namen den Ordnerpfad angeben, z.B. "
                 "'Ordner/Playlist').")
 
+        import datetime
+        now = datetime.datetime.now()
+        category = None
+        children: dict = {}
+        mytag_error = None
+        mytag_stats = {"tracks": 0, "added": 0, "removed": 0}
+        if mytags is not None:
+            try:
+                category = _mytag_category(db, mytag_category)
+                children = _mytag_children(db, category)
+            except MyTagCategoryNotFound as exc:
+                mytag_error = str(exc)
+
         added: list[str] = []
         skipped: list[str] = []
         errors: dict[str, str] = {}
@@ -1145,6 +1273,17 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
                 if content is None:
                     content = _add_content_fresh(
                         db, path, **_content_tag_kwargs(db, metadata.get(path)))
+                if category is not None:
+                    # Eigener try: ein Fehler bei den My Tags soll den Track
+                    # nicht aus der Playlist halten.
+                    try:
+                        res = _sync_mytags(db, category, children, content,
+                                           mytags.get(path) or [], now)
+                        mytag_stats["tracks"] += 1
+                        mytag_stats["added"] += res["added"]
+                        mytag_stats["removed"] += res["removed"]
+                    except Exception as exc:              # noqa: BLE001
+                        mytag_error = str(exc)
                 # Nur LEBENDE Eintraege zaehlen: ein frueher in Rekordbox
                 # entfernter Eintrag bleibt als Soft-Delete stehen und liesse
                 # den Track sonst faelschlich als "schon drin" ueberspringen.
@@ -1160,12 +1299,12 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
         if added:
             # add_to_playlist() vergibt TrackNo = Anzahl ALLER Zeilen + 1,
             # soft-geloeschte eingeschlossen -- das hinterlaesst Luecken.
-            import datetime
             db.flush()
-            _renumber(db, _live_songs(db, playlist.ID), datetime.datetime.now())
+            _renumber(db, _live_songs(db, playlist.ID), now)
         db.commit()
         return {"added": added, "skipped": skipped, "errors": errors,
-                "playlist": playlist.Name or playlist_name}
+                "playlist": playlist.Name or playlist_name,
+                "mytags": mytag_stats, "mytag_error": mytag_error}
 
     return _with_malformed_retry(pyrekordbox_mod, _run)
 
@@ -1347,7 +1486,7 @@ def _content_tables():
     (Playlist-Eintraege, Cues, Verlauf, Mixer-Parameter, Tags, ...) -- per
     Reflektion statt fester Liste, damit eine neue Tabelle in einem
     pyrekordbox-Update nicht stillschweigend uebergangen wird."""
-    from pyrekordbox.db6 import tables
+    from pyrekordbox.masterdb import models as tables
     out = []
     for obj in vars(tables).values():
         if (isinstance(obj, type) and issubclass(obj, tables.Base) and obj is not tables.Base
@@ -1380,7 +1519,7 @@ def remove_from_collection(content_ids: list[str]) -> dict:
 
     def _run(db):
         import datetime
-        from pyrekordbox.db6 import tables
+        from pyrekordbox.masterdb import models as tables
         now = datetime.datetime.now()
         removed, skipped, anlz_dirs = [], [], []
         touched_playlists: set[str] = set()

@@ -366,15 +366,20 @@ def style_name(label: str) -> str:
     return label.split("---")[-1].strip()
 
 
-def mood_text(moods: dict) -> str:
-    """Zutreffende Stimmungen als Tag-Text: erst die Ja/Nein-Stimmungen,
-    staerkste zuerst, dann die DJ-Stimmungen ("Party, Happy, Energetic,
-    Melodic"). Englisch wie die Klassennamen der Modelle -- ein Datei-Tag ist
+def mood_names(moods: dict) -> list[str]:
+    """Zutreffende Stimmungen als Namen: erst die Ja/Nein-Stimmungen,
+    staerkste zuerst, dann die DJ-Stimmungen (["Party", "Happy", "Energetic",
+    "Melodic"]) -- dieselbe Regel wie moodNames() in app.js. Englisch wie die
+    Klassennamen der Modelle -- ein Datei-Tag (oder Rekordbox-My-Tag) ist
     keine Oberflaechen-Beschriftung und soll in jeder Software gleich aussehen."""
     hits = sorted(((p, k) for k, p in moods.items()
                    if k in MOODS and p >= MOOD_THRESHOLD), reverse=True)
-    names = [k for _, k in hits] + theme_hits(moods)
-    return ", ".join(k.capitalize() for k in names)
+    return [k.capitalize() for k in [k for _, k in hits] + theme_hits(moods)]
+
+
+def mood_text(moods: dict) -> str:
+    """Zutreffende Stimmungen als Tag-Text ("Party, Happy, Energetic")."""
+    return ", ".join(mood_names(moods))
 
 
 def plan_fields(cfg: dict, result: dict, existing: dict, existing_mood: str) -> dict:

@@ -204,13 +204,17 @@
   th.filler, td.filler { padding:0; cursor:default; }
   th.filler:hover { color:var(--dim); }
   td.num, th.num { text-align:right; font-variant-numeric:tabular-nums; }
-  tr.row:hover td { background:rgba(127,127,127,.06); }
-  tr.albumgroup td { background:rgba(127,127,127,.09); font-weight:600;
-       font-size:12.5px; padding:6px 10px; cursor:default; }
+  /* Zeilentoenungen nur als --rowtint (Ebene ueber --card), nie als
+     background-Kurzform -- die setzt background-clip zurueck und fuellt den
+     durchsichtigen Zeilenabstand der Karten-Zeilen (siehe "Tracklisten als
+     Karten-Zeilen" weiter unten). */
+  tr.row:hover { --rowtint:rgba(127,127,127,.06); }
+  tr.albumgroup { --rowtint:rgba(127,127,127,.09); }
+  tr.albumgroup td { font-weight:600; font-size:12.5px; cursor:default; }
   tr.albumgroup td .path { display:inline; font-weight:400; margin-left:4px; }
   tr.albumgroup td .albumgroup-artist { font-weight:400; color:var(--dim); }
-  tr.albumgroup.dupwarn td { background:var(--susp-bg); }
-  tr.albumgroup.dupok td { background:var(--ok-bg); }
+  tr.albumgroup.dupwarn { --rowtint:var(--susp-bg); }
+  tr.albumgroup.dupok { --rowtint:var(--ok-bg); }
   .dupdismissbtn { margin-left:10px; padding:1px 9px; border-radius:999px;
        background:transparent; font-size:11px; font-weight:600; cursor:pointer; }
   tr.albumgroup.dupwarn .dupdismissbtn { color:var(--susp); border:1px solid var(--susp); }
@@ -268,38 +272,25 @@
   /* overflow MUSS hier visible sein: die allgemeine Regel th,td{overflow:hidden}
      macht die Zelle sonst selbst zum Scrollbereich, und das darin klebende
      .grid haette keinen Scrollweg mehr -- es wuerde einfach mitwandern. */
-  .detail td { background:var(--bg); padding:0; overflow:visible; }
-  /* Der aufgeklappte Bereich klebt wie die fixierten Spalten und ist auf den
-     Platz zwischen ihnen begrenzt -- sonst waere die Waveform so breit wie
-     die ganze Tabelle und scrollte beim horizontalen Scrollen mit weg. Die
-     beiden Masse setzt syncDetailWidth() in app.js auf die .tablewrap; der
-     Rueckfallwert greift, solange noch nicht gemessen wurde. */
-  .detail .grid { display:flex; gap:24px; flex-wrap:wrap; align-items:flex-start;
-       position:sticky; left:var(--detailleft, 36px);
-       width:var(--detailw, auto); padding:9px 10px; }
-  /* Fuehrt die beiden Trennlinien der fixierten Spalten (th.sel/.links,
-     Zeile 120-125) durch die aufgeklappte Zeile weiter. .grid ist bereits
-     per position:sticky + left/width exakt auf die Luecke zwischen den
-     beiden fixierten Spalten begrenzt -- die Linien liegen deshalb einfach
-     an seinem linken/rechten Rand und wachsen automatisch auf die Hoehe
-     des tatsaechlichen Inhalts (Spektrum/Waveform), ohne feste Hoehe.
-     -1px statt 0: td.sel::after zieht sich VON der Grenze aus nach links
-     (right:0), td.links::before VON der Grenze aus nach rechts (left:0) --
-     beide Linien liegen also je zur Haelfte ausserhalb ihrer eigenen Zelle,
-     auf der jeweils anderen Seite der Grenze. left:0/right:0 haette hier
-     stattdessen auf der eigenen Seite gelegen -- 1px Versatz zur
-     Original-Linie derselben Grenze. */
-  .detail .grid::before, .detail .grid::after {
-       content:""; position:absolute; top:0; bottom:0; width:1px;
-       background:var(--stickyline); }
-  .detail .grid::before { left:-1px; }
-  .detail .grid::after { right:-1px; }
-  /* Feste Spalte fuer das Spektrum -- auch dann, wenn keine Spektraldaten
-     gespeichert sind und nur der Hinweistext dasteht. Sonst rutscht der
-     Bereich daneben nach links und die Waveform waere je Zeile
-     unterschiedlich breit. 180px = die Breite des SVG in spectrumSVG();
-     max-width laesst sie in einem schmalen Fenster trotzdem schrumpfen. */
-  .detail .spectrum { flex:0 0 180px; max-width:100%; }
+  .detail td { padding:0; overflow:visible; }
+  /* Der aufgeklappte Bereich klebt am linken Rand und reicht bis an die
+     Aktionsspalte, die per rowspan neben ihm steht (spanLinksIntoDetail()
+     in app.js): sichtbare Breite der .tablewrap minus "Öffnen" (--wrapw/
+     --linksw, gesetzt von syncDetailWidth()) -- sonst waere er so breit wie
+     die ganze Tabelle und scrollte beim horizontalen Scrollen mit weg. Er
+     zeichnet den unteren linken Teil der Zeilenkarte selbst (siehe
+     "Karten-Zeilen" unten): die Zelle darunter reicht bis zum Tabellenende. */
+  .detail .grid { display:flex; align-items:flex-start;
+       position:sticky; left:0; box-sizing:border-box;
+       width:calc(var(--wrapw, 100%) - var(--linksw, 0px));
+       padding:4px 16px 14px calc(var(--selw, 54px) + 10px); }
+  /* Fuehrt die Trennlinie der Checkbox-Spalte (td.sel::after) durch den
+     aufgeklappten Bereich bis ans Kartenende weiter; der Inhalt beginnt
+     deshalb erst rechts davon (padding-left oben). Die Linie vor "Öffnen"
+     braucht das nicht -- die Zelle reicht per rowspan selbst hinunter. */
+  .detail .grid::before { content:""; position:absolute; top:0; bottom:0;
+       left:calc(var(--selw, 54px) - 1px); width:1px; background:var(--stickyline); }
+  .detail .detailbody { flex:1 1 auto; min-width:0; }
   .reasons { margin:0; padding-left:18px; color:var(--dim); }
   .confcell { white-space:nowrap; }
   .conf { display:inline-block; width:44px; height:6px; border-radius:3px;
@@ -416,12 +407,11 @@
      nicht des einzelnen Kinds. */
   body.pinned #filterPanel { position:sticky; top:1rem; z-index:22;
        transition:border-radius .18s ease; }
-  /* Kopfzeile klebt ohne Abstand direkt unter der Filterleiste (siehe
-     stickyHeadTargetTop() in app.js) -- die untere Kante der Leiste wird
-     dann zur gemeinsamen Trennlinie mit #stickyHead. Eckig nur, solange
-     beide wirklich verbunden sind (body.headconnected), sonst bliebe an den
-     Ecken ein kleiner Rundungs-Spalt zwischen zwei sich beruehrenden Kanten. */
-  body.pinned.headconnected #filterPanel { border-radius:10px 10px 0 0; }
+  /* Die Kopfzeile klebt direkt unter der Filterleiste (siehe
+     stickyHeadTargetTop() in app.js), ist aber selbst eine eigene, runde
+     Karte mit Abstand (#stickyHead, padding-top) -- die Leiste behaelt
+     deshalb auch dann ihre Rundung, wenn beide verbunden sind
+     (body.headconnected wird weiter gesetzt, braucht aber keine Regel). */
   /* Die Leiste klebt erst ab top:1rem (16px) -- der schmale Streifen
      zwischen echtem Fensterrand (0) und dieser Klebekante bleibt sonst
      unbedeckt: Tabellenzeilen, die beim Scrollen genau durch dieses
@@ -488,7 +478,9 @@
   .treehead { display:flex; align-items:center; justify-content:space-between;
        gap:8px; font-size:11px; font-weight:600; letter-spacing:.05em;
        text-transform:uppercase; color:var(--dim); margin:0 0 8px 2px; }
-  .treehead-actions { display:flex; gap:2px; }
+  .treehead-actions { display:flex; align-items:center; gap:2px; }
+  /* Trennt die drei Listenarten (Playlist, Smart, Generator) vom Ordner. */
+  .treehead-sep { width:1px; height:14px; margin:0 4px; background:var(--line); }
   .treeadd { border:0; background:none; color:var(--dim); cursor:pointer;
        width:22px; height:22px; border-radius:6px; font-size:14px; line-height:1;
        padding:0; }
@@ -726,10 +718,13 @@
        white-space:nowrap; }
   .symlink:hover { text-decoration:underline; }
 
-  tr.row.dropbefore > td { box-shadow:inset 0 2px 0 0 var(--accent); }
-  tr.row.dropafter > td { box-shadow:inset 0 -2px 0 0 var(--accent); }
+  /* Als --rowmark statt box-shadow: der Kartenrahmen der Zeile ist selbst
+     ein box-shadow und soll beim Ziehen stehenbleiben. */
+  tr.row.dropbefore { --rowmark:inset 0 2px 0 0 var(--accent); }
+  tr.row.dropafter { --rowmark:inset 0 -2px 0 0 var(--accent); }
 
-  .tablewrap { overflow-x:auto; border:1px solid var(--line); border-radius:10px; }
+  /* Ohne eigenen Rahmen -- jede Zeile ist eine eigene Karte. */
+  .tablewrap { overflow-x:auto; }
   /* ── Angeheftete Tabellen-Kopfzeile ─────────────────────────────────────
      th{position:sticky;top:0} (oben) greift innerhalb von .tablewrap nie,
      weil dessen overflow-x:auto es zu einem eigenen Scrollbereich macht, der
@@ -740,13 +735,18 @@
      links) ihr normales position:sticky behalten -- ein transform wuerde
      das nicht auslösen. Die Scrollleiste selbst ist unsichtbar, aber
      bedienbar; synchronisiert wird sie 2-seitig mit .tablewrap in app.js. */
+  /* Ohne eigenen Rahmen: die Kopfzeile ist selbst eine Karte (siehe
+     "Karten-Zeilen"), der Kasten liefert nur den deckenden Streifen in
+     Seitenfarbe darum, unter dem die Zeilen verschwinden. */
   #stickyHead { position:fixed; z-index:21; display:none; overflow:hidden;
-       border:1px solid var(--line); border-top:none; border-radius:0 0 8px 8px;
-       background:var(--card); }
+       padding:6px 0; background:var(--bg); }
   #stickyHead.show { display:block; }
   #stickyHeadScroll { overflow-x:auto; overflow-y:hidden; scrollbar-width:none; }
   #stickyHeadScroll::-webkit-scrollbar { display:none; }
-  #stickyHead table { border-collapse:collapse; background:var(--card); }
+  /* separate wie die echte Tabelle (Karten-Zeilen), sonst rechnen beide
+     die Spaltenbreiten unterschiedlich und der Nachbau steht versetzt. */
+  #stickyHead table { border-collapse:separate; border-spacing:0; background:none; }
+  #stickyHead { --tablebg:var(--bg); }
   #stickyHead th { position:sticky; top:0; }
   #stickyHead .colresize { display:none; }
   .tablehead { display:flex; justify-content:flex-end; margin-bottom:8px; }
@@ -989,7 +989,7 @@ button.azbtn:hover { background:var(--card); }
    traegt auch der Bearbeiten-Knopf im Gruppenkopf der drei
    "Aufraeumen"-Listen (.genrerename, siehe render()/albumgroup in app.js). */
 .genrebubble { display:inline-flex; align-items:center; gap:6px; border:1px solid var(--line);
-               background:var(--bg); color:var(--fg); border-radius:999px;
+               background:var(--bg); color:var(--fg); border-radius:6px;
                padding:6px 8px 6px 13px; font-size:13px; cursor:pointer; }
 .genrebubble:hover { border-color:var(--dim); }
 .genrebubble.active { border-color:var(--accent); background:var(--accent); color:#fff; }
@@ -1405,18 +1405,20 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 .energybar i.e5, .energybar i.e6 { background:var(--dc-purple); }
 .energybar i.e7, .energybar i.e8 { background:var(--dc-crimson); }
 .energybar i.e9, .energybar i.e10 { background:var(--dc-orange); }
-.moodtag { display:inline-block; margin-right:4px; padding:1px 7px; border-radius:999px;
+/* Leicht abgerundete Rechtecke statt Pillen -- wie die Tonart (.keybubble). */
+.moodtag { display:inline-block; margin-right:4px; padding:1px 7px; border-radius:4px;
            font-size:11px; font-weight:600; white-space:nowrap; }
 .mood-aggressive { color:var(--dc-red);    background:var(--dc-red-bg); }
 .mood-happy      { color:var(--dc-yellow); background:var(--dc-yellow-bg); }
 .mood-party      { color:var(--dc-purple); background:var(--dc-purple-bg); }
 .mood-relaxed    { color:var(--dc-green);  background:var(--dc-green-bg); }
 .mood-sad        { color:var(--dc-slate);  background:var(--dc-slate-bg); }
-/* DJ-Stimmungen: eigene Farben aus derselben Palette, mit Rahmen statt
-   Flaeche -- so bleiben sie von den fuenf Grundstimmungen unterscheidbar. */
+/* DJ-Stimmungen: eigene Farben aus derselben Palette. Die Flaeche ist wie
+   bei den fuenf Grundstimmungen ganz gefuellt (Nutzervorgabe) -- als helle
+   Mischung der Schriftfarbe, weil die Palette fuer diese Toene kein -bg hat. */
 .mood-energetic, .mood-groovy, .mood-dark, .mood-deep, .mood-uplifting, .mood-melancholic,
 .mood-upbeat, .mood-epic, .mood-melodic, .mood-summer, .mood-romantic
-                 { background:transparent; border:1px solid currentColor; padding:0 6px; }
+                 { background:color-mix(in srgb, currentColor 15%, transparent); }
 .mood-energetic  { color:var(--dc-orange); }
 .mood-groovy     { color:var(--dc-dustyrose); }
 .mood-dark       { color:var(--dc-slate); }
@@ -1438,7 +1440,20 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
            border:1px solid var(--line); border-radius:8px; padding:4px 6px; background:var(--card); }
 .utagbox #tagsUserTagChips { display:contents; }
 .utagbox input { flex:1; min-width:140px; border:0; outline:none; background:transparent; padding:4px 2px; }
-.tagbubble .moodtag { margin-right:0; }
+/* Tag-Bubbles der Liste "Tags": leicht abgerundete Rechtecke (wie .moodtag/
+   .keybubble), die Stimmungsfarbe fuellt die ganze Bubble (Klasse mood-<name>
+   setzt Schrift + Hintergrund). Eigene Tags neutral mit gestricheltem Rand.
+   Ausgewaehlt: Ring in der Designfarbe statt Umfaerben -- die Farbe des Tags
+   bleibt so erkennbar. */
+.tagbubble { display:inline-flex; align-items:center; gap:7px; border-radius:6px;
+             padding:5px 6px 5px 11px; margin:0 6px 6px 0; font-size:13px; font-weight:600;
+             cursor:pointer; border:1px solid transparent; }
+.tagbubble.usertag { color:var(--fg); background:var(--bg); border:1px dashed var(--dim); }
+.tagbubble:hover { filter:brightness(.97); }
+.tagbubble.active { box-shadow:0 0 0 2px var(--accent); }
+.tagbubble-count { font-weight:500; font-size:12px; color:var(--fg); background:var(--card);
+                   border-radius:4px; padding:1px 7px; opacity:.85; }
+.tagbubble .genrerename { color:inherit; }
 
 /* Genre-Dropdown im Tags-Dialog: Kopf "Vorschläge" mit Chips, Abschnitts-
    Ueberschriften und der Hinweis "in deiner Bibliothek" rechts. */
@@ -1450,7 +1465,7 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 .ac-list.ac-rich li[data-i] { display:flex; align-items:center; justify-content:space-between; gap:10px; }
 .actag { color:var(--dim); font-size:11px; white-space:nowrap; }
 .gsuggest { display:flex; flex-wrap:wrap; gap:5px; }
-.gchip { display:inline-flex; align-items:center; gap:6px; padding:2px 9px; border-radius:999px;
+.gchip { display:inline-flex; align-items:center; gap:6px; padding:2px 9px; border-radius:6px;
          border:1px solid var(--line); background:var(--card); color:var(--fg);
          font-size:12px; cursor:pointer; line-height:1.6; }
 .gchip span { color:var(--dim); font-variant-numeric:tabular-nums; font-size:11px; }
@@ -1461,7 +1476,7 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 .gchip.busy { opacity:.55; cursor:progress; }
 .keybubble.keymis { border:1.5px dashed rgba(27,27,31,.6); padding:0 6.5px; cursor:help; }
 .keybubble { display:inline-block; min-width:34px; text-align:center; white-space:nowrap;
-             padding:1px 8px; border-radius:999px; font-size:12px; font-weight:600;
+             padding:1px 8px; border-radius:4px; font-size:12px; font-weight:600;
              color:#1b1b1f; line-height:1.5; }
 .flbtn { background:var(--dim); border-radius:6px; width:19px; height:19px;
          display:inline-flex; align-items:center; justify-content:center;
@@ -1548,25 +1563,27 @@ tr.ign .iconbtn.ig, tr.corr .iconbtn.corr { color:var(--accent); }
 /* ── Hervorhebung: angeklickt/aufgeklappt vs. per Checkbox ausgewählt ── */
 /* Gleiche Farbfamilie wie :hover (neutrales Grau), nur zwei Intensitäten
    statt eigener Akzentfarben — bleibt dezent, aber unterscheidbar. */
-tr.row.expanded td { background: rgba(127,127,127,.16); }
-tr.detail.expanded td { background: rgba(127,127,127,.16); }
-tr.row.picked td { background: rgba(127,127,127,.10); }
-tr.row.picked.expanded td { background: rgba(127,127,127,.20); }
+tr.row.expanded { --rowtint: rgba(127,127,127,.16); }
+tr.detail.expanded { --rowtint: rgba(127,127,127,.16); }
+tr.row.picked { --rowtint: rgba(127,127,127,.10); }
+tr.row.picked.expanded { --rowtint: rgba(127,127,127,.20); }
 
 /* Tastatur-Cursor (Pfeil hoch/runter, siehe moveCursor() in app.js) --
    rein visuelle Navigationsmarkierung, unabhaengig von .picked (Checkbox-
    Mehrfachauswahl, neutrales Grau oben) und .expanded. Akzentfarbener
    Streifen an der ersten Zelle + getoenter Hintergrund, damit sich beide
-   Konzepte klar unterscheiden, auch wenn eine Zeile zufaellig beides ist. */
-tr.row.kbcursor td { background: var(--accent-bg); }
-tr.row.kbcursor td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+   Konzepte klar unterscheiden, auch wenn eine Zeile zufaellig beides ist.
+   Nur noch die Toenung -- den frueheren Akzentstreifen links gibt es
+   bewusst nicht mehr. color-mix() statt --accent-bg: als durchscheinende
+   Ebene ueber --card, --accent haengt von der Designfarbe ab. */
+tr.row.kbcursor { --rowtint: color-mix(in srgb, var(--accent) 14%, transparent); }
 /* Die aufgeklappte Wellenform-Zeile (tr.detail, direkt nach tr.row per
    tr.after() eingefuegt -- siehe render()) traegt selbst keine .kbcursor-
    Klasse, nur die zugehoerige tr.row. Deshalb hier zusaetzlich ueber den
    Nachbar-Selektor getoent, sonst bliebe der Block beim Aufklappen in der
    Bearbeiten-Ansicht neutral grau (tr.detail.expanded td oben) statt in der
    Akzentfarbe der Markierung zu erscheinen. */
-tr.row.kbcursor + tr.detail td { background: var(--accent-bg); }
+tr.row.kbcursor + tr.detail { --rowtint: color-mix(in srgb, var(--accent) 14%, transparent); }
 
 /* ── Mehrfachauswahl ─────────────────────────────────────────────────── */
 /* table hat table-layout:fixed (siehe oben) -- Spaltenbreiten kommen NUR aus
@@ -1583,7 +1600,13 @@ th:has(#selAll), td:has(.selchk) { width:54px; }
    daneben statt einer Ueberlagerung, die aktuell abgespielte Zeile bleibt so
    ohne jeden Sonderfall einzeln auswaehlbar. */
 td.sel { white-space:nowrap; }
-.nowplayingicon { display:inline-flex; vertical-align:middle; margin-left:5px;
+/* Etwas groesser als der Browser-Standard (13px), in Designfarbe. Ohne den
+   Standard-Aussenabstand, damit Checkbox + Laeuft-Symbol weiter in die 54px
+   der Spalte passen (10 + 15 + 3 + 14 + 10). Auch die deaktivierte Kopie im
+   angehefteten Kopf (#stickyHead, ohne id) -- deshalb ueber th.sel statt #selAll. */
+table.trk :is(th, td).sel input[type=checkbox] { width:15px; height:15px; margin:0;
+  vertical-align:middle; accent-color:var(--accent); cursor:pointer; }
+.nowplayingicon { display:inline-flex; vertical-align:middle; margin-left:3px;
   color:var(--accent); }
 .nowplayingicon svg { width:14px; height:14px; }
 #bulkbar, #dropBulkbar { display:flex; align-items:center; gap:10px; margin-top:10px;
@@ -1658,34 +1681,121 @@ button.view.on span { color:var(--accent); }
    was die Liste selbst betrifft / was mit ihrem Inhalt geschieht / Loeschen. */
 .rowmore-menu .menusep { height:1px; background:var(--line); margin:4px 6px; }
 
-/* ── Fixierte Spalten deckend halten ──────────────────────────────────────
-   Unter der Auswahl- und der Aktionsspalte scrollt der Rest der Zeile durch,
-   beide muessen deshalb undurchsichtig bleiben und im Vordergrund liegen.
-   Die Zeilen-Hervorhebungen (hover/ausgewaehlt/aufgeklappt) sind aber
-   halbtransparent und die Zustands-Abblendungen arbeiten mit opacity --
-   beides macht die Zellen sonst durchscheinend. Also: die Toenung als eigene
-   Farbebene UEBER --card (--stickytint) statt als Hintergrundfarbe, und die
-   Abblendung auf den Zellinhalt statt auf die Zelle.
-   Der Block steht bewusst am Dateiende und wiederholt die Zeilen-Selektoren:
-   die Regeln weiter oben (tr.row.expanded td & Co.) sind spezifischer als ein
-   blosses td.links und wuerden die Deckung sonst wieder aushebeln. */
-tr.row:hover td.sel, tr.row:hover td.links { --stickytint:rgba(127,127,127,.06); }
-tr.row.picked td.sel, tr.row.picked td.links { --stickytint:rgba(127,127,127,.10); }
-tr.row.expanded td.sel, tr.row.expanded td.links { --stickytint:rgba(127,127,127,.16); }
-tr.row.picked.expanded td.sel, tr.row.picked.expanded td.links { --stickytint:rgba(127,127,127,.20); }
-/* Wie oben (tr.row.kbcursor td), aber als durchscheinende Toenung ueber
-   --card statt als deckende Hintergrundfarbe -- color-mix() statt eines
-   festen Farbwerts, weil --accent von der Designfarbe (Einstellungen)
-   abhaengt und sich nicht als fixes rgba() vorschreiben laesst. */
-tr.row.kbcursor td.sel, tr.row.kbcursor td.links { --stickytint:color-mix(in srgb, var(--accent) 14%, transparent); }
+/* ── Tracklisten als Karten-Zeilen (Vorbild: Playlist-Generator, .genslot) ──
+   Kopfzeile und jede Trackzeile sind eigene, abgerundete Karten mit Abstand
+   -- bewusst weiter eine echte <table class="trk">: Spaltenbreiten,
+   Sortieren, Umsortieren, fixierte Randspalten und der Nachbau der
+   Kopfzeile (#stickyHead, gleiche Klasse) haengen daran. Gilt fuer die
+   Haupttabelle und die Einzelpruefungen.
+   Der Abstand ist KEIN border-spacing, sondern ein durchsichtiger oberer Rand
+   je Zelle (--rowgap), Hintergrund nur bis zur padding-box: border-spacing
+   gilt fuer jede Zeile gleich, die aufgeklappte Detailzeile soll aber ohne
+   Luecke an ihrer Zeile haengen. Den Kartenrahmen zeichnen deshalb
+   inset-Schatten statt border (ein echter border-top laege im Abstand),
+   zusammengesetzt aus --edge-l/-r/-t/-b und --rowmark (Ablagemarke beim
+   Ziehen), damit jeder Zustand nur seine eigene Kante austauscht. Die
+   sichtbaren Rundungen oben/unten stehen in --r-top/--r-bot (0 = eckig).
+   Toenung der Zeilenzustaende (hover/ausgewaehlt/aufgeklappt/Cursor) ist
+   eine eigene Ebene UEBER --card (--rowtint, gesetzt am <tr>), nie die
+   Hintergrundfarbe selbst -- die fixierten Spalten (sel/links) muessen
+   deckend bleiben, unter ihnen scrollt der Rest der Zeile durch. */
+table.trk { border-collapse:separate; border-spacing:0; background:none; }
+.tablewrap { --tablebg:var(--bg); }
+.droptablewrap { --tablebg:var(--card); }
+table.trk > * > tr > :is(th, td) {
+  --rowgap:6px; --r-top:10px; --r-bot:10px;
+  --edge-t:inset 0 1px 0 0 var(--line); --edge-b:inset 0 -1px 0 0 var(--line);
+  border-top:var(--rowgap) solid transparent; border-bottom:none; border-right:none;
+  background:linear-gradient(var(--rowtint, transparent), var(--rowtint, transparent)) padding-box,
+             var(--card) padding-box;
+  box-shadow:var(--edge-l, 0 0 transparent), var(--edge-r, 0 0 transparent),
+             var(--edge-t), var(--edge-b), var(--rowmark, 0 0 transparent);
+  vertical-align:middle; }
+table.trk > tbody > tr > td { padding-top:11px; padding-bottom:11px; }
+/* Senkrechter Radius um den Abstand groesser: die Rundung der sichtbaren
+   Karte (padding-box) ist der aeussere Radius minus Randbreite. */
+table.trk > * > tr > :is(th, td):first-child {
+  --edge-l:inset 1px 0 0 0 var(--line);
+  border-top-left-radius:var(--r-top) calc(var(--r-top) + var(--rowgap));
+  border-bottom-left-radius:var(--r-bot); }
+table.trk > * > tr > :is(th, td):last-child {
+  --edge-r:inset -1px 0 0 0 var(--line);
+  border-top-right-radius:var(--r-top) calc(var(--r-top) + var(--rowgap));
+  border-bottom-right-radius:var(--r-bot); }
 
-tr.row td.sel, tr.row td.links,
-tr.row.picked td.sel, tr.row.picked td.links,
-tr.row.expanded td.sel, tr.row.expanded td.links,
-tr.row.picked.expanded td.sel, tr.row.picked.expanded td.links,
-tr.row.kbcursor td.sel, tr.row.kbcursor td.links {
-  background-color:var(--card);
-  background-image:linear-gradient(var(--stickytint, transparent), var(--stickytint, transparent)); }
+/* Kopfzeile: eigene Karte ohne Abstand nach oben, kurze Trennstriche
+   zwischen den Spalten statt durchgehender Linien. */
+table.trk > thead > tr > th { --rowgap:0px; padding:9px 10px;
+  background:linear-gradient(var(--line), var(--line)) right center / 1px 14px no-repeat,
+             var(--card); }
+table.trk > thead > tr > th:last-child, table.trk > thead > tr > th.filler,
+table.trk > thead > tr > th.sel { background:var(--card); }
+
+/* Ecken der fixierten Spalten: unter ihnen scrollen die uebrigen Zellen der
+   Zeile weiter, und deren Rahmenlinien/Flaeche schienen durch die
+   abgerundeten Ecken (ausserhalb der Rundung ist die Zelle durchsichtig).
+   Ein Pseudo-Element in Groesse der padding-box mit derselben Rundung malt
+   per Schatten alles AUSSERHALB der Rundung in Seitenfarbe (--tablebg),
+   clip-path haelt den Schatten in der Zelle. overflow:visible ist dafuer
+   noetig -- overflow:hidden schnitte das Pseudo-Element an genau dieser
+   Rundung ab. sel nutzt ::before (::after ist die Trennlinie), links
+   ::after (::before ist die Trennlinie). */
+table.trk > * > tr > :is(th, td):is(.sel, .links) { overflow:visible; }
+table.trk > * > tr > .sel::before, table.trk > * > tr > .links::after {
+  content:""; position:absolute; inset:0; pointer-events:none;
+  box-shadow:0 0 0 14px var(--tablebg); clip-path:inset(0); }
+table.trk > * > tr > .sel::before { border-radius:var(--r-top) 0 0 var(--r-bot); }
+table.trk > * > tr > .links::after { border-radius:0 var(--r-top) var(--r-bot) 0; }
+
+/* Hover: Rahmen etwas kraeftiger (wie .genslot:hover). */
+table.trk > tbody > tr.row:hover > td { --edge-t:inset 0 1px 0 0 var(--stickyline);
+  --edge-b:inset 0 -1px 0 0 var(--stickyline); }
+table.trk > tbody > tr.row:hover > td:first-child { --edge-l:inset 1px 0 0 0 var(--stickyline); }
+table.trk > tbody > tr.row:hover > td:last-child { --edge-r:inset -1px 0 0 0 var(--stickyline); }
+
+/* Aufgeklappt: Zeile und Detailzeile bilden zusammen EINE Karte -- unten an
+   der Zeile keine Rundung und keine Linie. Die untere Haelfte zeichnet
+   .detail .grid selbst (klebt links, so breit wie der Sichtbereich): die
+   Zelle reicht bis zum Tabellenende, ihr rechter Rand laege unsichtbar
+   ausserhalb. Die Zelle selbst bleibt deshalb ganz durchsichtig. */
+table.trk > tbody > tr.row.expanded > td { --edge-b:0 0 transparent; --r-bot:0px; }
+/* Ausnahme "Öffnen": reicht per rowspan bis ans Kartenende, schliesst sie
+   also unten rechts ab; Inhalt oben, neben der Zeile statt mittig. */
+table.trk > tbody > tr.row.expanded > td.links { --edge-b:inset 0 -1px 0 0 var(--line);
+  --r-bot:10px; vertical-align:top; }
+table.trk > tbody > tr.row.expanded:hover > td.links { --edge-b:inset 0 -1px 0 0 var(--stickyline); }
+table.trk > tbody > tr.detail > td { --rowgap:0px; background:none; box-shadow:none;
+  padding:0; vertical-align:top; overflow:visible; }
+table.trk > tbody > tr.detail .grid {
+  --edge-l:inset 1px 0 0 0 var(--line); --edge-b:inset 0 -1px 0 0 var(--line);
+  background:linear-gradient(var(--rowtint, transparent), var(--rowtint, transparent)),
+             var(--card);
+  box-shadow:var(--edge-l), var(--edge-b);
+  border-radius:0 0 0 10px; }
+table.trk > tbody > tr.row.expanded:hover + tr.detail .grid {
+  --edge-l:inset 1px 0 0 0 var(--stickyline); --edge-b:inset 0 -1px 0 0 var(--stickyline); }
+
+/* Gruppenkopf (nach Album gruppieren, Duplikate): etwas mehr Luft nach oben,
+   damit die Gruppen sich voneinander absetzen. */
+table.trk > tbody > tr.albumgroup > td { --rowgap:14px; padding:7px 10px; }
+table.trk > tbody > tr:first-child.albumgroup > td { --rowgap:6px; }
+/* Gewoehnliche Gruppen als schlichte Zwischenueberschrift statt eigener
+   Karte; nur die Duplikat-Gruppen behalten ihre farbige Flaeche (sie
+   tragen eine Aussage: bestaetigt oder nicht). */
+table.trk > tbody > tr.albumgroup:not(.dupwarn):not(.dupok) > td {
+  background:none; box-shadow:none; padding:4px 4px 2px; }
+/* Die Schlagschatten der fixierten Spalten (th/td.sel, th/td.links oben)
+   ersetzt der Kartenrahmen bewusst: sie zeichneten ausserhalb der Zelle,
+   also auch in den Zeilenabstand. Die Trennlinien (::before/::after) bleiben. */
+
+/* Titel kraeftiger, BPM gross wie im Generator (.gentitle/.genbpm). */
+td.titlecell { font-weight:600; }
+.bpmval { display:inline-flex; flex-direction:column; align-items:flex-end;
+          font-weight:700; font-size:15px; line-height:1.05; }
+.bpmval small { font-size:9px; font-weight:600; letter-spacing:.08em; color:var(--dim); }
+/* Rekordbox/Music.app: kleines Programm-Symbol statt Haken (presenceMark()). */
+.rbyes { display:inline-flex; vertical-align:middle; }
+.appicon.appicon-sm { width:15px; height:15px; }
 
 /* Ausgeblendet blendet die Zeile per opacity ab -- bei den fixierten Zellen
    stattdessen nur deren Inhalt, damit sie deckend bleiben. Manuell
@@ -1715,7 +1825,6 @@ body[data-layout="player"] #m3usel {
    und "Suche" verschwinden. */
 body[data-layout="player"] [data-relink],
 body[data-layout="player"] [data-tags],
-body[data-layout="player"] [data-rescan],
 body[data-layout="player"] [data-more],
 body[data-layout="player"] .reveal-link,
 body[data-layout="player"] [data-group="open"],
@@ -1904,6 +2013,35 @@ body { padding-bottom:96px; }
 .drag-badge-count { flex:0 0 auto; font-size:11px; font-weight:600;
                      opacity:.85; }
 
+/* ── Erweiterte Suche (syncAdvSearch()/advPanelHtml() in app.js) ─────────────
+   Panel unter der Suchleiste und Liederpool im Generator (.genadv). Ein
+   Raster gleich breiter Felder, das mit der Breite umbricht. */
+#btnAdvSearch.on { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+#btnAdvSearch .countbadge[hidden] { display:none; }
+.advsearch { margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
+.advsearch[hidden] { display:none; }
+.advgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px 14px; }
+.advfield { position:relative; display:flex; flex-direction:column; gap:4px; min-width:0; }
+.advlbl { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+          color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* Wie die Felder im Tags-Dialog (.setfield input) -- gleiche Hoehe, Schrift
+   und Fokusring, damit beide Formulare gleich aussehen. */
+.advinput { box-sizing:border-box; width:100%; padding:7px 9px; font-family:inherit; font-size:14px;
+            border:1px solid var(--line); border-radius:7px; background:var(--bg); color:var(--fg); }
+.advinput::placeholder { color:var(--dim); opacity:.7; }
+/* Schalter (Cover, Music, ...): egal | ja | nein als Segmentauswahl. */
+.advseg { box-sizing:border-box; display:flex; height:35px; padding:2px; gap:2px;
+          border:1px solid var(--line); border-radius:7px; background:var(--bg); }
+.advseg button { flex:1 1 0; border:none; background:none; border-radius:5px; color:var(--dim);
+                 font:inherit; font-size:12.5px; cursor:pointer; padding:0 6px; }
+.advseg button:hover { color:var(--fg); }
+.advseg button.on { background:var(--card); color:var(--fg); font-weight:600;
+                    box-shadow:0 1px 2px rgba(0,0,0,.12); }
+.advseg button.on[data-advval="yes"] { background:var(--accent); color:#fff; }
+.advseg button.on[data-advval="no"] { background:var(--fake-bg); color:var(--fake); }
+.advfoot { display:flex; align-items:center; gap:12px; margin-top:10px; }
+.advfoot .path { flex:1 1 auto; }
+
 /* ── Playlist-Generator (generator.js) ─────────────────────────────────────
    body[data-gen] setzt syncGeneratorPane(), solange ein Generator offen ist:
    er ersetzt Filter, Tabelle und "weitere laden". Nur Theme-Tokens, damit
@@ -1950,6 +2088,17 @@ select.geninput { appearance:none; -webkit-appearance:none; background-image:var
                   background-size:13px; padding-right:30px; }
 .gennum { width:92px; -moz-appearance:textfield; }
 .gennum::-webkit-inner-spin-button, .gennum::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
+/* Liederpool: Suchfeld wie die Suchleiste (Autovervollstaendigung ueber
+   .searchwrap/.ac-list), daneben der Knopf fuer die erweiterte Suche. */
+.genpoolfield { flex:1 1 420px; min-width:0; }
+.genpoolfield .genpair { width:100%; }
+.genquerywrap { flex:1 1 auto; min-width:0; }
+.genquery { width:100%; }
+.genadvbtn { height:34px; flex:0 0 auto; }
+.genadvbtn.on { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+.genadvbtn .countbadge[hidden] { display:none; }
+.genpoolcount { font-size:12px; font-variant-numeric:tabular-nums; }
+.advsearch.genadv { margin:0 14px 12px; padding-top:12px; }
 .genchip { display:inline-flex; align-items:center; gap:4px; padding:2px 4px 2px 9px; border-radius:999px;
            background:var(--accent-bg); color:var(--accent); font-size:12.5px; }
 .genchip button { background:none; border:none; color:inherit; cursor:pointer; font-size:14px; line-height:1; }
@@ -1962,19 +2111,33 @@ select.geninput { appearance:none; -webkit-appearance:none; background-image:var
 .genmove { display:flex; flex-wrap:wrap; align-items:center; gap:10px; padding:10px 14px;
            border-top:1px solid var(--line); }
 .genfill { margin-left:auto; color:var(--dim); font-variant-numeric:tabular-nums; }
-.genfill b { color:var(--dc-orange); font-size:15px; }
-.gengates { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin:0 14px 12px;
-            padding:10px 12px; border:1px solid var(--dc-orange); border-radius:9px;
-            background:var(--dc-orange-bg); }
-.gengates .genlbl { color:var(--fg); }
-.gengates-title { color:var(--dc-orange) !important; }
-.gengates .genseg button.on { background:var(--dc-orange); }
-.genpill { box-sizing:border-box; height:34px; border:1px solid var(--dc-orange); background:none;
-           color:var(--dc-orange); border-radius:7px; padding:0 10px; cursor:pointer; font-size:12.5px; opacity:.55; }
-.genpill.on { opacity:1; background:var(--dc-orange); color:#fff; }
-.genmood { padding:0 14px 14px; }
+.genfill b { color:var(--accent); font-size:15px; }
+/* Uebergaenge: neutral wie die uebrigen Abschnitte, nur durch eine Linie
+   abgesetzt -- keine eigene Signalfarbe mehr. */
+/* Uebergaenge und Stimmung als eigene Abschnitte: Titel links oben, darunter
+   die Felder mit Beschriftung ueber dem Feld (wie Liederpool/erweiterte
+   Suche). Neutral, nur durch eine Linie abgesetzt. */
+.gengates { margin:0 14px; padding:12px 0; border-top:1px solid var(--line); }
+.gengates .genfilters { padding:0; }
+.gensection { font-size:12px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+              color:var(--fg); margin-bottom:10px; }
+.gensel { width:auto; min-width:110px; }
+.genhalfseg { height:34px; min-width:150px; }
+.genhalfseg button.on[data-act="half-on"] { background:var(--accent); color:#fff; }
+.genaddknob { margin-top:8px; }
+/* Slotzahl als Zaehler: − Feld + in einem Rahmen. */
+.genstepper { box-sizing:border-box; display:inline-flex; align-items:stretch; height:34px;
+              border:1px solid var(--line); border-radius:7px; background:var(--bg); overflow:hidden; }
+.genstepper button { border:none; background:none; color:var(--fg); width:30px; font-size:16px;
+                     cursor:pointer; line-height:1; }
+.genstepper button:hover:not(:disabled) { background:var(--accent-bg); color:var(--accent); }
+.genstepper button:disabled { opacity:.35; cursor:default; }
+.genstepper .gennum { width:46px; border:none; border-left:1px solid var(--line); border-right:1px solid var(--line);
+                      background:var(--card); color:var(--fg); text-align:center; font:inherit; font-size:13px; }
+.genstepper .gennum:focus { outline:none; background:var(--accent-bg); }
+/* Leichte Linie ueber den Stimmungsreglern, wie ueber den Uebergaengen. */
+.genmood { margin:0 14px; padding:12px 0 14px; border-top:1px solid var(--line); }
 .genmood-head { display:flex; align-items:center; gap:10px; }
-.genmood-title { flex:1 1 auto; text-align:center; color:var(--accent); }
 .genknobs { display:grid; grid-template-columns:repeat(auto-fill, minmax(96px, 1fr)); gap:8px;
             margin-top:10px; }
 .genknob { position:relative; display:flex; flex-direction:column; align-items:center; gap:2px;
@@ -1989,26 +2152,42 @@ select.geninput { appearance:none; -webkit-appearance:none; background-image:var
 .genknob.neg .genknob-val { stroke:var(--dc-crimson); }
 .genknob-cap { fill:var(--bg); stroke:var(--line); stroke-width:1.5; }
 .genknob-ptr { stroke:var(--fg); stroke-width:2; stroke-linecap:round; }
-.genknob-del { position:absolute; top:0; right:6px; display:none; border:none; background:none;
-               color:var(--dim); cursor:pointer; font-size:14px; line-height:1; }
-.genknob:hover .genknob-del { display:block; }
+/* Entfernen unter dem Regler statt oben rechts -- dort ueberdeckte der Name
+   das Symbol. Immer Platz reserviert (visibility statt display), damit die
+   Regler beim Ueberfahren nicht springen; bei der Kohaesion ein leerer
+   Platzhalter derselben Hoehe. */
+.genknob-del { visibility:hidden; display:inline-flex; align-items:center; justify-content:center;
+               width:20px; height:20px; margin-top:2px; border:none; border-radius:5px;
+               background:none; color:var(--dim); cursor:pointer; padding:0; }
+.genknob-del svg { width:13px; height:13px; }
+.genknob:hover button.genknob-del { visibility:visible; }
+button.genknob-del:hover { color:var(--fake); background:var(--fake-bg); }
+/* Fragezeichen hinter "Kohaesion": Erklaerung als Tooltip. */
+.genhelp { display:inline-flex; vertical-align:-2px; margin-left:4px; color:var(--dim); cursor:help; }
+.genhelp svg { width:12px; height:12px; }
 
-.genarc { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:10px 12px;
-          overflow:hidden; }
+/* Verlauf + Energiekurve in EINEM Panel (genPlanHeadHtml() + genArcSvg()). */
+.genplan { background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+.genplan .genmove { border-top:none; border-bottom:1px solid var(--line); }
+.genarc { padding:10px 12px; overflow:hidden; }
 .genarc-head { display:flex; align-items:center; gap:10px; margin-bottom:6px; font-size:12px; }
 .genlegend { display:inline-flex; align-items:center; gap:6px; color:var(--dim); }
 .genlegend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-left:6px; }
 .genlegend .lg-target { background:var(--dc-crimson); }
-.genlegend .lg-actual { background:var(--dc-skyblue); }
-.genarc-svg { display:block; max-width:100%; height:auto; touch-action:none; }
+/* Tatsaechliche Energie der Tracks in der Designfarbe. */
+.genlegend .lg-actual { background:var(--accent); }
+.genarc-svg { display:block; max-width:100%; height:auto; touch-action:none; cursor:crosshair; }
 .genarc-grid { stroke:var(--line); stroke-width:1; stroke-dasharray:2 4; }
+.genarc-grid.odd { opacity:.55; }
+/* Senkrechte Fuehrung je Slot -- Klickziel beim Zeichnen auf der Skala. */
+.genarc-col { stroke:var(--line); stroke-width:1; opacity:.6; }
 .genarc-axis { fill:var(--dim); font-size:10px; }
 .genarc-area { fill:var(--dc-crimson-bg); opacity:.8; }
 .genarc-line { fill:none; stroke:var(--dc-crimson); stroke-width:2; }
 .genarc-pt { fill:var(--dc-crimson); stroke:var(--card); stroke-width:2; cursor:ns-resize; }
 .genarc-pt:hover { r:8; }
 .genarc-pt.locked { fill:var(--card); stroke:var(--dc-crimson); }
-.genarc-act { fill:var(--dc-skyblue); stroke:var(--card); stroke-width:1.5; pointer-events:auto; }
+.genarc-act { fill:var(--accent); stroke:var(--card); stroke-width:1.5; pointer-events:auto; }
 
 .genslots { display:flex; flex-direction:column; gap:4px; }
 .genslot { display:flex; align-items:center; gap:12px; padding:6px 12px; min-height:46px;
@@ -2021,16 +2200,24 @@ select.geninput { appearance:none; -webkit-appearance:none; background-image:var
 .gennr { width:22px; font-variant-numeric:tabular-nums; color:var(--dim); font-size:12.5px; }
 .gencov { width:36px; height:36px; border-radius:5px; object-fit:cover; flex:0 0 auto;
           background:var(--line); }
-.genmeta { display:flex; flex-direction:column; min-width:0; flex:1 1 auto; }
+.genmeta { display:flex; flex-direction:column; min-width:0; flex:1 1 200px; }
 .gentitle { font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .gensub { font-size:12.5px; color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.gentarget { font-size:11.5px; color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.gentarget { font-size:11.5px; color:var(--dim); white-space:nowrap; font-variant-numeric:tabular-nums;
+             flex:0 0 52px; }
+/* Feste Breiten fuer alles rechts vom Titel/der Waveform, damit Energie,
+   Soll, Tonart und BPM in jeder Zeile genau untereinander stehen ("Soll 4"
+   vs. "Soll 4,5", Energie 7 vs. 10 waren vorher unterschiedlich breit). */
+.genslot .energy { flex:0 0 92px; }
 .genacts { display:flex; gap:2px; opacity:0; transition:opacity .12s; }
 .genslot:hover .genacts, .genslot.empty .genacts { opacity:1; }
 .genlock { color:var(--dim); }
 .genlock.on { color:var(--dc-orange); }
-.genkey { min-width:42px; text-align:center; }
-.genbpm { display:flex; flex-direction:column; align-items:flex-end; min-width:40px;
+.genkey { flex:0 0 46px; text-align:center; }
+/* Waveform je Slot (genMountSlotWaves()) -- gleiche Zeichnung wie in der
+   Tabelle, nur flacher; nimmt den Platz zwischen Titel und Energie. */
+canvas.wave.genwave { flex:1 1 220px; min-width:120px; height:34px; border-radius:5px; }
+.genbpm { display:flex; flex-direction:column; align-items:flex-end; flex:0 0 40px;
           font-weight:700; font-size:16px; font-variant-numeric:tabular-nums; line-height:1.05; }
 .genbpm small { font-size:9px; font-weight:600; letter-spacing:.08em; color:var(--dim); }
 .genconf { display:flex; align-items:center; gap:6px; align-self:flex-start; margin:-1px 0 -1px 44px;

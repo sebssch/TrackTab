@@ -241,9 +241,13 @@ GROUPS = [
              "options": [{"value": "if_empty", "label": "Nur wenn leer"},
                          {"value": "overwrite", "label": "Überschreiben"},
                          {"value": "prepend", "label": "Voranstellen (Eintrag - Kommentar)"},
-                         {"value": "append", "label": "Anhängen (Kommentar - Eintrag)"}],
+                         {"value": "append", "label": "Anhängen (Kommentar - Eintrag)"},
+                         {"value": "complete", "label": "Fehlendes ergänzen"}],
              "help": "Ein früherer eigener Eintrag zählt als leer bzw. wird "
-                     "beim Voranstellen oder Anhängen ersetzt."},
+                     "beim Voranstellen oder Anhängen ersetzt. „Fehlendes ergänzen“ "
+                     "lässt vorhandene Werte stehen und fügt nur die fehlenden "
+                     "Teile nach dem gewählten Schema an, z. B. aus „8A - 128“ "
+                     "wird „8A - 128 - E7“."},
         ],
     },
     {
@@ -471,6 +475,21 @@ GROUPS = [
                      "Korrektur-Markierung. Liegt ein Track darunter (oder ist "
                      "der Cutoff nicht messbar), kommt vor dem Hinzufügen eine "
                      "Warnung mit der Wahl, trotzdem hinzuzufügen."},
+            {"key": "rekordbox_mytags", "type": "bool", "break": True, "width": "half",
+             "label": "Tags als „My Tag“ übertragen",
+             "help": "Setzt beim Hinzufügen zu einer Rekordbox-Playlist die "
+                     "erkannten Stimmungen und eigenen Tags jedes Tracks als "
+                     "Rekordbox-„My Tag“ — auch bei Tracks, die schon in der "
+                     "Playlist stehen. Die Spalte rechts gehört dann TrackTab: "
+                     "dort nicht mehr zutreffende Tags werden entfernt, die "
+                     "übrigen My-Tag-Spalten bleiben unberührt."},
+            {"key": "rekordbox_mytag_category", "type": "text", "width": "half",
+             "label": "My-Tag-Spalte",
+             "placeholder": "TrackTab",
+             "help": "Name einer My-Tag-Spalte in Rekordbox. Rekordbox hat "
+                     "vier feste Spalten, neue lassen sich nicht anlegen — "
+                     "eine davon in Rekordbox umbenennen (Rechtsklick auf den "
+                     "Spaltenkopf im My-Tag-Fenster), z. B. in „TrackTab“."},
         ],
     },
     {
@@ -537,6 +556,7 @@ def describe() -> dict:
             "hidden_columns": cfgmod.load().get("hidden_columns", {"edit": [], "player": []}),
             "column_widths": cfgmod.load().get("column_widths", {"edit": {}, "player": {}}),
             "column_views": cfgmod.load().get("column_views", []),
+            "generator_curves": cfgmod.load().get("generator_curves", []),
             "column_view_assign": cfgmod.load().get("column_view_assign", {}),
             "column_view_default": cfgmod.load().get("column_view_default", ""),
             "column_view_music_default": cfgmod.load().get("column_view_music_default", ""),
@@ -898,6 +918,45 @@ def save_drop_columns(order: list, hidden: list, widths: dict | None = None) -> 
 # Mehr braucht niemand von Hand auseinanderzuhalten -- der Deckel steht hier
 # nur, damit ein fehlerhafter Client die Datei nicht unbegrenzt aufblaeht.
 _MAX_COLUMN_VIEWS = 20
+
+
+MAX_GENERATOR_CURVES = 50
+
+
+def validate_generator_curves(items: list) -> list[dict]:
+    """Eigene Energiekurven des Generators pruefen: Name (eindeutig, ohne
+    Gross/Klein), 2..200 Punkte, Energie 1..10 in halben Schritten -- wie
+    genClampE() in generator.js. Leere Namen fallen still heraus."""
+    if not isinstance(items, list):
+        raise ValueError("Kurven müssen eine Liste sein.")
+    clean: list[dict] = []
+    seen: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()[:60]
+        if not name or name.lower() in seen:
+            continue
+        points = item.get("points")
+        if not isinstance(points, list) or not 2 <= len(points) <= 200:
+            raise ValueError(f"Kurve „{name}“ braucht 2 bis 200 Punkte.")
+        try:
+            pts = [min(10.0, max(1.0, round(float(p) * 2) / 2)) for p in points]
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Kurve „{name}“ hat ungültige Punkte.") from exc
+        cid = str(item.get("id") or "").strip()[:40] or f"c{len(clean) + 1}"
+        seen.add(name.lower())
+        clean.append({"id": cid, "name": name, "points": pts})
+        if len(clean) > MAX_GENERATOR_CURVES:
+            raise ValueError(f"Höchstens {MAX_GENERATOR_CURVES} eigene Kurven.")
+    return clean
+
+
+def save_generator_curves(items: list) -> list[dict]:
+    """Die Liste eigener Kurven am Stueck ersetzen (wie save_column_views)."""
+    clean = validate_generator_curves(items)
+    _write_local({"generator_curves": clean})
+    return clean
 
 
 def validate_column_views(items: list) -> list[dict]:

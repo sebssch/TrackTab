@@ -1,7 +1,8 @@
 // ── Playlist-Generator ────────────────────────────────────────────────────
 // Eigene Listenart "generator" im Playlist-Baum (db.PLAYLIST_KINDS). Ein
 // Generator fuellt N Slots entlang einer Energiekurve mit Tracks aus der
-// Bibliothek -- gesteuert ueber Vorfilter, Uebergangsregeln (BPM/Tonart) und
+// Bibliothek -- gesteuert ueber den Liederpool (eine Suchabfrage wie in der
+// Suchleiste, mit erweiterter Suche als Felder), Uebergangsregeln (BPM/Tonart) und
 // Stimmungsregler. Ausgewaehlt ersetzt er im Hauptbereich die Tabelle
 // (syncGeneratorPane(), aufgerufen am Anfang von render() in app.js).
 //
@@ -29,6 +30,12 @@
 var GEN;
 // Einstellungsblock zugeklappt? Gilt fuer alle Generatoren.
 var GEN_SETTINGS_CLOSED;
+// Erweiterte Suche des Liederpools aufgeklappt? Gilt fuer alle Generatoren.
+var GEN_ADV_OPEN;
+// Peaks je Pfad fuer die Waveforms in den Slots (genMountSlotWaves()) --
+// die Liste wird bei jedem Abspielen/Umsortieren neu gebaut, ohne Cache
+// holte jeder Neuaufbau alle Waveforms erneut vom Server.
+var GEN_PEAKS;
 // Slot-Nummer, die gerade gezogen wird (undefined/-1 = keiner).
 var GEN_DRAG_FROM;
 
@@ -46,7 +53,15 @@ function genPresetNames() {
 }
 
 // Verlauf einer Vorlage: x (0..1, Position im Set) -> Energie 1..10.
+// Eigene Kurven (GENERATOR_CURVES in app.js, "curve:<id>") werden linear auf
+// x abgetastet -- so passt eine mit 16 Slots gespeicherte Kurve auch auf 24.
 function genPresetValue(name, x) {
+  const curve = genCurveOf(name);
+  if (curve && curve.points.length > 1) {
+    const f = x * (curve.points.length - 1), i = Math.floor(f);
+    const j = Math.min(curve.points.length - 1, i + 1);
+    return curve.points[i] + (curve.points[j] - curve.points[i]) * (f - i);
+  }
   switch (name) {
     case "warmup":   return 3 + 3 * x;
     case "build":    return 3 + 6 * x;
@@ -55,6 +70,11 @@ function genPresetValue(name, x) {
     case "cooldown": return 8 - 5 * x;
     default:         return 4 + 4 * Math.sin(Math.PI * Math.pow(x, 0.8));   // balanced
   }
+}
+
+function genCurveOf(preset) {
+  const id = String(preset || "").startsWith("curve:") ? String(preset).slice(6) : null;
+  return id ? (GENERATOR_CURVES || []).find(c => c.id === id) || null : null;
 }
 
 function genClampE(e) {
@@ -76,7 +96,9 @@ function genResample(cfg, n) {
 function genDefaultConfig() {
   const cfg = {
     v: 1, preset: "balanced", slots: [],
-    filters: {genres: [], source: null, bpm: null, added: "any"},
+    // Liederpool: Suchabfrage mit derselben Syntax wie die Suchleiste
+    // (/Genre, /BPM, /Add 30d, ...), dazu optional eine Quell-Playlist.
+    query: "", filters: {source: null},
     gates: {bpm: "3", half: true, key: "loose"},
     knobs: genDefaultKnobs(), mode: "lean", cohesion: 0.5,
   };
@@ -94,15 +116,32 @@ function genParseConfig(node) {
   }
   if (!raw || typeof raw !== "object") return base;
   const cfg = {...base, ...raw};
-  cfg.filters = {...base.filters, ...(raw.filters || {})};
+  // Aeltere Generatoren hatten eigene Filterfelder (Genre, BPM, Hinzugefuegt)
+  // statt der Suchabfrage -- einmalig in eine gleichwertige Abfrage umsetzen.
+  cfg.query = typeof raw.query === "string" ? raw.query : genLegacyQuery(raw.filters || {});
+  cfg.filters = {source: (raw.filters && raw.filters.source) || null};
   cfg.gates = {...base.gates, ...(raw.gates || {})};
   cfg.knobs = (raw.knobs && typeof raw.knobs === "object") ? {...raw.knobs} : base.knobs;
   cfg.slots = Array.isArray(raw.slots) ? raw.slots.map(s => ({
     e: genClampE(Number(s && s.e) || 5), lock: !!(s && s.lock), filled: !!(s && s.filled),
   })) : base.slots;
-  if (!Array.isArray(cfg.filters.genres)) cfg.filters.genres = [];
   cfg.cohesion = Math.min(1, Math.max(0, Number(cfg.cohesion) || 0));
   return cfg;
+}
+
+// Frueheres Filterformat {genres, bpm: [lo, hi], added: "7d"} -> Suchabfrage.
+// Grenzen wie damals: BPM einschliesslich, ohne BPM-Tag (0) nie im Pool.
+function genLegacyQuery(f) {
+  const parts = [];
+  const quote = v => /\s/.test(v) ? `"${v}"` : v;
+  const genres = (Array.isArray(f.genres) ? f.genres : []).map(g => String(g).trim()).filter(Boolean);
+  if (genres.length === 1) parts.push(`${advToken(ADV_BY_KEY.ge)} ${quote(genres[0])}`);
+  else if (genres.length) parts.push(`${advToken(ADV_BY_KEY.ge)} (${genres.map(quote).join(" OR ")})`);
+  const [lo, hi] = Array.isArray(f.bpm) ? f.bpm : [null, null];
+  if (lo || hi) parts.push(`${advToken(ADV_BY_KEY.bp)} ${lo || 1}-${hi || 999}`);
+  const days = {"24h": 1, "7d": 7, "30d": 30, "90d": 90, "1y": 365}[f.added];
+  if (days) parts.push(`${advToken(ADV_BY_KEY.da)} ${days}d`);
+  return parts.join(" ");
 }
 
 // Belegung aus playlist_items auf die Slots verteilen (siehe Kopfkommentar).
@@ -186,12 +225,10 @@ function genAnalysed(r) {
   return !r.removed && !r.ext && !r.gone && r.eg > 0;
 }
 
-function genAddedSpan(key) {
-  return {"24h": 86400, "7d": 7 * 86400, "30d": 30 * 86400,
-          "90d": 90 * 86400, "1y": 365 * 86400}[key] || 0;
-}
-
-// Kandidaten nach den Vorfiltern und (bei "Match all") den Stimmungen.
+// Kandidaten nach Liederpool (Suchabfrage + Quelle) und (bei "Match all")
+// den Stimmungen. Die Abfrage einmal parsen, nicht je Zeile -- der Cache von
+// parseSearchQuery() haelt nur die zuletzt geparste, und das ist meist die
+// der Suchleiste. Die Standard-Suchfilter der Suchleiste gelten hier nicht.
 function genPool(cfg) {
   const f = cfg.filters;
   let src = null;
@@ -199,9 +236,8 @@ function genPool(cfg) {
     const node = PLAYLISTS.find(n => n.id === f.source);
     if (node) src = new Set(playlistRows(node.id).map(r => r.p));
   }
-  const genres = (f.genres || []).map(g => String(g).toLowerCase()).filter(Boolean);
-  const [lo, hi] = Array.isArray(f.bpm) ? f.bpm : [null, null];
-  const since = genAddedSpan(f.added) ? Date.now() / 1000 - genAddedSpan(f.added) : null;
+  const query = String(cfg.query || "").trim();
+  const parsed = query ? parseSearchQuery(query.toLowerCase()) : null;
   const must = [], mustNot = [];
   if (cfg.mode === "all") {
     for (const [m, v] of Object.entries(cfg.knobs)) {
@@ -211,13 +247,7 @@ function genPool(cfg) {
   return DATA.filter(r => {
     if (!genAnalysed(r) || r.ig) return false;
     if (src && !src.has(r.p)) return false;
-    if (genres.length) {
-      const ge = String(r.ge || "").toLowerCase();
-      if (!genres.some(g => ge.includes(g))) return false;
-    }
-    if (lo && !(r.bp >= lo)) return false;
-    if (hi && !(r.bp > 0 && r.bp <= hi)) return false;
-    if (since && !(r.da >= since)) return false;
+    if (parsed && !matchesParsedQuery(r, parsed)) return false;
     if (must.length || mustNot.length) {
       const names = moodNames(r);
       if (must.some(m => !names.includes(m))) return false;
@@ -383,10 +413,17 @@ function genIcon(name) {
   return SVG(LUCIDE_ICONS[name] || "");
 }
 
+// Auswahlfeld fuer die Uebergangsregeln -- Optionen wie bei genSeg().
+function genSelect(id, value, options) {
+  return `<select id="${esc(id)}" class="geninput gensel">` + options.map(([v, label, title]) =>
+    `<option value="${esc(v)}"${String(v) === String(value) ? " selected" : ""}${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</option>`
+  ).join("") + `</select>`;
+}
+
 function genSeg(group, value, options) {
-  return `<span class="genseg">` + options.map(([v, label]) =>
+  return `<span class="genseg">` + options.map(([v, label, title]) =>
     `<button type="button" class="${String(v) === String(value) ? "on" : ""}" ` +
-    `data-seg="${esc(group)}" data-val="${esc(v)}">${esc(label)}</button>`).join("") + `</span>`;
+    `data-seg="${esc(group)}" data-val="${esc(v)}"${title ? ` title="${esc(title)}"` : ""}>${esc(label)}</button>`).join("") + `</span>`;
 }
 
 function genRender() {
@@ -410,22 +447,137 @@ function genRender() {
       <span class="genspacer"></span>
       <span class="gencover" title="${esc(t("gen.analysed_title"))}">${esc(t("gen.analysed", {
         count: analysed.toLocaleString("de-DE"), total: total.toLocaleString("de-DE")}))}</span>
-      <button type="button" class="act small" data-act="m3u" ${filled ? "" : "disabled"}>${ICONS.fileMusic}<span>${esc(t("gen.export_m3u"))}</span></button>
-      <button type="button" class="act small" data-act="save-playlist" ${filled && apiMode ? "" : "disabled"} title="${esc(t("gen.save_playlist_title"))}">${genIcon("list-plus")}<span>${esc(t("gen.save_playlist"))}</span></button>
+      <button type="button" class="act" data-act="m3u" ${filled ? "" : "disabled"}>${ICONS.fileMusic}<span>${esc(t("gen.export_m3u"))}</span></button>
+      <button type="button" class="act" data-act="save-playlist" ${filled && apiMode ? "" : "disabled"} title="${esc(t("gen.save_playlist_title"))}">${genIcon("list-plus")}<span>${esc(t("gen.save_playlist"))}</span></button>
     </div>
     ${genSettingsHtml()}
-    <div class="genarc" id="genArc">${genArcSvg()}</div>
+    <div class="genplan">
+      ${genPlanHeadHtml()}
+      <div class="genarc" id="genArc">${genArcSvg()}</div>
+    </div>
     <div class="genslots" id="genSlots">${genSlotsHtml()}</div>
     <button type="button" class="act small genaddslot" data-act="addslot">${genIcon("plus")}<span>${esc(t("gen.add_slot"))}</span></button>`;
+  genBindPool();
+  genMountSlotWaves();
+}
+
+// Kopf des Verlauf-Panels: Vorlage oder eigene Kurve, Speichern/Loeschen,
+// Slotzahl und Belegung. Sitzt mit der Energiekurve in EINEM Panel, weil
+// beides dieselbe Sache einstellt.
+function genPlanHeadHtml() {
+  const cfg = GEN.cfg;
+  const filled = GEN.tracks.filter(Boolean).length;
+  const own = GENERATOR_CURVES || [];
+  const curve = genCurveOf(cfg.preset);
+  // Gespeicherte Kurve inzwischen geloescht -> als "Eigene Kurve" anzeigen.
+  const preset = String(cfg.preset).startsWith("curve:") && !curve ? "custom" : cfg.preset;
+  const opt = (v, label) => `<option value="${esc(v)}"${preset === v ? " selected" : ""}>${esc(label)}</option>`;
+  return `<div class="genmove">
+      <span class="genlbl">${esc(t("gen.curve"))}</span>
+      <select id="genPreset" class="geninput">
+        <optgroup label="${esc(t("gen.curve_group_presets"))}">
+          ${genPresetNames().map(p => opt(p, t("gen.preset_" + p))).join("")}
+        </optgroup>
+        ${own.length ? `<optgroup label="${esc(t("gen.curve_group_own"))}">
+          ${own.map(c => opt("curve:" + c.id, c.name)).join("")}</optgroup>` : ""}
+        ${preset === "custom" ? opt("custom", t("gen.preset_custom")) : ""}
+      </select>
+      <button type="button" class="iconbtn plain" data-act="curve-save" title="${esc(t("gen.curve_save"))}"
+              ${apiMode ? "" : "disabled"}>${genIcon("save")}</button>
+      ${curve ? `<button type="button" class="iconbtn plain" data-act="curve-del" title="${esc(t("gen.curve_delete", {name: curve.name}))}">${ICONS.trash}</button>` : ""}
+      <span class="genlbl">${esc(t("gen.slots"))}</span>
+      <span class="genstepper">
+        <button type="button" data-act="count-dec" title="${esc(t("gen.slot_less"))}"${cfg.slots.length <= 1 ? " disabled" : ""}>−</button>
+        <input type="number" class="gennum" id="genCount" min="1" max="200" value="${cfg.slots.length}">
+        <button type="button" data-act="count-inc" title="${esc(t("gen.slot_more"))}"${cfg.slots.length >= 200 ? " disabled" : ""}>+</button>
+      </span>
+      <span class="genfill"><b>${filled}</b>/${cfg.slots.length}</span>
+    </div>`;
+}
+
+// ── Eigene Kurven ─────────────────────────────────────────────────────────
+// Gespeichert in config.local.yaml (generator_curves, /api/generator-curves),
+// gelten fuer alle Generatoren. Gleicher Name ueberschreibt (wie bei den
+// Spaltenansichten) -- ein Knopf deckt Anlegen und Aktualisieren ab.
+async function genPostCurves(curves) {
+  if (!apiMode) { note(t("player.bar.needs_server"), "soft"); return false; }
+  try {
+    const res = await fetch("/api/generator-curves", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({curves})});
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || String(res.status));
+    GENERATOR_CURVES = data.generator_curves || [];
+    return true;
+  } catch (err) {
+    note(t("gen.curve_save_failed", {msg: err.message}), true);
+    return false;
+  }
+}
+
+async function genSaveCurve() {
+  const cur = genCurveOf(GEN.cfg.preset);
+  const props = await askPlaylistProps(t("gen.curve_save"), cur ? {name: cur.name} : null, false);
+  if (!props || !props.name || !GEN) return;
+  const name = props.name.trim();
+  const points = GEN.cfg.slots.map(s => s.e);
+  const own = GENERATOR_CURVES || [];
+  const same = own.find(c => c.name.toLowerCase() === name.toLowerCase());
+  const id = same ? same.id : "c" + Date.now().toString(36);
+  const next = same ? own.map(c => c === same ? {...c, points} : c) : [...own, {id, name, points}];
+  if (!await genPostCurves(next)) return;
+  GEN.cfg.preset = "curve:" + id;
+  genScheduleSave(); genRender();
+  note(t("gen.curve_saved", {name}));
+}
+
+async function genDeleteCurve() {
+  const cur = genCurveOf(GEN.cfg.preset);
+  if (!cur) return;
+  if (!await askConfirmSimple(t("gen.curve_delete", {name: cur.name}), t("gen.curve_delete_note"))) return;
+  if (!await genPostCurves((GENERATOR_CURVES || []).filter(c => c.id !== cur.id))) return;
+  if (!GEN) return;
+  GEN.cfg.preset = "custom";
+  genScheduleSave(); genRender();
+}
+
+// ── Liederpool (Suchabfrage) ──────────────────────────────────────────────
+// Suchfeld und erweiterte Suche werden mit jedem genRender() neu gebaut und
+// hier neu verdrahtet (Elemente sind dann frisch, keine doppelten Handler).
+function genBindPool() {
+  const input = document.getElementById("genQuery");
+  if (!input) return;
+  attachSearchFilterAutocomplete(input, document.getElementById("genQueryAc"), v => genSetQuery(v, true));
+  const adv = document.getElementById("genAdv");
+  if (adv) advBindPanel(adv, () => GEN.cfg.query || "", v => genSetQuery(v, false));
+  genSyncPool();
+}
+// fromInput: Text kommt aus dem Suchfeld selbst -- dessen Inhalt dann nicht
+// zuruecksetzen, sonst springt die Schreibmarke.
+function genSetQuery(v, fromInput) {
+  if (!GEN) return;
+  GEN.cfg.query = v;
+  const input = document.getElementById("genQuery");
+  if (input && !fromInput) input.value = v;
+  genSyncPool();
+  genScheduleSave();
+}
+// Felder der erweiterten Suche, Zaehler am Knopf und Poolgroesse nachziehen.
+function genSyncPool() {
+  if (!GEN) return;
+  const used = advSyncPanel(document.getElementById("genAdv"), GEN.cfg.query || "");
+  const badge = document.querySelector("#generatorPane .genadvbtn .countbadge");
+  if (badge) { badge.textContent = used || ""; badge.hidden = !used; }
+  const count = document.getElementById("genPoolCount");
+  if (count) count.textContent = t("gen.pool_count", {count: genPool(GEN.cfg).length.toLocaleString("de-DE")});
 }
 
 function genSettingsHtml() {
   const cfg = GEN.cfg, f = cfg.filters, g = cfg.gates;
-  const sources = PLAYLISTS.filter(n => (n.kind === "playlist" || n.kind === "smart") && n.id !== GEN.id);
-  const genres = [...new Set(DATA.filter(genAnalysed).map(r => String(r.ge || "").trim()).filter(Boolean))]
-    .sort(cmpText);
-  const [lo, hi] = Array.isArray(f.bpm) ? f.bpm : [null, null];
-  const filled = GEN.tracks.filter(Boolean).length;
+  // Quelle: nur eigene Playlisten/Smart Playlists. Die festen Pruef-Listen
+  // (Korrekt, Fake, ...) fehlen bewusst -- dasselbe leistet /Status im
+  // Liederpool, zwei Wege fuer eine Sache wuerden sich nur ueberlagern.
+  const sources = PLAYLISTS.filter(n => (n.kind === "playlist" || n.kind === "smart")
+    && !n.system && n.id !== GEN.id).sort((a, b) => cmpText(playlistLabel(a), playlistLabel(b)));
   const knobNames = Object.keys(cfg.knobs);
   const head = `<button type="button" class="genhead" data-act="toggle-settings">
       ${genIcon("sliders-horizontal")}<span>${esc(t("gen.settings"))}</span>
@@ -433,11 +585,20 @@ function genSettingsHtml() {
   if (GEN_SETTINGS_CLOSED) return `<div class="gensettings closed">${head}</div>`;
   return `<div class="gensettings">${head}
     <div class="genfilters">
-      <label class="genfield">
-        <span class="genlbl">${esc(t("gen.filter_genre"))}</span>
-        <input type="text" class="geninput" id="genGenreInput" list="genGenreList" placeholder="${esc(t("gen.filter_genre_ph"))}">
-        <datalist id="genGenreList">${genres.map(x => `<option value="${esc(x)}">`).join("")}</datalist>
-      </label>
+      <div class="genfield genpoolfield">
+        <span class="genlbl">${esc(t("gen.pool"))}</span>
+        <span class="genpair">
+          <span class="searchwrap genquerywrap">
+            <input type="search" class="geninput genquery" id="genQuery" autocomplete="off" spellcheck="false"
+                   value="${esc(cfg.query || "")}" placeholder="${esc(t("gen.pool_ph"))}">
+            <ul id="genQueryAc" class="ac-list" style="display:none"></ul>
+          </span>
+          <button type="button" class="act small genadvbtn${GEN_ADV_OPEN ? " on" : ""}" data-act="adv-toggle"
+                  title="${esc(t("advsearch.button_title"))}">${genIcon("sliders-horizontal")}<span>${esc(t("advsearch.button"))}</span>
+            <span class="countbadge" hidden></span></button>
+        </span>
+        <span class="genpoolcount gendim" id="genPoolCount"></span>
+      </div>
       <label class="genfield">
         <span class="genlbl">${esc(t("gen.filter_source"))}</span>
         <select id="genSource" class="geninput">
@@ -445,50 +606,35 @@ function genSettingsHtml() {
           ${sources.map(n => `<option value="${esc(n.id)}"${f.source === n.id ? " selected" : ""}>${esc(playlistLabel(n))}</option>`).join("")}
         </select>
       </label>
-      <div class="genfield">
-        <span class="genlbl">${esc(t("gen.filter_bpm"))}</span>
-        <span class="genpair">
-          <input type="number" class="geninput gennum" id="genBpmLo" min="40" max="250" placeholder="${esc(t("gen.min"))}" value="${lo || ""}">
-          <span class="gendim">–</span>
-          <input type="number" class="geninput gennum" id="genBpmHi" min="40" max="250" placeholder="${esc(t("gen.max"))}" value="${hi || ""}">
-        </span>
-      </div>
-      <div class="genfield">
-        <span class="genlbl">${esc(t("gen.filter_added"))}</span>
-        ${genSeg("added", f.added, [["any", t("gen.added_any")], ["24h", "24h"],
-          ["7d", t("gen.added_7d")], ["30d", t("gen.added_30d")], ["90d", t("gen.added_90d")], ["1y", t("gen.added_1y")]])}
-      </div>
     </div>
-    ${(f.genres || []).length ? `<div class="genchips">${f.genres.map(x =>
-      `<span class="genchip">${esc(x)}<button type="button" data-act="genre-del" data-val="${esc(x)}" aria-label="×">×</button></span>`).join("")}</div>` : ""}
-    <div class="genmove">
-      <span class="genlbl">${esc(t("gen.curve"))}</span>
-      <select id="genPreset" class="geninput">
-        ${genPresetNames().map(p => `<option value="${p}"${cfg.preset === p ? " selected" : ""}>${esc(t("gen.preset_" + p))}</option>`).join("")}
-        ${cfg.preset === "custom" ? `<option value="custom" selected>${esc(t("gen.preset_custom"))}</option>` : ""}
-      </select>
-      <span class="genlbl">${esc(t("gen.slots"))}</span>
-      <input type="number" class="geninput gennum" id="genCount" min="1" max="200" value="${cfg.slots.length}">
-      <span class="genfill"><b>${filled}</b>/${cfg.slots.length}</span>
-    </div>
+    ${GEN_ADV_OPEN ? `<div class="advsearch genadv" id="genAdv">${advPanelHtml("gen", ["ig"])}</div>` : ""}
     <div class="gengates">
-      <span class="genlbl gengates-title">${esc(t("gen.gates"))}</span>
-      <span class="genlbl">${esc(t("gen.gate_bpm"))}</span>
-      ${genSeg("bpm", g.bpm, [["0", "±0"], ["3", "±3"], ["any", t("gen.gate_any")]])}
-      <button type="button" class="genpill${g.half ? " on" : ""}" data-act="half" title="${esc(t("gen.gate_half_title"))}">½·2×</button>
-      <span class="genlbl">${esc(t("gen.gate_key"))}</span>
-      ${genSeg("key", g.key, [["off", t("gen.gate_off")], ["loose", t("gen.gate_loose")], ["strict", t("gen.gate_strict")]])}
+      <div class="gensection">${esc(t("gen.gates"))}</div>
+      <div class="genfilters">
+        <label class="genfield"><span class="genlbl">${esc(t("gen.gate_bpm"))}</span>
+          ${genSelect("genGateBpm", g.bpm, [["0", "±0"], ["3", "±3"], ["any", t("gen.gate_any")]])}</label>
+        <div class="genfield" title="${esc(t("gen.gate_half_title"))}"><span class="genlbl">${esc(t("gen.gate_tempo"))}</span>
+          <span class="advseg genhalfseg">
+            <button type="button" data-act="half-off"${g.half ? "" : ` class="on"`}>${esc(t("gen.gate_off"))}</button>
+            <button type="button" data-act="half-on"${g.half ? ` class="on"` : ""}>½ · 2×</button>
+          </span></div>
+        <label class="genfield" title="${esc(t("gen.gate_" + g.key + "_title"))}"><span class="genlbl">${esc(t("gen.gate_key"))}</span>
+          ${genSelect("genGateKey", g.key, [["off", t("gen.gate_off"), t("gen.gate_off_title")],
+            ["loose", t("gen.gate_loose"), t("gen.gate_loose_title")],
+            ["strict", t("gen.gate_strict"), t("gen.gate_strict_title")]])}</label>
+      </div>
     </div>
     <div class="genmood">
+      <div class="gensection">${esc(t("gen.nudge"))}</div>
       <div class="genmood-head">
-        <button type="button" class="act small" data-act="addknob">${genIcon("plus")}<span>${esc(t("gen.add_knob"))}</span></button>
-        <span class="genlbl genmood-title">${esc(t("gen.nudge"))}</span>
-        ${genSeg("mode", cfg.mode, [["lean", t("gen.mode_lean")], ["all", t("gen.mode_all")]])}
+        ${genSeg("mode", cfg.mode, [["lean", t("gen.mode_lean"), t("gen.mode_lean_title")],
+          ["all", t("gen.mode_all"), t("gen.mode_all_title")]])}
       </div>
       <div class="genknobs">
         ${knobNames.map(m => genKnobHtml(m, cfg.knobs[m], true)).join("")}
         ${genKnobHtml("cohesion", cfg.cohesion, false)}
       </div>
+      <button type="button" class="act small genaddknob" data-act="addknob">${genIcon("plus")}<span>${esc(t("gen.add_knob"))}</span></button>
     </div>
   </div>`;
 }
@@ -515,7 +661,8 @@ function genKnobHtml(name, value, bipolar) {
     : (strength ? t(`gen.pull_${strength}`) : t("gen.pull_0"));
   return `<div class="genknob${strength ? " active" : ""}${value < 0 ? " neg" : ""}" data-knob="${esc(name)}"
       title="${esc(t("gen.knob_title"))}">
-    <span class="genknob-name">${esc(label)}</span>
+    <span class="genknob-name">${esc(label)}${name === "cohesion"
+      ? `<span class="genhelp" title="${esc(t("gen.cohesion_title"))}">${genIcon("circle-question-mark")}</span>` : ""}</span>
     <svg viewBox="0 0 56 56" width="56" height="56" aria-hidden="true">
       <path class="genknob-track" d="${arc(-135, 135)}"/>
       ${strength ? `<path class="genknob-val" d="${arc(Math.min(a0, a), Math.max(a0, a))}"/>` : ""}
@@ -523,22 +670,41 @@ function genKnobHtml(name, value, bipolar) {
       <line class="genknob-ptr" x1="28" y1="28" x2="${px.toFixed(2)}" y2="${py.toFixed(2)}"/>
     </svg>
     <span class="genknob-state">${esc(state)}</span>
-    ${bipolar ? `<button type="button" class="genknob-del" data-act="knob-del" data-val="${esc(name)}" title="${esc(t("gen.knob_remove"))}">×</button>` : ""}
+    ${bipolar ? `<button type="button" class="genknob-del" data-act="knob-del" data-val="${esc(name)}" title="${esc(t("gen.knob_remove"))}">${genIcon("x")}</button>`
+      : `<span class="genknob-del" aria-hidden="true"></span>`}
   </div>`;
 }
 
 // Energiekurve: Soll je Slot (ziehbar) plus tatsaechliche Energie der Belegung.
+// Geometrie der Kurve -- gemeinsam fuer Zeichnen (genArcSvg()) und Eingabe
+// (genArcSlotAt()/genArcEnergyAt()), damit Klickpunkt und Darstellung nie
+// auseinanderlaufen. Links Platz fuer die Skala E1..E10, unten fuer die
+// Slotnummern.
+function genArcGeom(W, n) {
+  const H = 230, padL = 34, padR = 14, padT = 12, padB = 22;
+  const x = i => n === 1 ? (padL + W - padR) / 2 : padL + i * (W - padL - padR) / (n - 1);
+  const y = e => padT + (10 - e) * (H - padT - padB) / 9;
+  return {W, H, padL, padR, padT, padB, x, y};
+}
+
 function genArcSvg() {
   const slots = GEN.cfg.slots, n = slots.length;
   const host = document.getElementById("genArc");
-  const W = Math.max(320, (host && host.clientWidth) || 900), H = 170, pad = 16;
-  const x = i => n === 1 ? W / 2 : pad + i * (W - 2 * pad) / (n - 1);
-  const y = e => pad + (10 - e) * (H - 2 * pad) / 9;
+  const geo = genArcGeom(Math.max(320, (host && host.clientWidth) || 900), n);
+  const {W, H, padL, padR, padB, x, y} = geo;
   const pts = slots.map((s, i) => `${x(i).toFixed(1)},${y(s.e).toFixed(1)}`);
-  const area = n ? `M${x(0).toFixed(1)},${H - pad} L${pts.join(" L")} L${x(n - 1).toFixed(1)},${H - pad} Z` : "";
-  const grid = [2, 4, 6, 8, 10].map(e =>
-    `<line class="genarc-grid" x1="${pad}" x2="${W - pad}" y1="${y(e)}" y2="${y(e)}"/>` +
-    `<text class="genarc-axis" x="2" y="${y(e) + 3}">${e}</text>`).join("");
+  const area = n ? `M${x(0).toFixed(1)},${y(1)} L${pts.join(" L")} L${x(n - 1).toFixed(1)},${y(1)} Z` : "";
+  // Skala: jede Stufe eine Linie mit Beschriftung -- auf genau diese Stufen
+  // rastet ein Klick ein.
+  const grid = Array.from({length: 10}, (_, k) => k + 1).map(e =>
+    `<line class="genarc-grid${e % 2 ? " odd" : ""}" x1="${padL}" x2="${W - padR}" y1="${y(e)}" y2="${y(e)}"/>` +
+    `<text class="genarc-axis" x="${padL - 6}" y="${y(e) + 3}" text-anchor="end">${esc(t("gen.arc_axis", {n: e}))}</text>`).join("");
+  // Je Slot eine senkrechte Fuehrung mit Nummer (bei vielen Slots nur jede
+  // zweite/fuenfte beschriftet, sonst ueberlappen die Zahlen).
+  const every = n > 60 ? 5 : n > 30 ? 2 : 1;
+  const cols = slots.map((s, i) =>
+    `<line class="genarc-col" x1="${x(i).toFixed(1)}" x2="${x(i).toFixed(1)}" y1="${y(10)}" y2="${y(1)}"/>` +
+    ((i % every === 0) ? `<text class="genarc-axis" x="${x(i).toFixed(1)}" y="${H - padB + 15}" text-anchor="middle">${i + 1}</text>` : "")).join("");
   const actual = GEN.tracks.map((r, i) => r
     ? `<circle class="genarc-act" cx="${x(i).toFixed(1)}" cy="${y(r.eg).toFixed(1)}" r="3.5"><title>${esc(r.t || "")} · ${r.eg}</title></circle>` : "").join("");
   return `<div class="genarc-head"><span class="genlbl">${esc(t("gen.arc"))}</span>
@@ -546,7 +712,8 @@ function genArcSvg() {
       <span class="genspacer"></span>
       <span class="genlegend"><i class="lg-target"></i>${esc(t("gen.legend_target"))}
       <i class="lg-actual"></i>${esc(t("gen.legend_actual"))}</span></div>
-    <svg class="genarc-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" data-w="${W}" data-h="${H}" data-pad="${pad}">
+    <svg class="genarc-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" data-w="${W}">
+    ${cols}
     ${grid}
     <path class="genarc-area" d="${area}"/>
     <polyline class="genarc-line" points="${pts.join(" ")}"/>
@@ -586,6 +753,7 @@ function genSlotsHtml() {
       <span class="gennr">${nr}</span>
       ${apiMode && r.cv ? `<img class="gencov" src="${coverUrl(r.p)}" alt="" loading="lazy">` : `<span class="gencov"></span>`}
       <span class="genmeta"><span class="gentitle">${esc(r.t || baseName(r.p))}</span><span class="gensub">${sub}</span></span>
+      ${apiMode ? `<canvas class="wave genwave" data-wave="${i}" height="34" title="${esc(t("action.seek"))}"></canvas>` : ""}
       ${energyCell(r.eg)}${target}
       <span class="genacts">${roll}${pick}${remove}${del}</span>${lockBtn}
       <span class="genkey">${keyBubble(r.ky, r.kr)}</span>
@@ -601,6 +769,7 @@ function genRenderBody() {
   const arc = document.getElementById("genArc"), list = document.getElementById("genSlots");
   if (arc) arc.innerHTML = genArcSvg();
   if (list) list.innerHTML = genSlotsHtml();
+  genMountSlotWaves();
   const fill = document.querySelector("#generatorPane .genfill");
   if (fill) fill.innerHTML = `<b>${GEN.tracks.filter(Boolean).length}</b>/${GEN.cfg.slots.length}`;
 }
@@ -643,6 +812,50 @@ function genPlay(i) {
   queueState.manual = true;
   loadQueueTrack(r);
   genRenderBody();
+}
+
+// ── Waveform je Slot ──────────────────────────────────────────────────────
+// Dieselbe Zeichen-Mechanik wie die aufgeklappte Tabellenzeile
+// (registerWaveEntry()/paintWaveEntry() in app.js): eine Bildschleife, die
+// Ebene wird nur bei neuen Daten/Breite neu gerechnet, abgebaut wird ueber
+// den gemeinsamen MutationObserver, sobald die Liste neu gebaut ist. Der
+// Slot, der gerade im Player laeuft, zeigt den Fortschritt. Ein Klick in die
+// Waveform springt dorthin (startet den Slot, falls er noch nicht laeuft).
+function genMountSlotWaves() {
+  if (!GEN || !apiMode) return;
+  if (!GEN_PEAKS) GEN_PEAKS = new Map();
+  document.querySelectorAll("#genSlots canvas.genwave").forEach(canvas => {
+    const i = Number(canvas.dataset.wave);
+    const r = GEN.tracks[i];
+    if (!r) return;
+    const isCurrent = () => !!(queueState.current && queueState.current.p === r.p);
+    const entry = registerWaveEntry({
+      root: canvas.closest(".genslot"), canvas, r, peaks: null, cues: null, waveform: null,
+      sync() {
+        const cur = isCurrent();
+        this.currentTime = cur ? queueAudio.currentTime : 0;
+        this.duration = cur ? queueAudio.duration : r.du;
+      },
+    });
+    const cached = GEN_PEAKS.get(r.p);
+    if (cached) setWaveData(entry, {peaks: cached});
+    else peaksForLibrary(r.p)
+      .then(p => { GEN_PEAKS.set(r.p, p); setWaveData(entry, {peaks: p}); })
+      .catch(() => setWaveData(entry, {peaks: []}));
+    canvas.onclick = ev => {
+      ev.stopPropagation();
+      const rect = canvas.getBoundingClientRect();
+      const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
+      if (isCurrent()) {
+        if (isFinite(queueAudio.duration)) queueAudio.currentTime = frac * queueAudio.duration;
+        if (queueAudio.paused) queueAudio.play().catch(err => playFailed(queueAudio, err));
+        requestWavePaint();
+      } else {
+        pendingSeek = isFinite(r.du) ? frac * r.du : null;
+        genPlay(i);
+      }
+    };
+  });
 }
 
 function genOpenAlternatives(i, btn) {
@@ -704,10 +917,7 @@ function genOnClick(ev) {
   const slot = el.dataset.slot !== undefined ? Number(el.dataset.slot) : -1;
   if (el.dataset.seg) {
     const v = el.dataset.val;
-    if (el.dataset.seg === "added") cfg.filters.added = v;
-    else if (el.dataset.seg === "bpm") cfg.gates.bpm = v;
-    else if (el.dataset.seg === "key") cfg.gates.key = v;
-    else if (el.dataset.seg === "mode") cfg.mode = v;
+    if (el.dataset.seg === "mode") cfg.mode = v;
     genScheduleSave(); genRender();
     return;
   }
@@ -725,16 +935,21 @@ function genOnClick(ev) {
     }
     case "save-playlist": genSaveAsPlaylist(); return;
     case "addslot": genSetCount(cfg.slots.length + 1); genScheduleSave(); genRender(); return;
+    case "count-inc": genSetCount(cfg.slots.length + 1); genScheduleSave(); genRender(); return;
+    case "count-dec": genSetCount(cfg.slots.length - 1); genScheduleSave(); genRender(); return;
     case "toggle-settings": GEN_SETTINGS_CLOSED = !GEN_SETTINGS_CLOSED; genRender(); return;
-    case "half": cfg.gates.half = !cfg.gates.half; genScheduleSave(); genRender(); return;
+    case "adv-toggle": GEN_ADV_OPEN = !GEN_ADV_OPEN; genRender(); return;
+    case "curve-save": genSaveCurve(); return;
+    case "half-on": case "half-off":
+      cfg.gates.half = el.dataset.act === "half-on";
+      el.parentNode.querySelectorAll("button").forEach(b => b.classList.toggle("on", b === el));
+      genScheduleSave(); genRenderBody(); return;
+    case "curve-del": genDeleteCurve(); return;
     // Menues: Klick nicht bis zum document durchreichen, dessen Handler
     // schliesst #rowMoreMenu sonst sofort wieder. Bewusst nicht ueber
     // [data-more] geloest -- das blendet die Player-Ansicht aus (app.css).
     case "addknob": ev.stopPropagation(); genAddKnob(el); return;
     case "knob-del": delete cfg.knobs[el.dataset.val]; genScheduleSave(); genRender(); return;
-    case "genre-del":
-      cfg.filters.genres = cfg.filters.genres.filter(x => x !== el.dataset.val);
-      genScheduleSave(); genRender(); return;
     case "slot-lock": cfg.slots[slot].lock = !cfg.slots[slot].lock; genScheduleSave(); genRenderBody(); return;
     case "slot-clear": GEN.tracks[slot] = null; cfg.slots[slot].lock = false; genScheduleSave(); genRenderBody(); return;
     case "slot-roll": GEN.seed++; genFill(slot); return;
@@ -751,55 +966,72 @@ function genOnClick(ev) {
 function genOnChange(ev) {
   if (!GEN) return;
   const cfg = GEN.cfg, el = ev.target;
-  if (el.id === "genSource") cfg.filters.source = el.value || null;
-  else if (el.id === "genBpmLo" || el.id === "genBpmHi") {
-    const lo = Number(document.getElementById("genBpmLo").value) || null;
-    const hi = Number(document.getElementById("genBpmHi").value) || null;
-    cfg.filters.bpm = lo || hi ? [lo, hi] : null;
-  } else if (el.id === "genPreset") {
+  if (el.id === "genSource") { cfg.filters.source = el.value || null; genSyncPool(); }
+  else if (el.id === "genGateBpm" || el.id === "genGateKey") {
+    cfg.gates[el.id === "genGateBpm" ? "bpm" : "key"] = el.value;
+    // Tooltip am Tonart-Feld beschreibt die gewaehlte Stufe.
+    if (el.id === "genGateKey") el.closest("label").title = t("gen.gate_" + el.value + "_title");
+    genScheduleSave(); genRenderBody(); return;
+  }
+  else if (el.id === "genPreset") {
     cfg.preset = el.value;
     if (cfg.preset !== "custom") genResample(cfg, cfg.slots.length);
     genScheduleSave(); genRender(); return;
   } else if (el.id === "genCount") {
     genSetCount(Number(el.value));
     genScheduleSave(); genRender(); return;
-  } else if (el.id === "genGenreInput") {
-    genAddGenre(el.value); return;
   } else return;
   genScheduleSave();
 }
 
-function genAddGenre(value) {
-  const v = String(value || "").trim();
-  if (!v) return;
-  if (!GEN.cfg.filters.genres.includes(v)) GEN.cfg.filters.genres.push(v);
-  genScheduleSave(); genRender();
-  const input = document.getElementById("genGenreInput");
-  if (input) input.focus();
+// Ziehen an Kurvenpunkten (senkrecht = Energie) und Reglern (senkrecht = Wert).
+// Zeichnen auf der Skala: ein Klick in die Spalte eines Slots setzt dessen
+// Soll-Energie auf die angeklickte Stufe (ganze Zahlen 1..10), Ziehen ueber
+// mehrere Slots zeichnet sie der Reihe nach -- auch Slots, ueber die die Maus
+// zwischen zwei Ereignissen hinweggesprungen ist (linear dazwischen).
+function genArcPos(svg, e) {
+  const rect = svg.getBoundingClientRect();
+  const geo = genArcGeom(Number(svg.dataset.w), GEN.cfg.slots.length);
+  const xx = (e.clientX - rect.left) * geo.W / rect.width;
+  const yy = (e.clientY - rect.top) * geo.H / rect.height;
+  const n = GEN.cfg.slots.length;
+  const step = n > 1 ? (geo.W - geo.padL - geo.padR) / (n - 1) : 1;
+  const slot = n > 1 ? Math.round((xx - geo.padL) / step) : 0;
+  const energy = 10 - (yy - geo.padT) * 9 / (geo.H - geo.padT - geo.padB);
+  return {slot: Math.min(n - 1, Math.max(0, slot)), energy: Math.min(10, Math.max(1, Math.round(energy)))};
 }
 
-// Ziehen an Kurvenpunkten (senkrecht = Energie) und Reglern (senkrecht = Wert).
 function genOnPointerDown(ev) {
   if (!GEN) return;
-  const pt = ev.target.closest("[data-pt]");
-  const knob = !pt && ev.target.closest("[data-knob]");
+  const svg = ev.target.closest(".genarc-svg");
+  const knob = !svg && ev.target.closest("[data-knob]");
   if (knob && ev.target.closest(".genknob-del")) return;
-  if (!pt && !knob) return;
+  if (!svg && !knob) return;
+  if (ev.button !== undefined && ev.button !== 0) return;
   ev.preventDefault();
   const cfg = GEN.cfg;
-  if (pt) {
-    const svg = pt.ownerSVGElement;
-    const i = Number(pt.dataset.pt);
-    const H = Number(svg.dataset.h), pad = Number(svg.dataset.pad);
-    const move = e => {
-      const rect = svg.getBoundingClientRect();
-      const yy = (e.clientY - rect.top) * H / rect.height;
-      cfg.slots[i].e = genClampE(10 - (yy - pad) * 9 / (H - 2 * pad));
+  if (svg) {
+    if (!cfg.slots.length) return;
+    let last = null;
+    // Nach jedem Neuzeichnen ist das alte <svg> ersetzt -- Koordinaten
+    // deshalb immer am aktuellen messen, nicht am angeklickten.
+    const paint = e => {
+      const cur = document.querySelector("#genArc .genarc-svg") || svg;
+      const {slot, energy} = genArcPos(cur, e);
+      const from = last ? last.slot : slot;
+      const dir = slot >= from ? 1 : -1;
+      for (let i = from; ; i += dir) {
+        const span = slot - from;
+        cfg.slots[i].e = span ? Math.round(last.energy + (energy - last.energy) * (i - from) / span) : energy;
+        if (i === slot) break;
+      }
+      last = {slot, energy};
       cfg.preset = "custom";
       const arc = document.getElementById("genArc");
       if (arc) arc.innerHTML = genArcSvg();
     };
-    genDrag(move, () => { genScheduleSave(); genRender(); });
+    paint(ev);
+    genDrag(paint, () => { genScheduleSave(); genRender(); });
     return;
   }
   const name = knob.dataset.knob, bipolar = name !== "cohesion";
@@ -873,11 +1105,11 @@ function genWire(pane) {
   pane._genWired = true;
   pane.addEventListener("click", genOnClick);
   pane.addEventListener("change", genOnChange);
-  pane.addEventListener("keydown", ev => {
-    if (ev.target.id === "genGenreInput" && ev.key === "Enter") {
-      ev.preventDefault();
-      genAddGenre(ev.target.value);
-    }
+  // Liederpool-Suchfeld: jede Eingabe sofort uebernehmen (Speichern ist
+  // ohnehin entprellt). Die Felder der erweiterten Suche haben ihren eigenen
+  // Weg (advBindPanel() in genBindPool()).
+  pane.addEventListener("input", ev => {
+    if (ev.target.id === "genQuery") genSetQuery(ev.target.value, true);
   });
   pane.addEventListener("pointerdown", genOnPointerDown);
   pane.addEventListener("dblclick", genOnDblClick);
