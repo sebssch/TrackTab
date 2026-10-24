@@ -845,6 +845,22 @@ def paths_needing_genremood(conn: sqlite3.Connection, max_seconds: float,
         (max_seconds, version))]
 
 
+def paths_needing_bpmkey(conn: sqlite3.Connection, max_seconds: float,
+                         need_bpm: bool, need_key: bool) -> list[str]:
+    """Erfolgreich gescannte Dateien, denen BPM und/oder Tonart fehlt (nicht
+    laenger als max_seconds) -- Kandidaten fuer jobs._analyse_genremood()."""
+    cond = []
+    if need_bpm:
+        cond.append("bpm IS NULL OR bpm <= 0")
+    if need_key:
+        cond.append("key IS NULL OR key = ''")
+    if not cond:
+        return []
+    return [r["path"] for r in conn.execute(
+        "SELECT path FROM files WHERE status = 'ok' AND duration_s <= ? AND ("
+        + " OR ".join(cond) + ") ORDER BY path", (max_seconds,))]
+
+
 def user_tags_map(conn: sqlite3.Connection) -> dict[str, list[str]]:
     """Pfad -> eigene Tags (alphabetisch)."""
     out: dict[str, list[str]] = {}

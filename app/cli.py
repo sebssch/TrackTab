@@ -135,6 +135,12 @@ def cmd_scan(args) -> int:
     if result.get("genremood_done") or result.get("genremood_failed"):
         console.print(f"[dim]Genre & Stimmung: {result['genremood_done']} "
                       f"analysiert, {result['genremood_failed']} fehlgeschlagen[/dim]")
+    if result.get("bpmkey_done") or result.get("bpmkey_failed"):
+        console.print(f"[dim]BPM & Tonart: {result['bpmkey_done']} "
+                      f"analysiert, {result['bpmkey_failed']} fehlgeschlagen[/dim]")
+    if result.get("tags_written"):
+        console.print(f"[dim]{result['tags_written']} Dateien nach den "
+                      f"Einstellungen beschrieben[/dim]")
 
     console.print()
     _print_summary(conn)
@@ -422,7 +428,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "Dateien ohne Cover (kein Neu-Scan der Audiodateien)")
     s.add_argument("--genremood", action="store_true",
                    help="Danach Genre, Stimmung und Energie für alle Dateien "
-                        "ohne Ergebnis analysieren (nur Datenbank, ~1 s je Datei)")
+                        "ohne Ergebnis analysieren und fehlende BPM/Tonart "
+                        "ergänzen (Schreiben in Dateien nach den "
+                        "Einstellungen, ~1-3 s je Datei)")
     s.set_defaults(func=cmd_scan)
 
     c = sub.add_parser("check", help="Einzelne Dateien im Detail prüfen")

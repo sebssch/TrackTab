@@ -506,6 +506,25 @@ _wave_result: dict[str, list] = {}
 _wave_lock = threading.Lock()
 
 
+def _render_spectrogram(path: str) -> bytes:
+    """Spektrogramm als PNG (ffmpeg showspectrumpic), bewusst ohne Cache.
+
+    Auf 44,1 kHz gebracht, damit die Frequenzachse (linear) immer
+    0..22,05 kHz zeigt und der Client die Cutoff-Linie ohne weiteres
+    Wissen ueber die Samplerate einzeichnen kann.
+    """
+    flt = ("aresample=44100,showspectrumpic=s=1600x512:legend=0:"
+           "color=magma:scale=log:fscale=lin")
+    proc = subprocess.run(
+        [media.ffmpeg_path(), "-v", "error", "-i", path, "-lavfi", flt,
+         "-frames:v", "1", "-f", "image2pipe", "-vcodec", "png", "pipe:1"],
+        capture_output=True, timeout=300)
+    if proc.returncode != 0 or not proc.stdout:
+        raise RuntimeError(proc.stderr.decode("utf-8", "replace").strip()[-300:]
+                           or "ffmpeg lieferte kein Bild")
+    return proc.stdout
+
+
 def _waveform_shared(path: str, mtime: float) -> list:
     with _wave_lock:
         waiting = _wave_inflight.get(path)
@@ -1039,6 +1058,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_download_zip()
         elif route == "/api/waveform":
             self._get_waveform()
+        elif route == "/api/spectrogram":
+            self._get_spectrogram()
         elif route == "/api/appicon":
             self._get_appicon()
         elif route == "/api/settings":
@@ -1477,7 +1498,35 @@ class _Handler(BaseHTTPRequestHandler):
         if result is None:
             self._json({"ok": True, "reachable": False})
         else:
-            self._json({"ok": True, "reachable": True, **result})
+            # Der Start-Hinweis (app.js, checkUpdateOnStart()) zeigt sich nur,
+            # wenn die neueste Version HOEHER ist als die ignorierte.
+            ignored = lookup_mod._version_tuple(
+                str(cfgmod.load().get("update_ignore_version") or ""))
+            latest = lookup_mod._version_tuple(result["latest_version"])
+            show = bool(result["update_available"]
+                        and (ignored is None or latest > ignored))
+            changes = (lookup_mod.fetch_changes(__version__, result["latest_version"])
+                       if result["update_available"] else [])
+            self._json({"ok": True, "reachable": True, **result,
+                        "changes": changes,
+                        "show_on_start": show,
+                        "repo_url": lookup_mod.REPO_URL})
+
+    def _post_ignore_update(self) -> None:
+        """Merkt sich eine Version, fuer die der Start-Hinweis nicht mehr
+        erscheinen soll (config.local.yaml, update_ignore_version)."""
+        try:
+            payload = json.loads(self._body(10_000).decode("utf-8"))
+            version = str(payload["version"]).strip()
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if lookup_mod._version_tuple(version) is None:
+            self._fail("Keine gültige Versionsnummer")
+            return
+        with self.lock:
+            settings_mod._write_local({"update_ignore_version": version})
+        self._json({"ok": True})
 
     def _get_appicon(self) -> None:
         """Symbol von Finder bzw. dem eingestellten Audio-Editor."""
@@ -1754,6 +1803,23 @@ class _Handler(BaseHTTPRequestHandler):
                 return
         self._json({"peaks": peaks})
 
+    def _get_spectrogram(self) -> None:
+        """Spektrogramm-PNG; wird je Aufruf frisch gerechnet (kein Cache).
+
+        Rechnet ausserhalb von self.lock: ffmpeg ist externe Arbeit und
+        dauert je nach Laenge ein bis mehrere Sekunden.
+        """
+        path = unquote(self._query().get("path", ""))
+        if not path or not self._authorize_fast(path):
+            self._reject_missing(path)
+            return
+        try:
+            png = _render_spectrogram(path)
+        except Exception as exc:                 # noqa: BLE001
+            self._fail(f"Spektrogramm fehlgeschlagen: {exc}", 500)
+            return
+        self._send(200, png, "image/png")
+
     def _get_cover(self) -> None:
         """Eingebettetes Cover einer Datei, falls vorhanden.
 
@@ -1845,6 +1911,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_analyse_path()
         elif route == "/api/bpmkey":
             self._post_bpmkey()
+        elif route == "/api/ignore-update":
+            self._post_ignore_update()
         elif route == "/api/genremood":
             self._post_genremood()
         elif route == "/api/user-tags":
@@ -4924,7 +4992,6 @@ class _Handler(BaseHTTPRequestHandler):
             prune=bool(payload.get("prune", True)),
             skip_spectral=bool(payload.get("skip_spectral")),
             skip_loudness=bool(payload.get("skip_loudness")),
-            force_cover_fill=bool(payload.get("force_cover_fill")),
             recheck_tag_issues=bool(payload.get("recheck_tags")),
             genremood=bool(payload.get("genremood")),
         )

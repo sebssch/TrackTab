@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import re
 import socket
 import urllib.error
 import urllib.parse
@@ -222,6 +223,7 @@ def search_musicbrainz(artist: str, title: str, query: str = "") -> list[dict]:
 
 
 _UPDATE_REPO = "sebssch/TrackTab"
+REPO_URL = f"https://github.com/{_UPDATE_REPO}"
 
 
 def check_update(current_version: str) -> dict | None:
@@ -247,6 +249,58 @@ def check_update(current_version: str) -> dict | None:
         "update_available": latest_parts > current_parts,
         "release_url": data.get("html_url") or "",
     }
+
+
+_RAW_BASE = f"https://raw.githubusercontent.com/{_UPDATE_REPO}"
+_CHANGELOG_MAX_BYTES = 400_000
+_CHANGELOG_HEAD = re.compile(r"^## \[(\d+\.\d+\.\d+)\](?:\s*-\s*(\S+))?\s*$")
+
+
+def fetch_changes(current_version: str, latest_version: str) -> list[dict]:
+    """Aenderungen aller Versionen ueber current_version bis latest_version aus
+    changelog.md des Repositories (neueste zuerst):
+    [{"version", "date", "groups": [{"title", "items": [str]}]}].
+
+    Bevorzugt die Datei am Release-Tag (v<latest>), sonst vom Hauptzweig.
+    Leere Liste bei jedem Fehler -- der Hinweis zeigt dann nur den Link."""
+    cur = _version_tuple(current_version)
+    lat = _version_tuple(latest_version)
+    if cur is None or lat is None:
+        return []
+    text = ""
+    for ref in (f"v{latest_version}", "main"):
+        req = urllib.request.Request(f"{_RAW_BASE}/{ref}/changelog.md",
+                                     headers={"User-Agent": _USER_AGENT})
+        try:
+            with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+                text = resp.read(_CHANGELOG_MAX_BYTES).decode("utf-8", "replace")
+            break
+        except (urllib.error.URLError, TimeoutError, OSError):
+            continue
+    out: list[dict] = []
+    entry = group = None
+    for line in text.splitlines():
+        head = _CHANGELOG_HEAD.match(line)
+        if head:
+            ver = _version_tuple(head.group(1))
+            entry = group = None
+            if ver is not None and cur < ver <= lat:
+                entry = {"version": head.group(1), "date": head.group(2) or "",
+                         "groups": []}
+                out.append(entry)
+            continue
+        if entry is None:
+            continue
+        if line.startswith("## "):
+            entry = group = None
+        elif line.startswith("### "):
+            group = {"title": line[4:].strip(), "items": []}
+            entry["groups"].append(group)
+        elif line.startswith("- ") and group is not None:
+            group["items"].append(line[2:].strip())
+        elif line.startswith("  ") and group is not None and group["items"] and line.strip():
+            group["items"][-1] += " " + line.strip()
+    return out
 
 
 def _version_tuple(version: str) -> tuple[int, ...] | None:

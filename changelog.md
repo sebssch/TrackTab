@@ -3,6 +3,30 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [Unreleased]
+
+## [1.9.3] - 2026-10-25
+
+### Added
+- Update-Hinweis beim Start: TrackTab fragt einmal im Hintergrund die neueste GitHub-Version ab und zeigt bei einer neueren ein Overlay mit Link zum Repository. Der Haken „Diese Version ignorieren“ unterdrückt den Hinweis (`update_ignore_version` in `config.local.yaml`), bis es eine noch höhere Version gibt. Der Hinweis (und die manuelle Prüfung) listet die Änderungen aller neueren Versionen aus `changelog.md` des Repositories. Ohne Netz erscheint nichts; die manuelle Prüfung in den Einstellungen zeigt weiter immer.
+- Spektrogramm: Vor dem Cutoff-Wert steht ein Icon, das ein Overlay mit dem Spektrogramm des Tracks öffnet (Haupttabelle und Einzelprüfungen). Es wird bei jedem Klick frisch mit `ffmpeg` gerechnet (rund 1 s bei einem Track von ca. 8 Minuten) und nicht zwischengespeichert. Frequenz- und Zeitachse sind beschriftet, eine gestrichelte Cutoff-Linie mit Bitrate lässt sich per Haken ein- und ausblenden. Neuer Endpunkt `/api/spectrogram`.
+- Logo und Titel „TrackTab“ in der Kopfzeile öffnen die Startansicht: Liste „Alle“, Suche und Bubble-Filter zurückgesetzt, nach oben gescrollt — ohne Seiten-Reload, Wiedergabe und Einzelprüfungen bleiben erhalten.
+
+### Changed
+- Scan-Optionen neu geordnet: Datenbank, Vollständig, Lautheit, Cutoff, Genre/Stimmung/Energie/BPM/Tonart, Auffälligkeiten, Metadaten.
+- Scan-Optionen: „Metadaten“ entfernt. Der Cover-Abgleich mit Music.app läuft bei jedem Scan nach der Einstellung „Cover aus Music.app übernehmen“; erzwingen lässt er sich nur noch per `scan --covers`.
+- Scan-Schritt „Genre, Stimmung, Energie, BPM & Tonart“ (vorher nur Genre, Stimmung, Energie): ergänzt zusätzlich fehlende BPM und Tonart (nur leere Felder, nie überschreibend). In die Dateien wird nur nach den Einstellungen geschrieben (BPM & Tonart, Kommentar, Stimmung); vorher schrieb dieser Schritt nie in Dateien. Neue Zähler `bpmkey_done`, `bpmkey_failed`, `tags_written` im Scan-Ergebnis, auch in der CLI (`scan --genremood`).
+- Zeilenmenü (⋮) neu geordnet: BPM & Tonart, Genre & Stimmung, Track neu analysieren — Linie — Format konvertieren, Bitrate korrigieren / Tonart angleichen, Als korrekt markieren — Linie — Ausblenden — Linie — Aus Rekordbox-Sammlung entfernen, Löschen. Neu im Menü: „Format konvertieren“.
+- Zeilenmenü: „BPM/Tonart analysieren“ heißt „BPM & Tonart analysieren“, „Korrigieren“ heißt „Als korrekt markieren“; bei ausgeblendeten Tracks zeigt „Einblenden“ das normale statt des durchgestrichenen Auges.
+- Sammelleiste neu gruppiert (durch Linien getrennt): Warteschlange/Playlist/Rekordbox/Merklisten — Bearbeiten und Analysen — Format konvertieren, Bitrate korrigieren, Als korrekt markieren (jetzt ohne Farbe) — Ausblenden/Einblenden — Mixed In Key — Download — Rekordbox-Entfernen/Löschen. Leere Gruppen fallen samt Linie weg.
+- Playlist-Symbole (Seitenleiste, Listenkopf, Auswahldialoge) sind abgerundete Quadrate (4 px) statt Kreise. Die Merken-Knöpfe sind 16 × 16 px, ihr Mitgliedschafts-Punkt 5 × 5 px.
+- Wellenform: Solange die Hüllkurve lädt, läuft statt des Textes „Hüllkurve wird berechnet …“ eine langsame Animation aus grauen Halbbalken über die ganze Breite (höchstens 20 s, danach stehen die Balken still).
+- Albumgruppen-Zeilen: Schriftgröße 14 px (vorher 12,5 px).
+
+### Fixed
+- Player-Balken: Die Hüllkurve des beim Start gewählten Tracks wird nun auch dann geladen, wenn der Server-Modus erst nach dem ersten Zeichnen feststeht. Vorher blieb sie leer und die Ladeanimation lief endlos; ohne Track oder nach einem Ladefehler bleibt sie jetzt stehen.
+- Kopfzeile: Im Player-Modus hat die Statistik-Schaltfläche links keine Trennlinie mehr (sie stammte vom ausgeblendeten „Datei öffnen“).
+
 ## [1.9.2] - 2026-10-24
 
 ### Added

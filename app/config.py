@@ -146,6 +146,11 @@ def defaults() -> dict:
         # beim Import ueber die Einzelpruefung aus.
         "cover_auto_fill": True,
 
+        # Version, deren Update-Hinweis beim Start nicht mehr erscheint
+        # (Haken "Diese Version ignorieren"); wird vom Server geschrieben,
+        # kein Eintrag in settings.GROUPS. Leer = nichts ignoriert.
+        "update_ignore_version": "",
+
         # Browser fuer die Web-UI (Programmpfad, siehe settings.py
         # external_browser). Leer = Systemstandard-Browser.
         "external_browser": "/Applications/Safari.app",

@@ -1098,6 +1098,7 @@ const ICONS = {
   analyseBpmKey: SVG(LUCIDE_ICONS["clef-treble"]),
   analyseGenreMood: SVG(LUCIDE_ICONS["party-popper"]),
   keySync: SVG(LUCIDE_ICONS["replace"]),
+  spectrogram: SVG(LUCIDE_ICONS["chart-no-axes-column"] || LUCIDE_ICONS["audio-lines"]),
   pencil: SVG(LUCIDE_ICONS["pencil"]),
   sparkles: SVG(LUCIDE_ICONS["sparkles"]),
   pencilRuler: SVG(LUCIDE_ICONS["pencil-ruler"]),
@@ -1646,7 +1647,8 @@ function treeRoots() {
     ...(REKORDBOX_NAME ? [extRootNode("rekordbox", "tree.root_rekordbox")] : []),
   ]);
   return [
-    {id: "root:tracktab", view: null, label: t("tree.root_tracktab"), icon: "📁",
+    {id: "root:tracktab", view: null, label: t("tree.root_tracktab"),
+     icon: `<img class="appicon" src="/icon-192.png" alt="">`,
      count: null, kids: sortByTreeOrder([...sys, ...ownWithDuplicates, ...groupNodes])},
     ...extRoots,
   ];
@@ -4343,6 +4345,84 @@ function attachSearchFilterAutocomplete(el, list, onApply) {
 }
 attachSearchFilterAutocomplete(document.getElementById("q"), document.getElementById("searchAcList"));
 
+// Spektrogramm-Overlay: ein delegierter Klick fuer Haupttabelle und
+// Einzelpruefungen, Pfad steckt im Attribut. Wird je Klick frisch gerechnet.
+let specSeq = 0;
+function openSpectrogram(path) {
+  const rows = (typeof DATA !== "undefined" ? DATA : []).concat(typeof drops !== "undefined" ? drops : []);
+  const r = rows.find(x => (x.nativePath || x.p) === path);
+  const ov = document.getElementById("specOverlay");
+  const wrap = document.getElementById("specImgWrap");
+  const cut = document.getElementById("specCut");
+  const seq = ++specSeq;
+  document.getElementById("specTitle").textContent = r && (r.a || r.t) ? (r.a + (r.t ? " — " + r.t : "")) : path.split("/").pop();
+  document.getElementById("specClose").innerHTML = ICONS.close || "×";
+  wrap.textContent = t("spec.loading");
+  document.getElementById("specAxisY").innerHTML = "";
+  document.getElementById("specAxisX").innerHTML = "";
+  document.getElementById("specCaption").textContent = t("spec.caption");
+  const close = () => { specSeq++; ov.style.display = "none"; document.onkeydown = null; };
+  ov.style.display = "flex";
+  document.getElementById("specClose").onclick = close;
+  ov.onclick = e => { if (e.target === ov) close(); };
+  document.onkeydown = e => { if (e.key === "Escape") close(); };
+  const NYQ = 22.05;
+  const cutLine = () => {
+    const old = wrap.querySelector(".speccut");
+    if (old) old.remove();
+    if (!cut.checked || !r || !(r.co > 0) || r.co >= NYQ) return;
+    const kb = r.fam === "lossless" ? "" : ` · ${r.kb} kbps`;
+    const el = document.createElement("div");
+    el.className = "speccut";
+    el.style.bottom = (r.co / NYQ * 100) + "%";
+    el.innerHTML = `<span>${esc(t("col.cutoff"))} ${String(r.co.toFixed(1)).replace(".", ",")} kHz${kb}</span>`;
+    wrap.appendChild(el);
+  };
+  cut.onchange = cutLine;
+  const img = new Image();
+  img.onload = () => {
+    if (seq !== specSeq) return;
+    wrap.textContent = "";
+    wrap.appendChild(img);
+    // Achsen: Hoehe des Bildes ist fest (300px), linear 0..22,05 kHz
+    document.getElementById("specAxisY").innerHTML = [0, 5, 10, 15, 20].map(k =>
+      `<span style="bottom:${k / NYQ * 100}%">${k}k</span>`).join("");
+    document.getElementById("specAxisY").style.height = "300px";
+    if (r && r.du > 0) {
+      document.getElementById("specAxisX").innerHTML = [0, .25, .5, .75, 1].map(f =>
+        `<span style="left:${f * 100}%">${fmtTime(Math.round(r.du * f))}</span>`).join("");
+    }
+    cutLine();
+  };
+  img.onerror = () => { if (seq === specSeq) wrap.textContent = t("spec.error"); };
+  img.src = "/api/spectrogram?path=" + encodeURIComponent(path);
+}
+document.addEventListener("click", ev => {
+  const b = ev.target.closest && ev.target.closest("[data-spec]");
+  if (!b) return;
+  ev.stopPropagation();
+  openSpectrogram(decodeURIComponent(b.dataset.spec));
+}, true);
+
+// Logo/Titel -> Startansicht ohne Seiten-Reload: Wiedergabe, Warteschlange
+// und Einzelpruefungen bleiben unangetastet, nur Liste, Suche und
+// Bubble-Filter werden zurueckgesetzt. selectView() raeumt valueFilter,
+// mergePreview, tagIssueFilter und tagFilter selbst ab.
+function goHome() {
+  state.q = "";
+  const q = document.getElementById("q");
+  if (q) q.value = "";
+  selectView("all");
+  const wrap = document.querySelector(".tablewrap");
+  if (wrap) wrap.scrollTop = 0;
+  window.scrollTo(0, 0);
+}
+const appHome = document.getElementById("appHome");
+if (appHome) {
+  appHome.onclick = goHome;
+  appHome.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goHome(); } };
+}
+
 document.getElementById("btnSearchHelp").onclick = () => {
   document.getElementById("searchHelpBody").innerHTML = SEARCH_HELP_ENTRIES.map(([p, desc, ex]) =>
     `<div class="searchhelprow"><b>${esc(p)}</b> — ${esc(desc)}<div class="path">${esc(ex)}</div></div>`).join("");
@@ -6084,7 +6164,7 @@ const CELL_RENDERERS = {
     const at = POS_MAP ? POS_MAP.get(posKeyOf(r)) : undefined;
     return `<td class="num">${at === undefined ? "" : at + 1}</td>`;
   },
-  co: r => `<td class="num">${r.co.toFixed(2).replace(".",",")}</td>`,
+  co: r => `<td class="num">${r.gone ? "" : `<button class="speclink" data-spec="${esc(encodeURIComponent(r.nativePath || r.p))}" title="${esc(t("spec.open"))}">${ICONS.spectrogram}</button>`}${r.co.toFixed(2).replace(".",",")}</td>`,
   kb: r => `<td class="num">${r.fam === "lossless"
       ? "<span class='path'>" + esc(t("field.lossless")) + "</span><br><span class='path'>" + fileExt(r.p) + "</span>"
       : r.kb + (r.mo ? " <span class='path'>" + r.mo + "</span>" : "")
@@ -6272,24 +6352,7 @@ function rowMoreMenuItems(r) {
       action: () => removeFromRekordboxPlaylist([r]),
     });
   }
-  if (REKORDBOX_NAME && apiMode && (rbList || (r.rb && !r.ext))) {
-    items.push({
-      icon: ICONS.trash, cls: "del", label: t("rb.remove_from_collection"),
-      action: () => removeFromRekordboxCollection([r]),
-    });
-  }
-  if (!r.gone && apiMode && isFixable(r)) {
-    items.push({
-      icon: ICONS.fix, cls: "", title: t("action.fix_bitrate", {kbps: r.mk}),
-      label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r),
-    });
-  }
-  if (apiMode && keyNeedsSync(r)) {
-    items.push({
-      icon: ICONS.keySync, cls: "", title: t("action.write_key_title", {example: keyNotationExample()}),
-      label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r]),
-    });
-  }
+  const sep = () => { if (items.length && !items[items.length - 1].sep) items.push({sep: true}); };
   if (!r.gone && apiMode && BPMKEY_AVAILABLE) {
     items.push({
       icon: ICONS.analyseBpmKey, cls: "", title: t("action.bpmkey_title"),
@@ -6308,26 +6371,55 @@ function rowMoreMenuItems(r) {
       label: t("rowmenu.rescan"), action: () => rescanRow(r),
     });
   }
-  if (!r.gone) {
+  sep();
+  if (!r.gone && apiMode) {
     items.push({
-      icon: r.ig ? ICONS.eyeOff : ICONS.eye, cls: "ig",
-      title: r.ig ? t("action.show_track") : t("action.hide_track"),
-      label: r.ig ? t("rowmenu.show_track") : t("rowmenu.hide_track"),
-      action: () => setIgnored(r, !r.ig),
+      icon: ICONS.convert, cls: "", title: t("bulk.convert_title"),
+      label: t("rowmenu.convert"), action: () => openConvertPopup([r], false),
     });
+  }
+  if (!r.gone && apiMode && isFixable(r)) {
+    items.push({
+      icon: ICONS.fix, cls: "", title: t("action.fix_bitrate", {kbps: r.mk}),
+      label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r),
+    });
+  }
+  if (apiMode && keyNeedsSync(r)) {
+    items.push({
+      icon: ICONS.keySync, cls: "", title: t("action.write_key_title", {example: keyNotationExample()}),
+      label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r]),
+    });
+  }
+  if (!r.gone) {
     items.push({
       icon: ICONS.correct, cls: "corr",
       title: r.mc ? t("action.undo_correct") : t("action.mark_corrected"),
       label: r.mc ? t("rowmenu.undo_correct") : t("rowmenu.mark_corrected"),
       action: () => setCorrected(r, !r.mc),
     });
+    sep();
+    items.push({
+      icon: ICONS.eye, cls: "ig",
+      title: r.ig ? t("action.show_track") : t("action.hide_track"),
+      label: r.ig ? t("rowmenu.show_track") : t("rowmenu.hide_track"),
+      action: () => setIgnored(r, !r.ig),
+    });
+  }
+  const danger = [];
+  if (REKORDBOX_NAME && apiMode && (rbList || (r.rb && !r.ext))) {
+    danger.push({
+      icon: ICONS.trash, cls: "del", label: t("rb.remove_from_collection"),
+      action: () => removeFromRekordboxCollection([r]),
+    });
   }
   if (!r.gone && apiMode) {
-    items.push({
+    danger.push({
       icon: ICONS.trash, cls: "del", title: t("action.to_trash"),
       label: t("rowmenu.trash"), action: () => trashTrack(r),
     });
   }
+  if (danger.length) { sep(); items.push(...danger); }
+  while (items.length && items[items.length - 1].sep) items.pop();
   return items;
 }
 
@@ -7011,44 +7103,54 @@ function renderBulkBar() {
   // heraus.
   const selRows = [...state.selected].map(i => DATA[i]).filter(Boolean);
   const anyNonGone = selRows.some(r => !r.gone);
-  bar.innerHTML = `
-    <span>${esc(t("bulk.selected_count", {count: state.selected.size.toLocaleString("de-DE")}))}</span>
-    <button class="iconbtn plain" id="bulkQueueAdd" title="${esc(t("bulk.queue_add_title"))}">${ICONS.listEnd}</button>
-    ${apiMode ? `<button class="iconbtn plain" id="bulkListAdd" title="${esc(t("tree.add_to_playlist"))}">${ICONS.listPlus}</button>` : ""}
-    ${currentPlaylistNode() && apiMode ? `<button class="iconbtn" id="bulkListRemove" title="${esc(t("tree.remove_from_list", {name: currentPlaylistNode().name}))}">${ICONS.listX}</button>` : ""}
-    ${currentRekordboxPlaylist() ? `<button class="iconbtn" id="bulkRbRemove" title="${esc(t("rb.remove_from_playlist", {playlist: currentRekordboxPlaylist().name}))}">${ICONS.listX}</button>` : ""}
-    ${REKORDBOX_NAME && apiMode && (currentRekordboxPlaylist() || selRows.some(r => r.rb && !r.ext)) ? `<button class="iconbtn del" id="bulkRbCollection" title="${esc(t("rb.remove_from_collection"))}">${ICONS.trash}</button>` : ""}
-    ${!REKORDBOX_NAME ? "" : (REKORDBOX_PLAYLIST
-      ? `<button class="iconbtn plain" id="bulkRbAdd" title="${esc(t("bulk.add_to_rekordbox_title", {playlist: REKORDBOX_PLAYLIST}))}">${appIcon("rekordbox", "Rekordbox")}</button>`
-      : disabledAppIcon("rekordbox", "Rekordbox", REKORDBOX_MISSING_HINT, "bulkRbAdd"))}
-    <span class="sep"></span>
-    ${apiMode ? `<button class="iconbtn plain" id="bulkTags" title="${esc(t("bulk.edit_tags_title"))}">${ICONS.edit}</button>` : ""}
-    <button class="iconbtn plain" id="bulkFix" title="${esc(t("bulk.fix_title"))}">${ICONS.fix}</button>
-    ${selRows.some(hasAutoFixableTagIssues) ? `<button class="iconbtn plain" id="bulkFixTags"
-        title="${esc(t("bulk.action_fix_tag_issues"))}">${TREE_ICONS.tag_issues}</button>` : ""}
-    <button class="iconbtn plain" id="bulkConvert" title="${esc(t("bulk.convert_title"))}">${ICONS.convert}</button>
-    ${bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.keySync}</button>` : ""}
-    <span class="sep"></span>
-    ${bulkBpmKeyShown(selRows, false) ? `<button class="iconbtn plain" id="bulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.analyseBpmKey}</button>` : ""}
-    ${bulkGenreMoodShown(selRows, false) ? `<button class="iconbtn plain" id="bulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}</button>` : ""}
-    <button class="iconbtn plain" id="bulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>
-    ${!MIK_NAME ? "" : `<span class="sep"></span>
-    <button class="iconbtn plain" id="bulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
-    ${anyNonGone ? `<span class="sep"></span>
-    <button class="iconbtn ig" id="bulkIgnore" title="${esc(t("bulk.hide_title"))}">${ICONS.eyeOff}</button>
-    <button class="iconbtn ig" id="bulkShow" title="${esc(t("bulk.show_title"))}">${ICONS.eye}</button>
-    <span class="sep"></span>
-    <button class="iconbtn corr" id="bulkCorrect" title="${esc(t("bulk.correct_title"))}">${ICONS.correct}</button>` : ""}
-    ${merkPlaylists().length ? `<span class="sep"></span>
-    ${merkPlaylists().map(n => {
+  // Gruppen, durch Trennlinien getrennt; leere Gruppen fallen samt Linie weg.
+  const groups = [
+    [
+      `<button class="iconbtn plain" id="bulkQueueAdd" title="${esc(t("bulk.queue_add_title"))}">${ICONS.listEnd}</button>`,
+      apiMode ? `<button class="iconbtn plain" id="bulkListAdd" title="${esc(t("tree.add_to_playlist"))}">${ICONS.listPlus}</button>` : "",
+      currentPlaylistNode() && apiMode ? `<button class="iconbtn" id="bulkListRemove" title="${esc(t("tree.remove_from_list", {name: currentPlaylistNode().name}))}">${ICONS.listX}</button>` : "",
+      currentRekordboxPlaylist() ? `<button class="iconbtn" id="bulkRbRemove" title="${esc(t("rb.remove_from_playlist", {playlist: currentRekordboxPlaylist().name}))}">${ICONS.listX}</button>` : "",
+      !REKORDBOX_NAME ? "" : (REKORDBOX_PLAYLIST
+        ? `<button class="iconbtn plain" id="bulkRbAdd" title="${esc(t("bulk.add_to_rekordbox_title", {playlist: REKORDBOX_PLAYLIST}))}">${appIcon("rekordbox", "Rekordbox")}</button>`
+        : disabledAppIcon("rekordbox", "Rekordbox", REKORDBOX_MISSING_HINT, "bulkRbAdd")),
+      merkPlaylists().map(n => {
         const flState = flStateOf(n.id);
         return `<button class="iconbtn flbtn${flState === "all" ? " on" : ""}" data-bulkfl="${n.id}" style="background:var(--${flColorTok(n)})"
         title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`;
-      }).join("")}` : ""}
-    <span class="sep"></span>
-    <button class="iconbtn plain" id="bulkExportZip" title="${esc(t("export_zip.title"))}">${ICONS.exportZip}</button>
-    <span class="sep"></span>
-    <button class="iconbtn del" id="bulkTrash" title="${esc(t("action.to_trash"))}">${ICONS.trash}</button>
+      }).join(""),
+    ],
+    [
+      apiMode ? `<button class="iconbtn plain" id="bulkTags" title="${esc(t("bulk.edit_tags_title"))}">${ICONS.edit}</button>` : "",
+      bulkBpmKeyShown(selRows, false) ? `<button class="iconbtn plain" id="bulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.analyseBpmKey}</button>` : "",
+      bulkGenreMoodShown(selRows, false) ? `<button class="iconbtn plain" id="bulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}</button>` : "",
+      `<button class="iconbtn plain" id="bulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>`,
+    ],
+    [
+      `<button class="iconbtn plain" id="bulkConvert" title="${esc(t("bulk.convert_title"))}">${ICONS.convert}</button>`,
+      `<button class="iconbtn plain" id="bulkFix" title="${esc(t("bulk.fix_title"))}">${ICONS.fix}</button>`,
+      selRows.some(hasAutoFixableTagIssues) ? `<button class="iconbtn plain" id="bulkFixTags"
+        title="${esc(t("bulk.action_fix_tag_issues"))}">${TREE_ICONS.tag_issues}</button>` : "",
+      bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.keySync}</button>` : "",
+      anyNonGone ? `<button class="iconbtn plain" id="bulkCorrect" title="${esc(t("bulk.correct_title"))}">${ICONS.correct}</button>` : "",
+    ],
+    [
+      anyNonGone ? `<button class="iconbtn ig" id="bulkIgnore" title="${esc(t("bulk.hide_title"))}">${ICONS.eyeOff}</button>
+    <button class="iconbtn ig" id="bulkShow" title="${esc(t("bulk.show_title"))}">${ICONS.eye}</button>` : "",
+    ],
+    [
+      !MIK_NAME ? "" : `<button class="iconbtn plain" id="bulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`,
+    ],
+    [
+      `<button class="iconbtn plain" id="bulkExportZip" title="${esc(t("export_zip.title"))}">${ICONS.exportZip}</button>`,
+    ],
+    [
+      REKORDBOX_NAME && apiMode && (currentRekordboxPlaylist() || selRows.some(r => r.rb && !r.ext)) ? `<button class="iconbtn del" id="bulkRbCollection" title="${esc(t("rb.remove_from_collection"))}">${ICONS.trash}</button>` : "",
+      `<button class="iconbtn del" id="bulkTrash" title="${esc(t("action.to_trash"))}">${ICONS.trash}</button>`,
+    ],
+  ].map(g => g.filter(Boolean).join("\n    ")).filter(Boolean);
+  bar.innerHTML = `
+    <span>${esc(t("bulk.selected_count", {count: state.selected.size.toLocaleString("de-DE")}))}</span>
+    ${groups.join('\n    <span class="sep"></span>\n    ')}
     <button class="act small" id="bulkClear">${esc(t("bulk.clear_selection"))}</button>`;
   const bulkListAddBtn = document.getElementById("bulkListAdd");
   if (bulkListAddBtn) bulkListAddBtn.onclick = () => {
@@ -9919,11 +10021,67 @@ async function checkForUpdate() {
   document.getElementById("updateCheckTitle").textContent = title;
   document.getElementById("updateCheckBody").innerHTML = bodyHtml;
 
+  renderUpdateChanges(data.ok && data.reachable && data.update_available ? data.changes : []);
+  showUpdateOverlay(null);
+}
+
+// Einfaches Markdown aus changelog.md: nur `code` und **fett**, alles andere
+// wird als Text ausgegeben (erst escapen, dann ersetzen).
+function changelogInline(text) {
+  return esc(text).replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>");
+}
+function renderUpdateChanges(changes) {
+  const host = document.getElementById("updateChanges");
+  host.innerHTML = (changes || []).map(c =>
+    `<h4>${esc(c.version)}${c.date ? `<small>${esc(c.date)}</small>` : ""}</h4>` +
+    c.groups.filter(g => g.items.length).map(g =>
+      `<h5>${esc(g.title)}</h5><ul>${g.items.map(i => `<li>${changelogInline(i)}</li>`).join("")}</ul>`).join("")
+  ).join("");
+  document.querySelector("#updateCheckOverlay .confirmbox").classList.toggle("updbox", !!host.innerHTML);
+}
+
+function showUpdateOverlay(ignoreVersion) {
   const ov = document.getElementById("updateCheckOverlay");
+  const row = document.getElementById("updateIgnoreRow");
+  const chk = document.getElementById("updateIgnore");
+  // Haken nur beim Start-Hinweis; die manuelle Pruefung zeigt immer.
+  row.style.display = ignoreVersion ? "" : "none";
+  chk.checked = false;
   ov.style.display = "flex";
-  const close = () => { ov.style.display = "none"; };
+  const close = () => {
+    ov.style.display = "none";
+    if (ignoreVersion && chk.checked) {
+      fetch("/api/ignore-update", {
+        method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({version: ignoreVersion}),
+      }).catch(() => {});
+    }
+  };
   document.getElementById("updateCheckClose").onclick = close;
   ov.onclick = e => { if (e.target === ov) close(); };
+}
+
+// Beim Start einmal im Hintergrund nach einer neueren Version fragen. Stiller
+// Fehlschlag (offline, GitHub nicht erreichbar): dann erscheint nichts. Der
+// Hinweis kommt nicht mehr, wenn "Diese Version ignorieren" gesetzt wurde,
+// bis es eine noch hoehere gibt (Entscheidung faellt im Server, show_on_start).
+async function checkUpdateOnStart() {
+  if (!apiMode) return;
+  let data;
+  try {
+    data = await (await fetch("/api/check-update")).json();
+  } catch (err) { return; }
+  if (!data || !data.ok || !data.show_on_start) return;
+  document.getElementById("updateCheckTitle").textContent = t("settings.update_available_title");
+  let body = esc(t("settings.update_available_body", {version: data.latest_version}));
+  const url = data.release_url && /^https?:\/\//i.test(data.release_url) ? data.release_url : data.repo_url;
+  if (url) {
+    body += ` <a href="${esc(url)}" target="_blank" rel="noopener">${esc(t("update.repo_link"))}</a>`;
+  }
+  document.getElementById("updateCheckBody").innerHTML = body;
+  renderUpdateChanges(data.changes);
+  showUpdateOverlay(data.latest_version);
 }
 
 // Gruppiert Felder anhand des "break"-Flags zu Zeilen -- jede Zeile ist ein
@@ -10949,6 +11107,7 @@ async function pollScan() {
       (f.covers_filled ? esc(t("scan.covers_filled_suffix", {count: f.covers_filled})) : "") +
       (f.tag_issues_rechecked ? esc(t("scan.tag_issues_rechecked_suffix", {count: f.tag_issues_rechecked})) : "") +
       (f.genremood_done ? esc(t("scan.genremood_suffix", {count: f.genremood_done})) : "") +
+      (f.bpmkey_done ? esc(t("scan.bpmkey_suffix", {count: f.bpmkey_done})) : "") +
       ` — <a href="#" id="reloadScan">${esc(t("scan.reload_page"))}</a>`);
     const rl = document.getElementById("reloadScan");
     if (rl) rl.onclick = e => { e.preventDefault(); location.reload(); };
@@ -11120,6 +11279,7 @@ function setWaveData(entry, patch) {
   Object.assign(entry, patch);
   entry.dataRev++;
   entry.layer = null;
+  entry.loadingAnim = false; entry.loadingSince = 0;
   requestWavePaint();
 }
 
@@ -11142,13 +11302,48 @@ function anyAudioPlaying() {
 
 function wavePump() {
   _waveRaf = 0;
+  let loading = false;
   for (const entry of waveEntries) {
     entry.sync();
     paintWaveEntry(entry);
     if (entry.syncLabels) entry.syncLabels();
+    if (entry.loadingAnim) loading = true;
   }
   renderPlayerProgress();
-  if (anyAudioPlaying()) scheduleWavePaint();
+  if (loading || anyAudioPlaying()) scheduleWavePaint();
+}
+
+// Ladeanimation statt Text, solange die Huellkurve noch fehlt: langsam
+// wogende Halbbalken ueber die ganze Breite. Hoechstens LOADING_WAVE_MAX_MS, danach stehende flache
+// Linie -- bleiben die Daten dauerhaft aus (Fehler), soll die Bildschleife
+// nicht ewig weiterlaufen. entry.loadingAnim sagt wavePump(), dass weiter
+// gezeichnet werden muss; setWaveData() setzt es zurueck.
+const LOADING_WAVE_MAX_MS = 20000;
+function drawLoadingWave(ctx, w, h, entry) {
+  const now = performance.now();
+  if (!entry.loadingSince) entry.loadingSince = now;
+  const t0 = now - entry.loadingSince;
+  const live = !entry.noAnim && t0 < LOADING_WAVE_MAX_MS;
+  entry.loadingAnim = live;
+  // Halbe Balken von der Grundlinie aus ueber die ganze Breite, grau wie die
+  // fertige Wellenform. Die Hoehen springen alle STEP ms auf neue Werte
+  // (deterministischer Hash statt Math.random -> kein Flackern) und werden
+  // dazwischen weich angeglichen; benachbarte Balken sind verwandt, damit
+  // eine wellenartige Form entsteht statt Rauschen.
+  const bw = 3, gap = 2, n = Math.max(1, Math.floor((w + gap) / (bw + gap)));
+  const STEP = 700;
+  const rnd = (i, k) => { const x = Math.sin(i * 127.1 + k * 311.7) * 43758.5453; return x - Math.floor(x); };
+  const val = (i, k) => (rnd(i >> 1, k) + rnd((i >> 1) + 1, k)) / 2 * 0.6 + rnd(i, k) * 0.4;
+  const k = Math.floor(t0 / STEP), f = (t0 % STEP) / STEP;
+  const e = f * f * (3 - 2 * f);
+  ctx.fillStyle = theme().wave;
+  for (let i = 0; i < n; i++) {
+    const v = live ? val(i, k) + (val(i, k + 1) - val(i, k)) * e : 0.1;
+    const bh = Math.max(bw, h * (0.12 + 0.76 * v));
+    ctx.beginPath();
+    ctx.roundRect(i * (bw + gap), h - bh, bw, bh, [bw / 2, bw / 2, 0, 0]);
+    ctx.fill();
+  }
 }
 
 // Bewusst OHNE document.hidden-Pruefung: ein angefordertes Bild wird im
@@ -11265,9 +11460,7 @@ function paintWaveEntry(entry) {
     catch (err) { console.error(err); entry.layer = null; entry.layerKey = waveLayerKey(entry, dpr); }
   }
   if (!entry.layer) {
-    ctx.fillStyle = theme().dim;
-    ctx.font = "11px -apple-system, sans-serif";
-    ctx.fillText(t("player.envelope_calculating"), 4, h/2);
+    drawLoadingWave(ctx, w, h, entry);
     return;
   }
 
@@ -12377,13 +12570,18 @@ function syncPbarWave(r) {
     });
   }
   const entry = _pbarWaveEntry, path = r ? r.p : null;
-  if (entry.path === path) return;
+  // peaksState: "none" (kein Track), "wait" (Server-Modus noch nicht bekannt),
+  // "loading", "done", "failed". Nur "loading" animiert -- sonst wuerde die
+  // Ladeanimation bei einem ausgewaehlten, aber nie geladenen Track endlos
+  // laufen. "wait" wird erneut versucht, sobald apiMode feststeht.
+  if (entry.path === path && !(entry.peaksState === "wait" && apiMode)) return;
   entry.path = path;
-  setWaveData(entry, {peaks: null});
-  if (!path || !apiMode || r.gone) return;
+  if (!path || r.gone) { setWaveData(entry, {peaks: null, peaksState: "none", noAnim: true}); return; }
+  if (!apiMode) { setWaveData(entry, {peaks: null, peaksState: "wait", noAnim: true}); return; }
+  setWaveData(entry, {peaks: null, peaksState: "loading", noAnim: false});
   peaksForLibrary(path)
-    .then(p => { if (entry.path === path) setWaveData(entry, {peaks: p}); })
-    .catch(() => {});
+    .then(p => { if (entry.path === path) setWaveData(entry, {peaks: p, peaksState: "done"}); })
+    .catch(() => { if (entry.path === path) setWaveData(entry, {peaksState: "failed", noAnim: true}); });
 }
 
 function renderPlayerBar() {
@@ -14937,26 +15135,19 @@ function askScanOptions() {
     const fullEl = document.getElementById("scanModeFull");
     const cutoffEl = document.getElementById("scanOptCutoff");
     const loudnessEl = document.getElementById("scanOptLoudness");
-    const metaEl = document.getElementById("scanOptMeta");
     const tagIssuesEl = document.getElementById("scanOptTagIssues");
     const genreMoodEl = document.getElementById("scanOptGenreMood");
     const startBtn = document.getElementById("scanOptionsStart");
 
-    // "Metadaten Scan" erzwingt nur den Cover-Abgleich mit Music.app
-    // (force_cover_fill -> coverfill.fill_missing_covers(), das ohne
-    // cfg["external_music"] sofort abbricht) -- ohne konfigurierte Music App
-    // ist der Schalter ein reines No-op und bleibt deshalb ausgeblendet,
-    // statt wirkungslos anwaehlbar zu sein.
-    document.getElementById("scanOptMetaRow").style.display = MUSIC_NAME ? "" : "none";
-    if (!MUSIC_NAME) metaEl.checked = false;
     // Ohne onnxruntime/Modelle gibt es nichts zu analysieren (siehe
     // genremood.available()) -- Schalter dann gar nicht erst anbieten.
-    document.getElementById("scanOptGenreMoodRow").style.display = GENREMOOD_AVAILABLE ? "" : "none";
-    if (!GENREMOOD_AVAILABLE) genreMoodEl.checked = false;
+    const gmAny = GENREMOOD_AVAILABLE || BPMKEY_AVAILABLE;
+    document.getElementById("scanOptGenreMoodRow").style.display = gmAny ? "" : "none";
+    if (!gmAny) genreMoodEl.checked = false;
 
     const syncState = () => {
       const active = dbEl.checked || fullEl.checked;
-      [cutoffEl, loudnessEl, metaEl, tagIssuesEl, genreMoodEl].forEach(el => { el.disabled = !active; });
+      [cutoffEl, loudnessEl, tagIssuesEl, genreMoodEl].forEach(el => { el.disabled = !active; });
       startBtn.disabled = !active;
     };
     dbEl.onchange = () => { if (dbEl.checked) fullEl.checked = false; syncState(); };
@@ -14972,7 +15163,6 @@ function askScanOptions() {
         fullMode: fullEl.checked,
         cutoff: cutoffEl.checked,
         loudness: loudnessEl.checked,
-        meta: metaEl.checked,
         tagIssues: tagIssuesEl.checked,
         genreMood: genreMoodEl.checked,
       });
@@ -14986,7 +15176,6 @@ document.getElementById("btnScan").onclick = async () => {
   startScan(choice.fullMode, {
     skip_spectral: !choice.cutoff,
     skip_loudness: !choice.loudness,
-    force_cover_fill: choice.meta,
     recheck_tags: choice.tagIssues,
     genremood: choice.genreMood,
   });
@@ -15329,4 +15518,4 @@ renderHead();
 applyColumnLayout();
 initColumnResize();
 renderColsMenu();
-initStorage().then(() => { initDropzone(); pollScan(); updateCards(); render(); renderDrops(); warmScopeCache(); });
+initStorage().then(() => { initDropzone(); pollScan(); updateCards(); render(); renderDrops(); warmScopeCache(); checkUpdateOnStart(); });

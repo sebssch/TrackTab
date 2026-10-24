@@ -210,7 +210,7 @@
      Karten-Zeilen" weiter unten). */
   tr.row:hover { --rowtint:rgba(127,127,127,.06); }
   tr.albumgroup { --rowtint:rgba(127,127,127,.09); }
-  tr.albumgroup td { font-weight:600; font-size:12.5px; cursor:default; }
+  tr.albumgroup td { font-weight:600; font-size:14px; cursor:default; }
   tr.albumgroup td .path { display:inline; font-weight:400; margin-left:4px; }
   tr.albumgroup td .albumgroup-artist { font-weight:400; color:var(--dim); }
   tr.albumgroup.dupwarn { --rowtint:var(--susp-bg); }
@@ -525,8 +525,9 @@
   .tbadge { flex:none; width:18px; height:18px; margin:0 1px 0 0;
        display:flex; align-items:center; justify-content:center;
        color:#fff; overflow:hidden; }
-  .tbadge.tsquare { border-radius:6px; }
-  .tbadge.tcircle { border-radius:50%; }
+  .tbadge.tsquare { border-radius:4px; }
+  /* Heisst historisch tcircle, ist aber wie tsquare ein abgerundetes Quadrat */
+  .tbadge.tcircle { border-radius:4px; }
   .tsym { display:flex; align-items:center; justify-content:center; line-height:1; }
   .tsym.ttext { font-size:10px; }
   .tsym.temoji { font-size:11px; }
@@ -860,6 +861,7 @@ button.act.warn-orange:hover { background:var(--dc-orange-bg); }
          justify-content:center; }
 .cbseg + .cbseg::before { content:""; position:absolute; left:-1px; top:9px; bottom:9px;
                           width:1px; background:var(--line); }
+body[data-layout="player"] #btnStats::before { display:none; }
 .cbseg:hover:not(:disabled), .cbseg.open { background:rgba(127,127,127,.14); }
 .cbseg:disabled { opacity:.4; cursor:not-allowed; }
 .cbseg svg { width:18px; height:18px; }
@@ -1527,7 +1529,7 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 .keybubble { display:inline-block; min-width:34px; text-align:center; white-space:nowrap;
              padding:1px 8px; border-radius:4px; font-size:12px; font-weight:600;
              color:#1b1b1f; line-height:1.5; }
-.flbtn { background:var(--dim); border-radius:6px; width:19px; height:19px;
+.flbtn { background:var(--dim); border-radius:4px; width:16px; height:16px;
          display:inline-flex; align-items:center; justify-content:center;
          opacity:.4; position:relative; }
 .flbtn svg { stroke:#fff; }
@@ -1538,8 +1540,8 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
    das andere verdraengen. */
 .flbtn.on { opacity:1; }
 .flbtn.on::after {
-  content:""; position:absolute; right:-3px; bottom:-3px; width:9px; height:9px;
-  border-radius:50%; background:var(--ok); border:1.5px solid var(--card);
+  content:""; position:absolute; right:-3px; bottom:-2px; width:5px; height:5px;
+  border-radius:50%; background:var(--ok); border:1px solid var(--card);
 }
 /* Sammelleiste: Merken ist hier keine Zeileneigenschaft, sondern eine
    Aktion ueber die ganze Auswahl -- die Deckkraft-Daempfung des einzelnen
@@ -2280,3 +2282,38 @@ canvas.wave.genwave { flex:1 1 220px; min-width:120px; height:34px; border-radiu
            background:var(--dc-red-bg); font-size:11.5px; font-weight:600; }
 .genconf svg { width:13px; height:13px; }
 .genaddslot { align-self:flex-start; }
+
+/* ── Spektrogramm-Overlay (ffmpeg-PNG, Achsen und Cutoff-Linie im Client) ── */
+.confirmbox.specbox { max-width:960px; width:94vw; }
+.specheader { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; }
+.specheader h3 { margin:0; font-size:18px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.specplot { display:grid; grid-template-columns:42px 1fr; grid-template-rows:auto 18px; }
+.specaxis { position:relative; }
+.specaxis span, .specaxisx span { position:absolute; font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums; }
+.specaxis span { right:6px; transform:translateY(50%); }
+.specaxisx { position:relative; grid-column:2; }
+.specaxisx span { top:3px; transform:translateX(-50%); }
+.specimgwrap { position:relative; min-height:260px; background:#0a0a10; border:1px solid var(--line); border-radius:8px; overflow:hidden;
+               display:flex; align-items:center; justify-content:center; color:#9a9aa6; font-size:13px; }
+.specimgwrap img { display:block; width:100%; height:300px; object-fit:fill; }
+.speccut { position:absolute; left:0; right:0; border-top:1px dashed #78c8ff; pointer-events:none; }
+.speccut span { position:absolute; right:6px; top:3px; background:rgba(10,10,16,.8); color:#8fd0ff; font-size:11px; padding:1px 6px; border-radius:4px; }
+.specfoot { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:10px; }
+.specchk { display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer; }
+.speclink { display:inline-flex; vertical-align:-2px; margin-right:4px; padding:0; border:0; background:none; color:var(--dim); cursor:pointer; }
+.speclink:hover { color:var(--text); }
+
+/* Logo/Titel: Klick = Startansicht (siehe goHome() in app.js) */
+#appHome { cursor:pointer; width:fit-content; }
+#appHome:focus-visible { outline:2px solid var(--accent); outline-offset:3px; border-radius:6px; }
+
+/* Aenderungsliste im Update-Hinweis (aus changelog.md des Repositories) */
+.confirmbox.updbox { max-width:640px; }
+.updchanges { max-height:45vh; overflow:auto; margin:8px 0 12px; font-size:13px; line-height:1.5; }
+.updchanges:empty { display:none; }
+.updchanges h4 { margin:12px 0 2px; font-size:14px; }
+.updchanges h4 small { color:var(--dim); font-weight:400; margin-left:6px; }
+.updchanges h5 { margin:6px 0 2px; font-size:12px; color:var(--dim); text-transform:none; font-weight:600; }
+.updchanges ul { margin:0 0 4px; padding-left:18px; }
+.updchanges li { margin:2px 0; }
+.updchanges code { font-family:var(--mono, monospace); font-size:12px; }

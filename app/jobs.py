@@ -27,7 +27,6 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
              limit: int = 0, prune: bool = False,
              on_progress=None, should_cancel=None, cover_scan: bool = False,
              skip_spectral: bool = False, skip_loudness: bool = False,
-             force_cover_fill: bool = False,
              recheck_tag_issues: bool = False,
              genremood: bool = False) -> dict:
     """
@@ -90,7 +89,7 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
                 result["removed"] = len(db_mod.prune_missing(
                     conn, {p for p, _, _ in all_files}))
             _backfill_keys(conn, result)
-            _fill_covers(conn, cfg, result, force=force_cover_fill)
+            _fill_covers(conn, cfg, result)
             _recheck_tag_issues(conn, cfg, result, enabled=recheck_tag_issues)
             _analyse_genremood(conn, cfg, result, genremood, report, cancelled)
             return result
@@ -127,7 +126,7 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
             result["removed"] = len(db_mod.prune_missing(
                 conn, {p for p, _, _ in all_files}))
         _backfill_keys(conn, result)
-        _fill_covers(conn, cfg, result, force=force_cover_fill)
+        _fill_covers(conn, cfg, result)
         _recheck_tag_issues(conn, cfg, result, enabled=recheck_tag_issues)
         if not result["cancelled"]:
             _analyse_genremood(conn, cfg, result, genremood, report, cancelled)
@@ -215,42 +214,116 @@ def _recheck_tag_issues(conn, cfg: dict, result: dict, enabled: bool) -> None:
 
 def _analyse_genremood(conn, cfg: dict, result: dict, enabled: bool,
                        report, cancelled) -> None:
-    """Genre, Stimmung und Energie fuer alle erfolgreich gescannten Dateien
-    nachtragen, die noch kein Ergebnis oder eines mit aelterem Analysestand
-    haben (Tabelle 'genremood', genremood.ANALYSIS_VERSION) -- nur auf
+    """Genre, Stimmung, Energie sowie BPM und Tonart fuer alle erfolgreich
+    gescannten Dateien nachtragen, denen etwas davon fehlt -- nur auf
     ausdruecklichen Wunsch (Schalter im Scan-Dialog, 'genremood' im
     /api/scan-Aufruf), weil es rund eine Sekunde je Datei kostet.
 
-    Schreibt bewusst NUR in die Datenbank, nie in die Dateien, unabhaengig von
-    genremood_write_*: ein Bibliotheks-Scan soll nicht ungefragt tausende
-    Dateien veraendern, an denen Music.app/Rekordbox haengen. Wer Energie oder
-    Stimmung in der Datei haben will, nimmt die Aktion in der Tabelle.
+    - Genre/Stimmung/Energie: Dateien ohne Ergebnis oder mit aelterem
+      Analysestand (Tabelle 'genremood', genremood.ANALYSIS_VERSION).
+    - BPM/Tonart: nur Dateien, bei denen das jeweilige Feld LEER ist ("ergaenzen",
+      nie ueberschreiben) und nur, wenn die Einstellung bpmkey_write_bpm bzw.
+      bpmkey_write_key es erlaubt -- sonst haette ein Messwert keinen Ort.
+    Ob etwas in die DATEI geschrieben wird, entscheiden allein die
+    Einstellungen (genremood_write_*, bpmkey_write_*, bpmkey_comment_*), genau
+    wie bei den Aktionen in der Tabelle (plan_fields()). Das Ergebnis der
+    Genre-/Stimmungs-Analyse geht immer in die Datenbank.
 
     Ein Abbruch behaelt alles bis dahin Gemessene; der naechste Lauf macht
-    beim Rest weiter. Zwei Threads: waehrend einer rechnet (genremood haelt
-    dafuer seinen eigenen Lock), dekodiert der andere schon die naechste
+    beim Rest weiter. Zwei Threads: waehrend einer rechnet (beide Analysen
+    halten dafuer ihren eigenen Lock), dekodiert der andere schon die naechste
     Datei. Einzelfehler (kaputte Datei) zaehlen nur mit, wie bei
     _fill_covers() darf hier nichts den Scan kippen.
     """
     result["genremood_done"] = 0
     result["genremood_failed"] = 0
+    result["bpmkey_done"] = 0
+    result["bpmkey_failed"] = 0
+    result["tags_written"] = 0
     if not enabled:
         return
-    from . import genremood
-    if not genremood.available():
+    from . import audit_log, bpmkey, genremood, taganomaly
+    gm_ok = genremood.available()
+    bk_ok = bpmkey.available()
+    if not (gm_ok or bk_ok):
         return
-    # Gemeinsames Laengenlimit mit der BPM-/Tonart-Analyse.
+    # Gemeinsames Laengenlimit beider Analysen.
     max_seconds = float(cfg.get("bpmkey_max_minutes") or 10) * 60
-    todo = [p for p in db_mod.paths_needing_genremood(
-        conn, max_seconds, genremood.ANALYSIS_VERSION) if os.path.isfile(p)]
+    gm_todo = {p for p in db_mod.paths_needing_genremood(
+        conn, max_seconds, genremood.ANALYSIS_VERSION)} if gm_ok else set()
+    # Nur ergaenzen: "if_empty" statt der eingestellten Ueberschreib-Variante.
+    bk_cfg = dict(cfg)
+    need_bpm = need_key = False
+    if bk_ok:
+        for field, flag in (("bpmkey_write_bpm", "bpm"), ("bpmkey_write_key", "key")):
+            mode = bpmkey._mode(cfg.get(field, "yes"))
+            bk_cfg[field] = "no" if mode == "no" else "if_empty"
+            if mode != "no":
+                if flag == "bpm":
+                    need_bpm = True
+                else:
+                    need_key = True
+    bk_todo = set(db_mod.paths_needing_bpmkey(
+        conn, max_seconds, need_bpm, need_key)) if (need_bpm or need_key) else set()
+    todo = [p for p in sorted(gm_todo | bk_todo) if os.path.isfile(p)]
     total = len(todo)
-    report(0, total, "genre & stimmung")
+    label = "genre, stimmung, bpm & tonart"
+    report(0, total, label)
 
     def measure(path):
+        gm = bk = None
+        gm_err = bk_err = False
+        if path in gm_todo:
+            try:
+                gm = genremood.analyse(path, max_seconds)
+            except Exception:                              # noqa: BLE001
+                gm_err = True
+        if path in bk_todo:
+            try:
+                bk = bpmkey.analyse(path, max_seconds)
+            except bpmkey.TooLongError:
+                pass
+            except Exception:                              # noqa: BLE001
+                bk_err = True
+        return path, gm, bk, gm_err, bk_err
+
+    def apply(path, gm, bk):
+        """Ergebnis eintragen und, falls die Einstellungen es vorsehen, in die
+        Datei schreiben. Fehler beim Schreiben zaehlen nicht als Messfehler."""
+        if gm is not None:
+            db_mod.save_genremood(conn, path, gm["genres"], gm["moods"],
+                                  gm["energy"], gm["model"])
+        if gm is None and bk is None:
+            return
         try:
-            return path, genremood.analyse(path, max_seconds), None
-        except Exception as exc:                           # noqa: BLE001
-            return path, None, exc
+            existing = tags_mod.read_extra(path)
+            fields: dict = {}
+            if gm is not None:
+                fields.update(genremood.plan_fields(
+                    cfg, gm, existing, tags_mod.read_mood(path)))
+            if bk is not None:
+                energy = gm["energy"] if gm is not None \
+                    else db_mod.genremood_energy(conn, path)
+                # Der Kommentar der BPM-/Tonart-Planung enthaelt die Energie
+                # bereits und ersetzt den der Genre-Planung.
+                fields.update(bpmkey.plan_fields(bk_cfg, bk, existing, energy))
+            if not fields:
+                return
+            tags_mod.write_tags(path, fields)
+        except Exception:                                  # noqa: BLE001
+            return
+        audit_log.log("scan-analyse", path, ", ".join(sorted(fields)))
+        db_fields = dict(fields)
+        if "key" in fields and bk is not None:
+            db_fields["key"] = bk["camelot"]
+            db_fields["key_raw"] = fields["key"]
+        row = conn.execute("SELECT codec_family FROM files WHERE path = ?",
+                           (path,)).fetchone()
+        db_mod.update_tags(conn, path, db_fields)
+        db_mod.update_tag_issues(conn, path, taganomaly.detect(
+            path, (row["codec_family"] if row else "") or ""))
+        db_mod.refresh_stat(conn, path)
+        result["tags_written"] += 1
 
     done = 0
     pending = iter(todo)
@@ -259,15 +332,16 @@ def _analyse_genremood(conn, cfg: dict, result: dict, enabled: bool,
         while running:
             finished, running = wait(running, return_when=FIRST_COMPLETED)
             for future in finished:
-                path, res, _exc = future.result()
+                path, gm, bk, gm_err, bk_err = future.result()
                 done += 1
-                if res is not None:
-                    db_mod.save_genremood(conn, path, res["genres"], res["moods"],
-                                          res["energy"], res["model"])
+                if gm is not None:
                     result["genremood_done"] += 1
-                else:
-                    result["genremood_failed"] += 1
-                report(done, total, "genre & stimmung")
+                if bk is not None:
+                    result["bpmkey_done"] += 1
+                result["genremood_failed"] += int(gm_err)
+                result["bpmkey_failed"] += int(bk_err)
+                apply(path, gm, bk)
+                report(done, total, label)
             if cancelled():
                 result["cancelled"] = True
                 for future in running:

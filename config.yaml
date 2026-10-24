@@ -19,6 +19,8 @@ exclude_dirs:                  # Verzeichnisnamen, die uebersprungen werden
 
 min_duration_s: 30.0           # Kuerzere Dateien (Jingles, Effekte) ignorieren
 
+update_ignore_version: ""      # Vom Update-Hinweis beim Start gesetzt ("Diese Version ignorieren"), leer = nichts ignoriert
+
 cover_auto_fill: true          # Beim Scan Cover aus Music.app uebernehmen (nur neue Dateien + DB-Cache-Abgleich, nie beim Import)
 
 external_browser: "/Applications/Safari.app"   # Browser fuer die Web-UI, leer = Systemstandard
