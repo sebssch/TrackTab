@@ -1910,7 +1910,7 @@ body { padding-bottom:96px; }
 #toasts { bottom:100px; }
 
 .pbartrack { flex:0 0 auto; display:flex; align-items:center; gap:10px;
-             min-width:0; width:240px; cursor:pointer; }
+             min-width:0; width:260px; cursor:pointer; }
 .pbarcover, .pbarcover-empty { width:44px; height:44px; border-radius:6px;
              flex:0 0 auto; object-fit:cover; background:var(--line); }
 .pbarmeta { min-width:0; }
@@ -1939,7 +1939,7 @@ body { padding-bottom:96px; }
 /* Play-Knoepfe links, direkt neben dem Zeitstrahl -- eine Zeile statt
    Knoepfe oben/Fortschritt darunter gestapelt. */
 .pbarcenter { flex:1 1 auto; display:flex; flex-direction:row; align-items:center;
-              gap:14px; min-width:0; max-width:700px; margin:0 auto; }
+              gap:14px; min-width:0; max-width:90%; margin:0 auto; }
 .pbarbtns { flex:0 0 auto; display:flex; align-items:center; gap:6px; }
 .pbarbtns .iconbtn.on { color:var(--accent); background:var(--accent-bg); }
 .pbarbtns .pbtn { width:34px; height:34px; }
@@ -1947,22 +1947,25 @@ body { padding-bottom:96px; }
 .pbarbtns .pbtn:disabled:hover { border-color:var(--line); }
 .pbarseek { flex:1; display:flex; align-items:center; gap:8px; min-width:0; }
 .pbartime { flex:0 0 auto; font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums; }
-.pbarprogress { flex:1; height:4px; border-radius:2px; background:var(--line);
-                cursor:pointer; position:relative; }
+.pbarprogress { flex:1; height:2px; border-radius:0; background:var(--wave);
+                cursor:pointer; position:relative; top:18px; }
+/* Halbe Wellenform ueber der Linie; Maus-Ereignisse laufen zum Balken hoch. */
+.pbarwave { position:absolute; left:0; right:0; bottom:100%;
+            width:100%; height:36px; }
 /* transform:scaleX() statt width: renderPlayerProgress() laeuft pro Bild,
    eine Breitenaenderung wuerde dabei jedes Mal Layout ausloesen -- eine
    Transformation bleibt im Compositor. transform-origin haelt den Balken an
    der linken Kante fest. */
 .pbarprogress-fill { position:absolute; left:0; top:0; bottom:0; width:100%;
                       transform:scaleX(0); transform-origin:left center;
-                      border-radius:2px; background:var(--accent); pointer-events:none; }
+                      border-radius:0; background:var(--accent); pointer-events:none; }
 
 /* Sprechblase mit dem Zeit-/Lautstaerkewert beim Ziehen an Fortschritts-
    oder Lautstaerkeregler (setupSeekDrag()/setupVolumeBubble() in app.js) --
    per .show ein-/ausgeblendet statt display, damit die opacity-Transition
    greift. left wird per JS auf den Anteil (0-100%) der Ziehposition gesetzt,
    transform zentriert die Blase darueber statt an ihrer linken Kante. */
-.pbar-bubble { position:absolute; bottom:12px; left:0; transform:translateX(-50%);
+.pbar-bubble { position:absolute; bottom:46px; left:0; transform:translateX(-50%);
                 background:var(--fg); color:var(--bg); font-size:11px; font-weight:600;
                 padding:3px 7px; border-radius:5px; white-space:nowrap; pointer-events:none;
                 opacity:0; transition:opacity .1s ease; z-index:5;
@@ -1974,7 +1977,7 @@ body { padding-bottom:96px; }
 
 /* Lautstaerke -- rechts neben dem Zeitstrahl, eigene Gruppe innerhalb von
    .pbarcenter (das ist bereits eine Flex-Reihe). */
-.pbarvolume { flex:0 0 auto; display:flex; align-items:center; gap:6px; }
+.pbarvolume { flex:0 0 auto; display:flex; align-items:center; gap:6px; margin:0 30px; }
 /* Eigener Bezugsrahmen fuer die Lautstaerke-Blase -- ein <input> kann keine
    Kind-Elemente haben, die Blase braucht einen umschliessenden Container mit
    genau der Breite des Reglers (nicht der ganzen .pbarvolume-Gruppe inkl.

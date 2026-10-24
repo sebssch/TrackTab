@@ -322,7 +322,7 @@ function genBpmDiff(a, b, half) {
 
 function genBpmOk(a, b, gates) {
   if (gates.bpm === "any") return true;
-  return genBpmDiff(a, b, gates.half) <= (gates.bpm === "0" ? 0.5 : 3);
+  return genBpmDiff(a, b, gates.half) <= (gates.bpm === "0" ? 0.5 : (Number(gates.bpm) || 3));
 }
 
 // Verletzte Regeln zwischen zwei aufeinanderfolgenden Tracks -- fuer die
@@ -632,7 +632,7 @@ function genSettingsHtml() {
       <div class="gensection">${esc(t("gen.gates"))}</div>
       <div class="genfilters">
         <label class="genfield"><span class="genlbl">${esc(t("gen.gate_bpm"))}</span>
-          ${genSelect("genGateBpm", g.bpm, [["0", "±0"], ["3", "±3"], ["any", t("gen.gate_any")]])}</label>
+          ${genSelect("genGateBpm", g.bpm, [["0", "±0"], ["3", "±3"], ["5", "±5"], ["7", "±7"], ["any", t("gen.gate_any")]])}</label>
         <div class="genfield" title="${esc(t("gen.gate_half_title"))}"><span class="genlbl">${esc(t("gen.gate_tempo"))}</span>
           <span class="advseg genhalfseg">
             <button type="button" data-act="half-off"${g.half ? "" : ` class="on"`}>${esc(t("gen.gate_off"))}</button>
@@ -845,13 +845,15 @@ function genMountSlotWaves() {
   if (!GEN || !apiMode) return;
   if (!GEN_PEAKS) GEN_PEAKS = new Map();
   if (!GEN_RBWAVE) GEN_RBWAVE = new Map();
+  const jobs = [];
+  jobs.push = (fn, canvas) => { jobs[jobs.length] = {fn, canvas}; };
   document.querySelectorAll("#genSlots canvas.genwave").forEach(canvas => {
     const i = Number(canvas.dataset.wave);
     const r = GEN.tracks[i];
     if (!r) return;
     const isCurrent = () => !!(queueState.current && queueState.current.p === r.p);
     const entry = registerWaveEntry({
-      root: canvas.closest(".genslot"), canvas, r, peaks: null, cues: null, waveform: null,
+      root: canvas.closest(".genslot"), canvas, r, half: true, peaks: null, cues: null, waveform: null,
       sync() {
         const cur = isCurrent();
         this.currentTime = cur ? queueAudio.currentTime : 0;
@@ -860,27 +862,10 @@ function genMountSlotWaves() {
     });
     const cached = GEN_PEAKS.get(r.p);
     if (cached) setWaveData(entry, {peaks: cached});
-    else peaksForLibrary(r.p)
+    else jobs.push(() => peaksForLibrary(r.p)
       .then(p => { GEN_PEAKS.set(r.p, p); setWaveData(entry, {peaks: p}); })
-      .catch(() => setWaveData(entry, {peaks: []}));
-    // Farbige Waveform aus Rekordbox wie in der aufgeklappten Tabellenzeile
-    // (mountLibraryPlayer()), aber ohne Cues -- deren Faehnchen passen nicht
-    // in die 34 px hohe Slot-Zeile. Nur fuer Tracks, die laut Abgleich in
-    // Rekordbox liegen (r.rb), sonst eine Anfrage je Slot fuer nichts.
-    if (r.rb) {
-      if (GEN_RBWAVE.has(r.p)) {
-        const wf = GEN_RBWAVE.get(r.p);
-        if (wf) setWaveData(entry, {waveform: wf});
-      } else {
-        rekordboxExtrasFor(r.p)
-          .then(extras => {
-            const wf = (extras && extras.available && extras.waveform) || null;
-            GEN_RBWAVE.set(r.p, wf);
-            if (wf) setWaveData(entry, {waveform: wf});
-          })
-          .catch(() => {});
-      }
-    }
+      .catch(() => setWaveData(entry, {peaks: []})), canvas);
+    // Halbe, einfarbige Huellkurve (entry.half) -- keine Rekordbox-Farben.
     canvas.onclick = ev => {
       ev.stopPropagation();
       const rect = canvas.getBoundingClientRect();
@@ -894,6 +879,37 @@ function genMountSlotWaves() {
         genPlay(i);
       }
     };
+  });
+  genRunWaveJobs(jobs);
+}
+
+// Waveform-Daten erst nachladen, wenn die Cover der Liste da sind, und dann
+// nur wenige gleichzeitig: der Browser erlaubt je Host nur ~6 Verbindungen,
+// ein Schwung Waveform-Anfragen (serverseitig ffmpeg) hielt sonst Cover,
+// Audio und alle anderen Aufrufe auf. Neuaufbau der Liste verwirft den Rest.
+var GEN_WAVE_RUN;
+function genRunWaveJobs(jobs) {
+  const run = GEN_WAVE_RUN = {};
+  if (!jobs.length) return;
+  const imgs = Array.from(document.querySelectorAll("#genSlots img.gencov"))
+    .filter(im => !im.complete);
+  const coversDone = Promise.race([
+    Promise.all(imgs.map(im => new Promise(res => {
+      im.addEventListener("load", res, {once: true});
+      im.addEventListener("error", res, {once: true});
+    }))),
+    new Promise(res => setTimeout(res, 4000)),
+  ]);
+  coversDone.then(() => new Promise(res => setTimeout(res, 50))).then(() => {
+    let next = 0;
+    const worker = async () => {
+      while (GEN_WAVE_RUN === run && next < jobs.length) {
+        const job = jobs[next++];
+        if (!job.canvas.isConnected) continue;
+        await job.fn();
+      }
+    };
+    worker(); worker();
   });
 }
 

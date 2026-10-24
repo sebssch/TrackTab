@@ -11222,7 +11222,12 @@ function buildWaveLayer(entry, dpr) {
   // Kopieren eingefaerbt werden darf. Die bunten Rekordbox-Stile behalten
   // ihre echten Farben und bekommen stattdessen die Positionslinie.
   let recolorable = false;
-  if (wf && wf.style === "rgb") {
+  if (entry.half) {
+    // Halbe, einfarbige Huellkurve des Player-Balkens: nie Rekordbox-Farben.
+    if (!(entry.peaks && entry.peaks.length)) return null;
+    drawHalfWave(ctx, w, h, entry.peaks);
+    recolorable = true;
+  } else if (wf && wf.style === "rgb") {
     drawRgbWave(ctx, w, h, wf);
   } else if (wf && wf.style === "3band") {
     drawBandWave(ctx, w, h, wf);
@@ -11307,7 +11312,7 @@ function paintWaveEntry(entry) {
 // (oben hin, gespiegelt zurueck), das "source-atop"-Einfaerben in
 // paintWaveEntry() wirkt darauf unveraendert.
 const WAVE_SMOOTH_SIGMA = 0.6;   // 3 (bei 2 px je Stuetzstelle), 1,5, 0,8 und 0,7 waren zu weich
-function smoothedColumns(peaks, cols) {
+function smoothedColumns(peaks, cols, sigma = WAVE_SMOOTH_SIGMA) {
   const n = peaks.length, raw = new Float32Array(cols);
   for (let x = 0; x < cols; x++) {
     const a = x * n / cols, b = (x + 1) * n / cols;
@@ -11320,9 +11325,9 @@ function smoothedColumns(peaks, cols) {
     }
     raw[x] = v;
   }
-  const r = Math.ceil(WAVE_SMOOTH_SIGMA * 3), kern = [];
+  const r = Math.ceil(sigma * 3), kern = [];
   let ksum = 0;
-  for (let k = -r; k <= r; k++) { const g = Math.exp(-(k*k) / (2*WAVE_SMOOTH_SIGMA*WAVE_SMOOTH_SIGMA)); kern.push(g); ksum += g; }
+  for (let k = -r; k <= r; k++) { const g = Math.exp(-(k*k) / (2*sigma*sigma)); kern.push(g); ksum += g; }
   const out = new Float32Array(cols);
   let rawMax = 0, outMax = 0;
   for (let x = 0; x < cols; x++) {
@@ -11355,6 +11360,29 @@ function drawPlainWave(ctx, w, h, peaks) {
     ctx.quadraticCurveTo(xAt(i + 1), mid + yAt(i + 1), xm, ym);
   }
   ctx.lineTo(0, mid + yAt(0));
+  ctx.closePath();
+  ctx.fill();
+}
+
+// Obere Haelfte der Huellkurve, Grundlinie unten (Player-Balken, siehe
+// syncPbarWave()). Gleiche Glaettung wie drawPlainWave(), aber feiner
+// (HALF_WAVE_SIGMA).
+const HALF_WAVE_SIGMA = 0.4;
+function drawHalfWave(ctx, w, h, peaks) {
+  const cols = Math.max(2, Math.round(w));
+  const v = smoothedColumns(peaks, cols, HALF_WAVE_SIGMA);
+  const xAt = i => i * w / (cols - 1);
+  const yAt = i => Math.max(0.5, v[i] * (h - 1));
+  ctx.fillStyle = theme().wave;
+  ctx.beginPath();
+  ctx.moveTo(0, h);
+  ctx.lineTo(0, h - yAt(0));
+  for (let i = 1; i < cols; i++) {
+    const xm = (xAt(i - 1) + xAt(i)) / 2, ym = h - (yAt(i - 1) + yAt(i)) / 2;
+    ctx.quadraticCurveTo(xAt(i - 1), h - yAt(i - 1), xm, ym);
+  }
+  ctx.lineTo(w, h - yAt(cols - 1));
+  ctx.lineTo(w, h);
   ctx.closePath();
   ctx.fill();
 }
@@ -12336,10 +12364,33 @@ function setupSeekDrag() {
   });
 }
 
+// Halbe Wellenform ueber der Fortschrittslinie: ein eigener Eintrag in der
+// Wave-Registry (half:true), Peaks nur fuer den aktuellen Track.
+let _pbarWaveEntry = null;
+function syncPbarWave(r) {
+  const canvas = document.getElementById("pbarWave");
+  if (!canvas) return;
+  if (!_pbarWaveEntry) {
+    _pbarWaveEntry = registerWaveEntry({
+      root: canvas, canvas: canvas, half: true, peaks: null, path: null,
+      sync() { this.currentTime = queueAudio.currentTime; this.duration = queueAudio.duration; },
+    });
+  }
+  const entry = _pbarWaveEntry, path = r ? r.p : null;
+  if (entry.path === path) return;
+  entry.path = path;
+  setWaveData(entry, {peaks: null});
+  if (!path || !apiMode || r.gone) return;
+  peaksForLibrary(path)
+    .then(p => { if (entry.path === path) setWaveData(entry, {peaks: p}); })
+    .catch(() => {});
+}
+
 function renderPlayerBar() {
   const bar = document.getElementById("playerBar");
   if (!bar) return;
   const r = currentQueueTrack();
+  syncPbarWave(r);
   const cover = document.getElementById("pbarCover");
   const coverEmpty = document.getElementById("pbarCoverEmpty");
   const showCover = r && apiMode && !r.gone && r.cv;

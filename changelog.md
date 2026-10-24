@@ -3,6 +3,19 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
+## [1.9.2] - 2026-10-24
+
+### Added
+- Player-Balken: Über der Wiedergabelinie steht eine halbe, einfarbige Wellenform (36 px hoch, gespielter Teil in Akzentfarbe, ohne Rekordbox-Farben), die nahtlos mit der Linie verschmilzt. Klicken und Ziehen darauf spult wie auf der Linie.
+- Playlist-Generator: Die BPM-Abweichung zwischen zwei Tracks lässt sich auch auf ±5 und ±7 stellen (bisher ±0, ±3, beliebig).
+
+### Changed
+- Player-Balken: `.pbarcenter` bis 90 % Breite, Titelbereich 260 px, Lautstärke mit 30 px Abstand, Fortschrittslinie 2 px hoch.
+- Playlist-Generator: Die Waveforms der Slots zeigen ebenfalls nur die obere Hälfte als einfarbige Hüllkurve; die Rekordbox-Farbwellenform wird dort nicht mehr geladen.
+
+### Fixed
+- Playlist-Generator: Das Laden der Waveforms blockiert die Oberfläche nicht mehr. Erst erscheinen Tracks und Cover, danach werden die Hüllkurven höchstens zwei gleichzeitig nachgeladen und füllen sich nach und nach.
+
 ## [1.9.1] - 2026-10-23
 
 ### Added
