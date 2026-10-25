@@ -5,6 +5,18 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 
 ## [Unreleased]
 
+### Added
+- Sammelleiste: Neuer Knopf „Korrektur zurücknehmen“ neben „Als korrekt markieren“ — hebt die Markierung für alle Ausgewählten auf. Das Icon (Lucide `circle-dashed-check`) steht auch im Zeilenmenü bei „Korrektur zurücknehmen“.
+
+### Changed
+- Listenmenü (Seitenleiste): „Spaltenansicht …“ steht in einer eigenen Gruppe mit Trennlinie davor.
+- „Aus Rekordbox-Sammlung entfernen“ hat im Zeilenmenü und in der Sammelleiste das Lucide-Icon „delete“.
+- Zeilenmenü: Nach „Aus Playlist entfernen“ steht eine Trennlinie.
+- Merk-Knöpfe in der Sammelleiste haben dieselbe Deckkraft wie in der Zeile: gedämpft, solange keine Zeile der Auswahl in der Liste steht; voll deckend bei allen (mit Punkt) oder einem Teil (ohne Punkt).
+
+### Fixed
+- In den Papierkorb legen: Fehlt die Datei schon auf der Festplatte, scheiterte das mit „kann nicht in Typ alias umgewandelt werden (-1700)“ und der Eintrag blieb stehen. Häufigster Anlass: Music.app legt die Datei beim Entfernen aus seiner Bibliothek selbst in den Papierkorb. Jetzt wird nur noch der Eintrag entfernt; der Hinweis lautet „liegt im Papierkorb“, wenn Music.app es war, sonst „war schon nicht mehr vorhanden“.
+
 ## [1.9.3] - 2026-10-25
 
 ### Added

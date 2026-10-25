@@ -3095,12 +3095,20 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:                     # noqa: BLE001
                 library_error = str(exc)
 
-        try:
-            media.move_to_trash(path)
-        except Exception as exc:                     # noqa: BLE001
-            self._fail(f"Papierkorb: {exc}", 500)
-            return
-        audit_log.log("papierkorb", path)
+        # Fehlt die Datei schon, gibt es nichts mehr in den Papierkorb zu legen
+        # -- 'POSIX file ... as alias' scheitert dann mit -1700. Haeufigster
+        # Anlass: Music.app legt eine Datei seines Medienordners beim
+        # Entfernen aus der Bibliothek (oben) selbst in den Papierkorb. Die DB-Zeile und die Merkmale
+        # raeumen wir trotzdem ab, sonst bliebe die Zeile nicht entfernbar.
+        already_gone = not os.path.lexists(path)
+        if not already_gone:
+            try:
+                media.move_to_trash(path)
+            except Exception as exc:                     # noqa: BLE001
+                self._fail(f"Papierkorb: {exc}", 500)
+                return
+        audit_log.log("papierkorb-durch-music" if (already_gone and removed_from_music)
+                      else "datei-fehlt-entfernt" if already_gone else "papierkorb", path)
 
         with self.lock:
             conn = db_mod.connect(cfg)
@@ -3118,7 +3126,8 @@ class _Handler(BaseHTTPRequestHandler):
             # naechsten Neuladen weiter an, siehe /api/prune.
             self._rebuild(cfg)
         self._json({"ok": True, "total": total, "removed_from_music": removed_from_music,
-                     "music_error": library_error, "music_cloud_note": cloud_note})
+                     "music_error": library_error, "music_cloud_note": cloud_note,
+                     "already_gone": already_gone})
 
     def _post_convert(self) -> None:
         """

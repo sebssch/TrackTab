@@ -1543,11 +1543,10 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
   content:""; position:absolute; right:-3px; bottom:-2px; width:5px; height:5px;
   border-radius:50%; background:var(--ok); border:1px solid var(--card);
 }
-/* Sammelleiste: Merken ist hier keine Zeileneigenschaft, sondern eine
-   Aktion ueber die ganze Auswahl -- die Deckkraft-Daempfung des einzelnen
-   Zeilen-Knopfs (Mitgliedschaft ja/nein) ergibt hier keinen Sinn, der
-   Haken-Kreis bleibt trotzdem an .on gebunden (volle Auswahl bereits drin). */
-#bulkbar .flbtn { opacity:1; }
+/* Sammelleiste: gleiche Deckkraft wie in der Zeile -- gedaempft, solange keine
+   Zeile der Auswahl in der Liste steht; voll deckend bei .on (alle, mit
+   Punkt) und .part (nur ein Teil der Auswahl, ohne Punkt). */
+.flbtn.part { opacity:1; }
 /* Eigene, groessere Luecke zwischen den Merken-Quadraten in der Zeile --
    die uebrigen Icon-Gruppen bleiben bei .actiongroup .groupicons { gap:1px }
    eng gepackt. Drei Klassen statt zwei, damit die Regel unabhaengig von der

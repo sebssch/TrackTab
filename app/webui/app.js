@@ -1083,6 +1083,8 @@ const ICONS = {
   question: SVG('<path d="M9.5 9a2.5 2.5 0 114.7 1.2c-.9.8-1.7 1.4-1.7 2.8"/>' +
                 '<line x1="12.5" y1="17" x2="12.5" y2="17.01"/>'),
   trash: SVG(LUCIDE_ICONS["trash"]),
+  delete: SVG(LUCIDE_ICONS["delete"]),
+  uncorrect: SVG(LUCIDE_ICONS["circle-dashed-check"]),
   exportZip: SVG(LUCIDE_ICONS["file-down"]),
   gripVertical: SVG(LUCIDE_ICONS["grip-vertical"]),
   audioLines: SVG(LUCIDE_ICONS["audio-lines"]),
@@ -3271,9 +3273,11 @@ function nodeMenuItems(node) {
 
   // Drei Gruppen, am Ende mit Trennlinien verbunden:
   //   1. was die Liste SELBST betrifft (Name, Regeln, Kopie)
-  //   2. was mit ihrem INHALT geschieht (abspielen, exportieren)
-  //   3. das Loeschen -- abgesetzt, weil es als einziges nicht umkehrbar ist
+  //   2. die Spaltenansicht der Liste
+  //   3. was mit ihrem INHALT geschieht (abspielen, exportieren)
+  //   4. das Loeschen -- abgesetzt, weil es als einziges nicht umkehrbar ist
   const listeSelbst = [];
+  const ansicht = [];
   const inhalt = [];
   const entfernen = [];
 
@@ -3343,7 +3347,7 @@ function nodeMenuItems(node) {
   // es pro Einstellung nur eine Stelle gibt.
   // Ein Generator zeigt keine Tabelle (generator.js) -- keine Spaltenansicht.
   if (spielbar && node.kind !== "generator") {
-    listeSelbst.push({
+    ansicht.push({
       icon: ICONS.columns3, label: t("cols.view_menu"),
       action: () => setNodeColumnView(node),
     });
@@ -3403,7 +3407,7 @@ function nodeMenuItems(node) {
 
   // Leere Gruppen fallen samt ihrer Trennlinie weg -- bei einer festen Liste
   // bleibt so nur die Inhalts-Gruppe uebrig, ganz ohne Linie.
-  const gruppen = [listeSelbst, inhalt, entfernen].filter(g => g.length);
+  const gruppen = [listeSelbst, ansicht, inhalt, entfernen].filter(g => g.length);
   return gruppen.flatMap((g, i) => i === 0 ? g : [{sep: true}, ...g]);
 }
 
@@ -6353,6 +6357,7 @@ function rowMoreMenuItems(r) {
     });
   }
   const sep = () => { if (items.length && !items[items.length - 1].sep) items.push({sep: true}); };
+  sep();
   if (!r.gone && apiMode && BPMKEY_AVAILABLE) {
     items.push({
       icon: ICONS.analyseBpmKey, cls: "", title: t("action.bpmkey_title"),
@@ -6392,7 +6397,7 @@ function rowMoreMenuItems(r) {
   }
   if (!r.gone) {
     items.push({
-      icon: ICONS.correct, cls: "corr",
+      icon: r.mc ? ICONS.uncorrect : ICONS.correct, cls: "corr",
       title: r.mc ? t("action.undo_correct") : t("action.mark_corrected"),
       label: r.mc ? t("rowmenu.undo_correct") : t("rowmenu.mark_corrected"),
       action: () => setCorrected(r, !r.mc),
@@ -6408,7 +6413,7 @@ function rowMoreMenuItems(r) {
   const danger = [];
   if (REKORDBOX_NAME && apiMode && (rbList || (r.rb && !r.ext))) {
     danger.push({
-      icon: ICONS.trash, cls: "del", label: t("rb.remove_from_collection"),
+      icon: ICONS.delete, cls: "del", label: t("rb.remove_from_collection"),
       action: () => removeFromRekordboxCollection([r]),
     });
   }
@@ -7076,7 +7081,7 @@ function renderPlayerBulkBar(bar) {
     ${merkPlaylists().length ? `<span class="sep"></span>
     ${merkPlaylists().map(n => {
         const flState = flStateOfSelection(rows, n.id);
-        return `<button class="iconbtn flbtn${flState === "all" ? " on" : ""}" data-bulkfl="${n.id}" style="background:var(--${flColorTok(n)})"
+        return `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:var(--${flColorTok(n)})"
         title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`;
       }).join("")}` : ""}
     <button class="act small" id="bulkClear">${esc(t("bulk.clear_selection"))}</button>`;
@@ -7115,7 +7120,7 @@ function renderBulkBar() {
         : disabledAppIcon("rekordbox", "Rekordbox", REKORDBOX_MISSING_HINT, "bulkRbAdd")),
       merkPlaylists().map(n => {
         const flState = flStateOf(n.id);
-        return `<button class="iconbtn flbtn${flState === "all" ? " on" : ""}" data-bulkfl="${n.id}" style="background:var(--${flColorTok(n)})"
+        return `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:var(--${flColorTok(n)})"
         title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`;
       }).join(""),
     ],
@@ -7131,7 +7136,8 @@ function renderBulkBar() {
       selRows.some(hasAutoFixableTagIssues) ? `<button class="iconbtn plain" id="bulkFixTags"
         title="${esc(t("bulk.action_fix_tag_issues"))}">${TREE_ICONS.tag_issues}</button>` : "",
       bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.keySync}</button>` : "",
-      anyNonGone ? `<button class="iconbtn plain" id="bulkCorrect" title="${esc(t("bulk.correct_title"))}">${ICONS.correct}</button>` : "",
+      anyNonGone ? `<button class="iconbtn plain" id="bulkCorrect" title="${esc(t("bulk.correct_title"))}">${ICONS.correct}</button>
+    <button class="iconbtn plain" id="bulkUncorrect" title="${esc(t("bulk.uncorrect_title"))}">${ICONS.uncorrect}</button>` : "",
     ],
     [
       anyNonGone ? `<button class="iconbtn ig" id="bulkIgnore" title="${esc(t("bulk.hide_title"))}">${ICONS.eyeOff}</button>
@@ -7144,7 +7150,7 @@ function renderBulkBar() {
       `<button class="iconbtn plain" id="bulkExportZip" title="${esc(t("export_zip.title"))}">${ICONS.exportZip}</button>`,
     ],
     [
-      REKORDBOX_NAME && apiMode && (currentRekordboxPlaylist() || selRows.some(r => r.rb && !r.ext)) ? `<button class="iconbtn del" id="bulkRbCollection" title="${esc(t("rb.remove_from_collection"))}">${ICONS.trash}</button>` : "",
+      REKORDBOX_NAME && apiMode && (currentRekordboxPlaylist() || selRows.some(r => r.rb && !r.ext)) ? `<button class="iconbtn del" id="bulkRbCollection" title="${esc(t("rb.remove_from_collection"))}">${ICONS.delete}</button>` : "",
       `<button class="iconbtn del" id="bulkTrash" title="${esc(t("action.to_trash"))}">${ICONS.trash}</button>`,
     ],
   ].map(g => g.filter(Boolean).join("\n    ")).filter(Boolean);
@@ -7185,6 +7191,8 @@ function renderBulkBar() {
   if (bulkShowBtn) bulkShowBtn.onclick = () => bulkApply("show");
   const bulkCorrectBtn = document.getElementById("bulkCorrect");
   if (bulkCorrectBtn) bulkCorrectBtn.onclick = () => bulkApply("correct");
+  const bulkUncorrectBtn = document.getElementById("bulkUncorrect");
+  if (bulkUncorrectBtn) bulkUncorrectBtn.onclick = () => bulkApply("uncorrect");
   bar.querySelectorAll("[data-bulkfl]").forEach(b => b.onclick = () => bulkApply(`fl:${b.dataset.bulkfl}`));
   document.getElementById("bulkFix").onclick = () => bulkApply("fix");
   const bulkFixTagsBtn = document.getElementById("bulkFixTags");
@@ -7533,7 +7541,7 @@ async function bulkApply(kind) {
   }
   if (kind === "trash" && !await askTrashBulk(rows)) return;
 
-  if (kind === "ignore" || kind === "show" || kind === "correct") {
+  if (kind === "ignore" || kind === "show" || kind === "correct" || kind === "uncorrect") {
     // Ohne lokale Datei (Music-App-Titel ohne Match, "Datei fehlt") ergeben
     // Ausblenden/Korrigieren keinen Sinn -- bei gemischter Auswahl wirkt die
     // Aktion nur auf die uebrigen Zeilen (siehe renderBulkBar()).
@@ -7623,6 +7631,10 @@ async function bulkApply(kind) {
         } else if (kind === "correct") {
           r.mc = 1; r.ig = 0;
           await persistCorrected(r.p, true);
+        } else if (kind === "uncorrect") {
+          // Wie "show": einheitlich fuer ALLE Ausgewaehlten, kein Umschalten.
+          r.mc = 0;
+          await persistCorrected(r.p, false);
         } else if (kind === "trash") {
           const res = await fetch("/api/trash", {method: "POST",
             headers: {"Content-Type": "application/json"},
@@ -9849,7 +9861,10 @@ async function trashTrack(r) {
     r.removed = 1;
     dupGroupsDirty = true;
     updateCards(); render();
-    note(t("toast.trashed", {name: baseName(r.p)}));
+    // Hat Music.app die Datei beim Entfernen selbst in den Papierkorb gelegt,
+    // stimmt der normale Hinweis; "schon weg" nur, wenn niemand sie bewegt hat.
+    note(t(data.already_gone && !data.removed_from_music ? "toast.trash_already_gone" : "toast.trashed",
+      {name: baseName(r.p)}));
     if (data.music_error) {
       note(t("toast.trash_music_failed_one", {name: baseName(r.p), error: data.music_error}), "soft");
     }
