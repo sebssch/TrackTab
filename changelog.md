@@ -5,6 +5,8 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 
 ## [Unreleased]
 
+## [1.9.4] - 2026-10-25
+
 ### Added
 - Sammelleiste: Neuer Knopf „Korrektur zurücknehmen“ neben „Als korrekt markieren“ — hebt die Markierung für alle Ausgewählten auf. Das Icon (Lucide `circle-dashed-check`) steht auch im Zeilenmenü bei „Korrektur zurücknehmen“.
 

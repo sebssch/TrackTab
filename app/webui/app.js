@@ -11340,8 +11340,8 @@ function drawLoadingWave(ctx, w, h, entry) {
   const t0 = now - entry.loadingSince;
   const live = !entry.noAnim && t0 < LOADING_WAVE_MAX_MS;
   entry.loadingAnim = live;
-  // Halbe Balken von der Grundlinie aus ueber die ganze Breite, grau wie die
-  // fertige Wellenform. Die Hoehen springen alle STEP ms auf neue Werte
+  // Balken ueber die ganze Breite (im Player-Balken halb von der Grundlinie,
+  // sonst gespiegelt wie die fertige Wellenform), grau wie diese. Die Hoehen springen alle STEP ms auf neue Werte
   // (deterministischer Hash statt Math.random -> kein Flackern) und werden
   // dazwischen weich angeglichen; benachbarte Balken sind verwandt, damit
   // eine wellenartige Form entsteht statt Rauschen.
@@ -11354,9 +11354,15 @@ function drawLoadingWave(ctx, w, h, entry) {
   ctx.fillStyle = theme().wave;
   for (let i = 0; i < n; i++) {
     const v = live ? val(i, k) + (val(i, k + 1) - val(i, k)) * e : 0.1;
-    const bh = Math.max(bw, h * (0.12 + 0.76 * v));
     ctx.beginPath();
-    ctx.roundRect(i * (bw + gap), h - bh, bw, bh, [bw / 2, bw / 2, 0, 0]);
+    if (entry.half) {
+      const bh = Math.max(bw, h * (0.12 + 0.76 * v));
+      ctx.roundRect(i * (bw + gap), h - bh, bw, bh, [bw / 2, bw / 2, 0, 0]);
+    } else {
+      // Aufgeklappter Track: gespiegelt um die Mittellinie wie die fertige Wellenform.
+      const bh = Math.max(bw, h * (0.12 + 0.76 * v));
+      ctx.roundRect(i * (bw + gap), (h - bh) / 2, bw, bh, bw / 2);
+    }
     ctx.fill();
   }
 }
