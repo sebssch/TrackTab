@@ -5,6 +5,8 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 
 ## [Unreleased]
 
+## [1.9.5] - 2026-10-26
+
 ### Added
 - Playlist-Builder: Tracks lassen sich aus der Tabelle auf einen Builder im Baum ziehen (auch wenn er nicht offen ist) oder auf das Fenster eines offenen Builders. Sie werden als neuer Slot am Ende angehängt und sofort gesperrt, damit „Alle neu würfeln“ sie nicht ersetzt. Bereits enthaltene Tracks, fehlende Dateien und Einträge aus Music.app/Rekordbox werden übersprungen; die Liste ist auf 200 Slots begrenzt.
 
