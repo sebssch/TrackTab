@@ -196,7 +196,7 @@ def run(console, port: int, open_browser: bool = True) -> int:
     import AppKit
     from PyObjCTools import AppHelper
 
-    url = f"http://127.0.0.1:{port}/report.html"
+    url = f"http://127.0.0.1:{port}/tracktab.html"
     # Ein Dict statt Variablen: die Delegate-Methoden sind Closures und
     # koennten aeussere Namen sonst nur lesen, nicht setzen.
     state: dict = {"thread": None, "code": 0, "delegate": None}

@@ -212,8 +212,8 @@ search_autocomplete_min_chars: 3
 default_search_filters: []
 
 db_path: "data/quality.db"
-report_path: "data/report.html"
-csv_path: "data/report.csv"
+report_path: "data/tracktab.html"
+csv_path: "data/tracktab.csv"
 m3u_path: "data/verdaechtig.m3u8"
 stats_path: "data/stats.json"  # Jahres-/Monats-Statistik, lazy gebaut (app/stats.py)
 spectrum_points: 160           # Aufloesung der Miniatur-Spektren im HTML-Report

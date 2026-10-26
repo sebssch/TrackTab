@@ -180,7 +180,7 @@ def main() -> int:
     running = _existing_instance(first_port)
     if running is not None:
         if os.environ.get("MP3QC_NO_BROWSER", "") != "1":
-            url = f"http://127.0.0.1:{running}/report.html"
+            url = f"http://127.0.0.1:{running}/tracktab.html"
             from . import macapp
             if macapp.available():
                 macapp._focus_or_open(url)

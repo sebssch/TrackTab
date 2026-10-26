@@ -228,8 +228,8 @@ def defaults() -> dict:
         "loudness_clip_dbtp": -1.0,
 
         "db_path": "data/quality.db",
-        "report_path": "data/report.html",
-        "csv_path": "data/report.csv",
+        "report_path": "data/tracktab.html",
+        "csv_path": "data/tracktab.csv",
         "m3u_path": "data/verdaechtig.m3u8",
         # Jahres-/Monats-Statistik aus audit_log.py + der events-Tabelle
         # (siehe app/stats.py), lazy neu gebaut wenn eine der Quellen sich

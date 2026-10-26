@@ -342,6 +342,12 @@ def collection_paths() -> set[str]:
 
 _cached_db = None            # (MasterDatabase, master_db_path, mtime)
 _cache_lock = threading.Lock()
+# Die gecachte Verbindung ist EINE SQLAlchemy-Session -- nicht thread-sicher.
+# Der Server bedient Anfragen parallel (mehrere aufgeklappte Zeilen holen
+# gleichzeitig Cues/Waveform); ohne diese Sperre kamen sporadisch Fehler,
+# die als "nicht in Rekordbox" verschluckt wurden (graue Wellenform).
+# RLock, falls fn() selbst wieder _query_cached() ruft.
+_query_lock = threading.RLock()
 
 
 def _open_cached(pyrekordbox_mod):
@@ -394,21 +400,22 @@ def _query_cached(pyrekordbox_mod, fn):
     durchzureichen.
     """
     global _cached_db
-    db = _open_cached(pyrekordbox_mod)
-    try:
-        return fn(db)
-    except Exception as exc:                          # noqa: BLE001
-        if not _is_stale_cache_error(exc):
-            raise
-        with _cache_lock:
-            if _cached_db is not None:
-                try:
-                    _cached_db[0].close()
-                except Exception:                      # noqa: BLE001
-                    pass
-                _cached_db = None
+    with _query_lock:
         db = _open_cached(pyrekordbox_mod)
-        return fn(db)
+        try:
+            return fn(db)
+        except Exception as exc:                      # noqa: BLE001
+            if not _is_stale_cache_error(exc):
+                raise
+            with _cache_lock:
+                if _cached_db is not None:
+                    try:
+                        _cached_db[0].close()
+                    except Exception:                  # noqa: BLE001
+                        pass
+                    _cached_db = None
+            db = _open_cached(pyrekordbox_mod)
+            return fn(db)
 
 
 def _case_correct_path(path: str) -> str | None:
@@ -570,10 +577,16 @@ def _read_waveform(db, content, style: str) -> dict | None:
         heights, col_color, _col_blues = f.get("wf_color")
         if heights is None or len(heights) == 0:
             return None
+        color = [[int(c) for c in col_color[i, 0].clip(0, 255)] for i in range(len(heights))]
+        # Unvollstaendig analysierte Tracks liefern nur Nullen -> schwarze
+        # Wellenform. Dann wie "nicht vorhanden" behandeln (graue Standard-
+        # Wellenform, die Cues kommen trotzdem).
+        if not any(c[0] or c[1] or c[2] for c in color):
+            return None
         return {
             "style": "rgb",
             "height": [round(float(v) / 127.0, 4) for v in heights[:, 1]],
-            "color": [[int(c) for c in col_color[i, 0].clip(0, 255)] for i in range(len(heights))],
+            "color": color,
         }
     # 3band -- Dateityp-Key ist "2EX", nicht "EX2" (Docstring-Fehler in
     # pyrekordbox selbst, siehe Plan).
@@ -601,15 +614,16 @@ def get_track_extras(path: str, style: str = "rgb") -> dict | None:
     _read_waveform()); fehlt die passende Analysedatei, bleibt "waveform"
     None und der Aufrufer zeigt die graue Standardanzeige.
 
-    Liefert None bei jedem Fehler (pyrekordbox fehlt, master.db nicht
-    gefunden, Track unbekannt) -- der Aufrufer zeigt dann weder Cues noch
-    Waveform, absichtlich ein einziger, undifferenzierter Fallback-Pfad.
+    Liefert None, wenn der Track dort nicht (analysiert) vorliegt. Ein
+    Lesefehler (master.db gerade gesperrt, pyrekordbox fehlt, ...) kommt als
+    {"error": ...} zurueck, damit der Client es erneut versuchen kann statt
+    dauerhaft die graue Standardanzeige zu zeigen.
     """
     try:
         pyrekordbox_mod = _import_pyrekordbox()
         return _query_cached(pyrekordbox_mod, lambda db: _track_extras(db, path, style))
-    except Exception:                                  # noqa: BLE001
-        return None
+    except Exception as exc:                           # noqa: BLE001
+        return {"error": str(exc) or exc.__class__.__name__}
 
 
 def _track_extras(db, path: str, style: str) -> dict | None:

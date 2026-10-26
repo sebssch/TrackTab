@@ -333,7 +333,7 @@ _auth_cache = _AuthCache()
 
 class _ReportBuilder:
     """
-    Baeckt data/report.html gebuendelt in EINEM Hintergrund-Thread.
+    Baeckt data/tracktab.html gebuendelt in EINEM Hintergrund-Thread.
 
     Warum ueberhaupt: der gebackene Report ist eine einzige Datei mit allen
     Zeilen als JSON darin (bei 10.800 Tracks rund 10 MB). Ein Neubau kostet
@@ -1014,7 +1014,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         route = urlparse(self.path).path
 
-        if route in ("/", "/report.html", "/index.html"):
+        if route in ("/", "/tracktab.html", "/index.html"):
             self._serve_report()
         elif route == "/manifest.json":
             self._get_manifest()
@@ -1200,7 +1200,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Baum-Definitionen und Zuordnungen in einem Zug.
 
         Gehoert wie /api/ignored und /api/corrected zur
-        _rebuild()-Ausnahme: der gebackene data/report.html traegt zwar die
+        _rebuild()-Ausnahme: der gebackene data/tracktab.html traegt zwar die
         Definitionen (report.build_html -> META.playlists, damit der Baum schon
         vor dem ersten Fetch steht), aber jede Aenderung daran ueber einen
         vollen Rebuild zu schicken waere bei ueber 10.000 Zeilen und knapp 9 MB
@@ -1444,6 +1444,9 @@ class _Handler(BaseHTTPRequestHandler):
         extras = rekordbox_mod.get_track_extras(path, style)
         if extras is None:
             self._json({"available": False})
+            return
+        if "error" in extras:
+            self._json({"available": False, "retry": True})
             return
         self._json({"available": True, **extras})
 
@@ -3122,7 +3125,7 @@ class _Handler(BaseHTTPRequestHandler):
                 total = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
             finally:
                 conn.close()
-            # Ohne Neubacken zeigt report.html die geloeschte Zeile nach dem
+            # Ohne Neubacken zeigt tracktab.html die geloeschte Zeile nach dem
             # naechsten Neuladen weiter an, siehe /api/prune.
             self._rebuild(cfg)
         self._json({"ok": True, "total": total, "removed_from_music": removed_from_music,
@@ -4463,7 +4466,7 @@ class _Handler(BaseHTTPRequestHandler):
                 total = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
             finally:
                 conn.close()
-            # Ohne das liefert /report.html weiter den alten Stand: die gerade
+            # Ohne das liefert /tracktab.html weiter den alten Stand: die gerade
             # entfernten Zeilen staenden nach "Seite neu laden" wieder da,
             # samt gelber Hinweisleiste -- das Aufraeumen sah dann wirkungslos
             # aus, obwohl die DB laengst stimmte. Jeder andere zeilen-
@@ -4504,7 +4507,7 @@ class _Handler(BaseHTTPRequestHandler):
         Kehrt sofort zurueck. Gebacken wird gebuendelt im Hintergrund (siehe
         _ReportBuilder) und spaetestens beim naechsten Ausliefern der Seite
         (_serve_report -> REPORT.flush()). Der Aufrufer darf sich also NICHT
-        darauf verlassen, dass data/report.html nach dieser Zeile bereits
+        darauf verlassen, dass data/tracktab.html nach dieser Zeile bereits
         neu auf der Platte liegt -- wer den Stand wirklich braucht (Test,
         Herunterfahren, CLI), ruft REPORT.flush().
 
@@ -5124,7 +5127,7 @@ def serve(console, port: int = 8756, open_browser: bool = True) -> int:
     # zu kommen, das ihn sonst wieder anhalten muesste.
     REPORT.start()
 
-    url = f"http://127.0.0.1:{port}/report.html"
+    url = f"http://127.0.0.1:{port}/tracktab.html"
     console.print(f"[bold green]Report läuft:[/bold green] {url}")
     console.print("[dim]Ausgeblendete Tracks werden in der Datenbank gespeichert "
                   "und bleiben beim nächsten Aufruf ausgeblendet.[/dim]")

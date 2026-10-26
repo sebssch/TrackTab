@@ -795,8 +795,8 @@ function genRenderBody() {
 }
 
 // ── Bedienung ─────────────────────────────────────────────────────────────
-function genSetCount(n) {
-  const cfg = GEN.cfg;
+function genSetCount(n, g = GEN) {
+  const cfg = g.cfg;
   n = Math.max(1, Math.min(200, Math.round(n) || 1));
   if (cfg.preset === "custom") {
     while (cfg.slots.length < n) {
@@ -807,8 +807,8 @@ function genSetCount(n) {
   } else {
     genResample(cfg, n);
   }
-  while (GEN.tracks.length < n) GEN.tracks.push(null);
-  GEN.tracks.length = n;
+  while (g.tracks.length < n) g.tracks.push(null);
+  g.tracks.length = n;
 }
 
 function genMoveSlot(from, to) {
@@ -1136,7 +1136,57 @@ function genOnDragStart(ev) {
   ev.dataTransfer.setData(DND_TRACKS, JSON.stringify([r.p]));
   ev.dataTransfer.setDragImage(buildDragBadge(r, 0), 12, 12);
 }
+// Fremde Tracks (aus Tabelle/Baum, nicht aus den eigenen Slots) werden
+// ueber DND_TRACKS erkannt: der interne Slot-Zug traegt dieselbe Ablage, hat
+// aber GEN_DRAG_FROM gesetzt.
+function genIsForeignDrag(ev) {
+  return GEN && !(GEN_DRAG_FROM >= 0) && [...(ev.dataTransfer.types || [])].includes(DND_TRACKS);
+}
+
+// Abgelegte Tracks als neue Slots ans Ende haengen und sperren: von Hand
+// gesetzt, also soll "Alle neu wuerfeln" sie nicht ersetzen.
+function genAddDropped(paths, g = GEN) {
+  const have = new Set(g.tracks.filter(Boolean).map(r => r.p));
+  const rows = [];
+  for (const p of paths) {
+    const r = ROW_BY_PATH.get(p);
+    if (!r || r.ext || r.gone || have.has(p)) continue;
+    have.add(p);
+    rows.push(r);
+  }
+  const room = 200 - g.cfg.slots.length;
+  if (!rows.length) { note(t("gen.drop_none"), "soft"); return 0; }
+  if (room <= 0) { note(t("gen.drop_full"), "soft"); return 0; }
+  rows.length = Math.min(rows.length, room);
+  for (const r of rows) {
+    genSetCount(g.cfg.slots.length + 1, g);
+    const i = g.cfg.slots.length - 1;
+    g.tracks[i] = r;
+    g.cfg.slots[i].lock = true;
+    g.cfg.slots[i].filled = true;
+  }
+  if (g === GEN) { genScheduleSave(); genRender(); } else genSave(g);
+  note(t("gen.drop_added", {count: rows.length}));
+  return rows.length;
+}
+
+// Ablage auf einen Generator im Baum -- auch wenn er nicht offen ist: dann
+// wird Einstellung und Belegung frisch aus dem Knoten gelesen und gespeichert.
+function genDropOnNode(id, paths) {
+  if (GEN && GEN.id === id) return genAddDropped(paths);
+  const node = PLAYLISTS.find(n => n.id === id);
+  if (!node) return 0;
+  const cfg = genParseConfig(node);
+  return genAddDropped(paths, {id, cfg, tracks: genTracksFromItems(id, cfg), saveTimer: null});
+}
+
 function genOnDragOver(ev) {
+  if (genIsForeignDrag(ev)) {
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "copy";
+    document.getElementById("generatorPane").classList.add("gendrop");
+    return;
+  }
   const row = ev.target.closest(".genslot[data-slot]");
   if (!row || !(GEN_DRAG_FROM >= 0)) return;
   ev.preventDefault();
@@ -1144,6 +1194,15 @@ function genOnDragOver(ev) {
   row.classList.add("dragover");
 }
 function genOnDrop(ev) {
+  document.getElementById("generatorPane").classList.remove("gendrop");
+  if (genIsForeignDrag(ev)) {
+    ev.preventDefault();
+    let paths = [];
+    try { paths = JSON.parse(ev.dataTransfer.getData(DND_TRACKS) || "[]"); }
+    catch (e) { paths = []; }
+    genAddDropped(paths);
+    return;
+  }
   const row = ev.target.closest(".genslot[data-slot]");
   document.querySelectorAll("#genSlots .dragover").forEach(x => x.classList.remove("dragover"));
   if (!row || !(GEN_DRAG_FROM >= 0)) return;
@@ -1172,6 +1231,9 @@ function genWire(pane) {
   pane.addEventListener("dragover", genOnDragOver);
   pane.addEventListener("drop", genOnDrop);
   pane.addEventListener("dragend", () => { GEN_DRAG_FROM = -1; });
+  pane.addEventListener("dragleave", ev => {
+    if (!pane.contains(ev.relatedTarget)) pane.classList.remove("gendrop");
+  });
   // has_cover ist gesetzt, das Bild aber nicht lesbar (404) -- leere Flaeche
   // statt Symbol fuer ein kaputtes Bild. 'error' steigt nicht auf, deshalb capture.
   pane.addEventListener("error", ev => {

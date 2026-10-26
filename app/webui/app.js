@@ -66,7 +66,7 @@ document.addEventListener("DOMContentLoaded", applyStaticI18n);
 // PWA-Installierbarkeit (sw.js). "load" statt "DOMContentLoaded": die
 // Registrierung braucht kein DOM-Element und soll nicht mit dem initialen
 // Rendern eines ggf. grossen eingebetteten Datensatzes konkurrieren.
-// .catch() ist Pflicht, kein Kosmetikzusatz: wird report.html ohne Server
+// .catch() ist Pflicht, kein Kosmetikzusatz: wird tracktab.html ohne Server
 // direkt als file:// geoeffnet (siehe Fallback in initStorage()), scheitert
 // register() (file:// ist kein gueltiger SW-Scope) -- das darf den
 // bestehenden No-Server-Modus nicht stoeren.
@@ -1811,7 +1811,7 @@ function treeDropTarget(btn, ev, kind) {
   const node = btn.dataset.pl ? PLAYLISTS.find(n => n.id === btn.dataset.pl) : null;
   if (kind === "tracks") {
     if (btn.dataset.rbpl) return "into";
-    return (node && node.kind === "playlist") ? "into" : null;
+    return (node && (node.kind === "playlist" || node.kind === "generator")) ? "into" : null;
   }
   if (btn.dataset.id === "root:tracktab") return "into";
   // Knoten der obersten Ebene ohne Datenbankzeile (Alle, Ausgeblendet, ...)
@@ -1900,6 +1900,8 @@ function wireTreeDnd(host) {
         catch (e) { paths = []; }
         if (btn.dataset.rbpl) {
           dropTracksOnRekordbox(btn.dataset.rbpl, btn.querySelector(".tlabel").textContent, paths);
+        } else if (btn.dataset.pl && (PLAYLISTS.find(n => n.id === btn.dataset.pl) || {}).kind === "generator") {
+          genDropOnNode(btn.dataset.pl, paths);
         } else {
           dropTracksOnPlaylist(btn.dataset.pl, paths);
         }
@@ -3828,7 +3830,7 @@ function progressToast(text, opts) {
   };
 }
 
-// Die Markierungen im report.html sind der Stand vom letzten Backen. Alles,
+// Die Markierungen im tracktab.html sind der Stand vom letzten Backen. Alles,
 // was danach markiert wurde, fehlt dort — deshalb bei laufendem Server immer
 // den Stand aus der Datenbank nachziehen. Sie ist die maßgebliche Quelle.
 // Dauerhaft ausgeblendete Zusammenfuehrungs-Vorschlaege (Genre/Interpret/
@@ -9958,7 +9960,7 @@ async function pruneMissing() {
     // Die entfernten Zeilen sofort lokal streichen, statt zum Neuladen
     // aufzufordern: live()/counted()/filtered() blenden alles mit removed=1
     // aus, die Leiste verschwindet damit im selben Zug. Der Server hat
-    // report.html schon neu gebacken, ein spaeteres Neuladen zeigt dasselbe.
+    // tracktab.html schon neu gebacken, ein spaeteres Neuladen zeigt dasselbe.
     // Der Server liefert die Pfade; fehlen sie (aelterer Server), bleibt als
     // Rueckfallebene das, was der Client selbst als fehlend kennt.
     const removed = new Set(data.paths || DATA.filter(r => r.gone).map(r => r.p));
@@ -11424,6 +11426,16 @@ function waveLayerKey(entry, dpr) {
 // Buchstaben auf den Hot-Cue-Faehnchen. Sie werden deshalb pro Bild ueber die
 // bereits eingefaerbte Ebene gezeichnet. Das kostet nichts: Cues sind eine
 // Handvoll Striche, der teure Teil waren die bis zu 1200 Balken.
+function waveUsable(wf) {
+  if (!wf) return false;
+  if (wf.style === "rgb") {
+    return !!(wf.height && wf.height.length && wf.color
+      && wf.color.some(c => c[0] || c[1] || c[2]));
+  }
+  if (wf.style === "3band") return !!(wf.low && wf.low.length);
+  return false;
+}
+
 function buildWaveLayer(entry, dpr) {
   const w = entry.w, h = entry.h;
   const canvas = entry.layerCanvas || (entry.layerCanvas = document.createElement("canvas"));
@@ -11433,7 +11445,8 @@ function buildWaveLayer(entry, dpr) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
-  const wf = entry.waveform;
+  // Unbrauchbare Rekordbox-Daten (leer / nur schwarz) -> Standard-Wellenform.
+  const wf = waveUsable(entry.waveform) ? entry.waveform : null;
   // recolorable = die graue Standardwellenform, deren gespielter Teil beim
   // Kopieren eingefaerbt werden darf. Die bunten Rekordbox-Stile behalten
   // ihre echten Farben und bekommen stattdessen die Positionslinie.
@@ -11839,10 +11852,22 @@ async function peaksForLibrary(path) {
 
 // Cues + farbige Waveform aus Rekordbox, falls der Track dort analysiert
 // ist. {"available": false}, wenn nicht -- das ist der Normalfall.
+// Ein Lesefehler (Netz, master.db kurz gesperrt: Server meldet retry) wird
+// bis zu dreimal wiederholt -- sonst bliebe die Wellenform bis zum naechsten
+// Aufklappen grau, obwohl Rekordbox Farbdaten haette.
 async function rekordboxExtrasFor(path) {
-  const res = await fetch("/api/rekordbox-extras?path=" + encodeURIComponent(path));
-  if (!res.ok) throw new Error("Rekordbox-Extras " + res.status);
-  return await res.json();
+  let last = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (attempt) await new Promise(res => setTimeout(res, 600 * attempt));
+    try {
+      const res = await fetch("/api/rekordbox-extras?path=" + encodeURIComponent(path));
+      if (!res.ok) throw new Error("Rekordbox-Extras " + res.status);
+      const data = await res.json();
+      if (!data.retry) return data;
+      last = new Error("Rekordbox-Extras: Lesefehler");
+    } catch (err) { last = err; }
+  }
+  throw last;
 }
 
 // Für abgelegte Dateien kann der Server nichts berechnen — die Datei liegt

@@ -35,7 +35,7 @@ Geschrieben werden:
                                     "Server nicht erreichbar"-Seite)
 
 Nach dem Lauf `./run.command report` ausfuehren: der Server liefert
-data/report.html aus, nicht app/webui/ -- ohne den Neubau zeigt die
+data/tracktab.html aus, nicht app/webui/ -- ohne den Neubau zeigt die
 Oberflaeche weiter das alte Symbol. Das PWA-Manifest (app/pwa.py) braucht das
 NICHT -- es wird live ausgeliefert, ein Serverneustart reicht.
 """

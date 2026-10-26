@@ -23,7 +23,7 @@ build_assets/make_icon.py::patch_pwa_module() -- build_assets/ selbst ist im
 gebuendelten Bundle zur Laufzeit nicht verfuegbar, siehe config.bundle_dir().
 Nach einem Lauf von make_icon.py reicht ein Serverneustart, anders als bei
 den Favicons braucht es KEIN './run.command report' (Manifest + Icons werden
-live aus diesem Modul erzeugt, nie in report.html eingebacken).
+live aus diesem Modul erzeugt, nie in tracktab.html eingebacken).
 
 start_url/scope sind bewusst relativ ("/"): das Manifest wird vom selben
 Prozess ausgeliefert, den der Browser gerade anspricht, damit loest eine

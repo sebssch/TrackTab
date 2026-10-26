@@ -5,6 +5,15 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 
 ## [Unreleased]
 
+### Added
+- Playlist-Builder: Tracks lassen sich aus der Tabelle auf einen Builder im Baum ziehen (auch wenn er nicht offen ist) oder auf das Fenster eines offenen Builders. Sie werden als neuer Slot am Ende angehängt und sofort gesperrt, damit „Alle neu würfeln“ sie nicht ersetzt. Bereits enthaltene Tracks, fehlende Dateien und Einträge aus Music.app/Rekordbox werden übersprungen; die Liste ist auf 200 Slots begrenzt.
+
+### Changed
+- Der gebackene Report heißt jetzt `data/tracktab.html` (statt `report.html`), die CSV `data/tracktab.csv`. Die Oberfläche öffnet unter `/tracktab.html`; `/report.html` bleibt als Alias gültig. Alte `report.*`-Dateien in `data/` werden nicht mehr beschrieben und können gelöscht werden. Eigene Werte für `report_path`/`csv_path` bleiben unverändert.
+
+### Fixed
+- Farbige Rekordbox-Wellenform blieb gelegentlich schwarz oder grau, während die Hot Cues erschienen. Ursachen: (1) Rekordbox-Abfragen liefen parallel über eine einzige, nicht thread-sichere Datenbankverbindung (jetzt nacheinander, `_query_lock` in `rekordbox.py`); (2) ein Lesefehler wurde still als „nicht in Rekordbox“ gewertet (jetzt meldet der Server `retry`, der Client versucht es bis zu dreimal); (3) nur aus Nullen bestehende Farbdaten ergaben eine schwarze Wellenform. Unbrauchbare Rekordbox-Wellenformen fallen jetzt auf die graue Standard-Wellenform zurück, die Cues bleiben erhalten.
+
 ## [1.9.4] - 2026-10-25
 
 ### Added
