@@ -726,7 +726,7 @@ So werden die Namen gebaut:
 Auch Tracks in der Bibliotheksliste lassen sich nach demselben Muster umbenennen: im Zeilenmenü **Datei umbenennen** oder als Sammelaktion für eine Auswahl. TrackTab zieht dabei alles nach, was am Pfad hängt:
 
 - **Datenbank, Playlisten, Merklisten** — laufen mit.
-- **Music.app** — der Track wird auf die neue Datei umgebogen (Playlisten und Wiedergabezähler bleiben). Lehnt Music.app das ab, wird die Umbenennung zurückgenommen. Nach einer späteren Tag-Änderung kann Music.app die Datei in seinem Medienordner wieder selbst umsortieren, wenn dort „Medienordner automatisch organisieren“ an ist.
+- **Music.app** — der Track wird auf die neue Datei umgebogen (Playlisten und Wiedergabezähler bleiben). Lehnt Music.app das ab, wird die Umbenennung zurückgenommen. Dieses Umbiegen ist noch nicht an echtem Material geprüft — schau dir nach dem ersten Umbenennen an, ob der Track in Music.app weiter abspielbar ist. Nach einer späteren Tag-Änderung kann Music.app die Datei in seinem Medienordner wieder selbst umsortieren, wenn dort „Medienordner automatisch organisieren“ an ist.
 - **Rekordbox** — der Pfad wird in der Sammlung korrigiert. Läuft Rekordbox, wird der neue Pfad nur vorgemerkt und beim nächsten „Rekordbox abgleichen“ (Rekordbox vorher beenden) in die Sammlung geschrieben.
 
 Ein Fortschritts-Hinweis zeigt an, wie weit das Umbenennen ist; am Ende steht, wie viele Dateien umbenannt und wie viele aus welchem Grund übersprungen wurden. Die Zuordnung in TrackTab wird dabei sofort mitgezogen — Abspielen, Metadaten bearbeiten, neu messen und der Import funktionieren direkt weiter, ohne die Dateien erneut öffnen zu müssen.
