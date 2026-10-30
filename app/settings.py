@@ -45,24 +45,16 @@ GROUPS = [
             {"key": "min_duration_s", "type": "number", "label": "Mindestdauer", "break": True, "width": "half",
              "unit": "s", "min": 0, "max": 600, "step": 1,
              "help": "Kürzere Dateien werden nicht beurteilt."},
-            {"key": "cover_auto_fill", "type": "bool", "width": "half",
-             "label": "Cover aus Music.app übernehmen",
-             "show_if": {"key": "external_music", "not_empty": True},
-             "help": "Trägt beim Bibliothek-Scan automatisch das in Music.app "
-                     "hinterlegte Cover nach, wenn eine neu gefundene Datei "
-                     "noch keins hat — unabhängig vom Dateiformat, auch für "
-                     "WAV/AIFF, wo Music.app das Cover nicht in der Datei "
-                     "selbst speichert. Prüft bei jedem Scan außerdem, ob ein "
-                     "so übernommenes Cover sich in Music.app inzwischen "
-                     "geändert hat oder dort entfernt wurde. Löst NICHT beim "
-                     "Import über die Einzelprüfung aus — der Knopf „Manuell "
-                     "neu analysieren“ gleicht das Cover dagegen immer ab, "
-                     "unabhängig von dieser Einstellung."},
+            {"key": "workers", "type": "number", "width": "half",
+             "label": "Gleichzeitig analysierte Dateien",
+             "min": 0, "max": 32, "step": 1,
+             "help": "Wie viele Dateien der Scan parallel misst, je eine pro "
+                     "Prozessorkern. 0 = alle Kerne bis auf einen (schnellster "
+                     "Scan). Ein kleinerer Wert lässt den Mac während des Scans "
+                     "flüssiger bedienbar, der Scan dauert dafür länger. Gilt ab "
+                     "dem nächsten Scan, ohne neu scannen zu müssen."},
             {"key": "orphan_cleanup", "type": "button", "label": "Verwaiste Ordner",
-             "icon": "trash", "break": True,
-             "help": "Durchsucht die Ordner oben nach leeren Verzeichnissen — leer "
-                     "zählt auch, wenn nur eine .DS_Store-Datei darin liegt — und "
-                     "verschiebt sie in den Papierkorb. Fragt vorher noch einmal nach."},
+             "icon": "trash", "after": "library_paths"},
         ],
     },
     {
@@ -151,24 +143,40 @@ GROUPS = [
     },
     {
         "id": "bpmkey", "title": "Analyse: BPM, Tonart, Genre & Stimmung",
-        "note": "TrackTab misst Tempo und Tonart sowie Stil, Stimmung und "
-                "Energie selbst — komplett auf diesem Mac. Aufruf über „BPM/"
-                "Tonart analysieren“ und „Genre & Stimmung analysieren“ in der "
-                "Tabelle und in den Einzelprüfungen, für die ganze Bibliothek "
-                "auch im Scan-Dialog. Was in welches Feld geschrieben wird, "
-                "legst du in den Abschnitten darunter fest; „Tonart-Feld“ "
-                "bestimmt außerdem die Schreibweise, in der bereits vorhandene "
-                "Tonarten angeglichen werden.",
         "fields": [
-            {"key": "bpmkey_auto_drops", "type": "bool", "width": "half",
+            {"key": "measure_bpm", "type": "bool", "width": "half", "reload": True,
+             "requires": "bpmkey",
+             "label": "BPM messen",
+             "help": "Aus = das Tempo wird nirgends gemessen (Knöpfe, Scan, "
+                     "Einzelprüfungen)."},
+            {"key": "measure_key", "type": "bool", "width": "half", "reload": True,
+             "requires": "bpmkey",
+             "label": "Tonart messen",
+             "help": "Aus = die Tonart wird nirgends gemessen. Sind BPM und "
+                     "Tonart beide aus, verschwindet die BPM-/Tonart-Analyse."},
+            {"key": "measure_genre", "type": "bool", "width": "half", "reload": True,
+             "requires": "genremood",
+             "label": "Genre-Vorschläge",
+             "help": "Aus = keine Stil-Vorschläge im Genre-Feld. Bereits "
+                     "gemessene Tracks bleiben, wie sie sind."},
+            {"key": "measure_mood", "type": "bool", "width": "half", "reload": True,
+             "requires": "genremood",
+             "label": "Stimmung & Energie",
+             "help": "Aus = weder Stimmungen noch Energie werden übernommen. "
+                     "Sind Genre und Stimmung beide aus, verschwindet die "
+                     "Genre-/Stimmungs-Analyse."},
+            {"key": "bpmkey_auto_drops", "type": "bool", "width": "half", "break": True,
+             "requires": ["bpmkey", "on:measure_bpm|measure_key"],
              "label": "Einzelprüfungen: BPM & Tonart automatisch",
              "help": "Neu hinzugefügte Dateien der Einzelprüfungen werden "
                      "sofort auf Tempo und Tonart analysiert und beschrieben."},
             {"key": "genremood_auto_drops", "type": "bool", "width": "half",
+             "requires": ["genremood", "on:measure_genre|measure_mood"],
              "label": "Einzelprüfungen: Genre & Stimmung automatisch",
              "help": "Danach auch Stil, Stimmung und Energie (in die Datei nur "
                      "nach den Abschnitten unten)."},
             {"key": "bpmkey_max_minutes", "type": "number", "width": "half",
+             "requires": "analysis",
              "break": True,
              "label": "Längere Dateien überspringen", "unit": "min",
              "min": 1, "max": 600, "step": 1,
@@ -178,11 +186,6 @@ GROUPS = [
     },
     {
         "id": "bpmkey_key", "parent": "bpmkey", "title": "Tonart-Feld",
-        "note": "Hier steht alles zum Tonart-Tag der Dateien: in welcher "
-                "Schreibweise er steht und wann die Analyse ihn beschreibt. "
-                "Angezeigt wird die Tonart aus der Datei; weicht deren "
-                "Schreibweise von der gewählten ab, bekommt die Bubble einen "
-                "gestrichelten Rahmen.",
         "fields": [
             {"key": "key_notation", "type": "select", "label": "Tonart-Schreibweise",
              "width": "half",
@@ -197,6 +200,7 @@ GROUPS = [
                      "alle drei Schreibweisen erkannt. Die Farben der "
                      "Tonart-Bubbles folgen immer dem Camelot-Rad."},
             {"key": "bpmkey_write_key", "type": "select", "width": "half",
+             "requires": ["bpmkey", "on:measure_key"],
              "break": True,
              "label": "In Tonart-Feld schreiben",
              "options": [{"value": "yes", "label": "Ja"},
@@ -210,6 +214,7 @@ GROUPS = [
         "id": "bpmkey_bpm", "parent": "bpmkey", "title": "BPM-Feld",
         "fields": [
             {"key": "bpmkey_write_bpm", "type": "select", "width": "half",
+             "requires": ["bpmkey", "on:measure_bpm"],
              "label": "In BPM-Feld schreiben",
              "options": [{"value": "yes", "label": "Ja"},
                          {"value": "if_empty", "label": "Ja, nur wenn leer"},
@@ -226,16 +231,23 @@ GROUPS = [
                 "früherer eigener Eintrag wird ersetzt, nie doppelt geschrieben.",
         "fields": [
             {"key": "bpmkey_comment_content", "type": "select", "width": "half",
+             "requires": ["analysis", "on:measure_key|measure_mood"],
              "label": "In Kommentar-Feld schreiben",
              "options": [{"value": "none", "label": "Nichts"},
-                         {"value": "key", "label": "Tonart (10A)"},
-                         {"value": "key_bpm", "label": "Tonart und Tempo (10A - 126)"},
-                         {"value": "key_bpm_energy", "label": "Tonart, Tempo und Energie (10A - 126 - E7)"},
-                         {"value": "key_energy", "label": "Tonart und Energie (10A - E7)"},
-                         {"value": "energy", "label": "Nur Energie (E7)"}],
+                         {"value": "key", "label": "Tonart (10A)",
+                          "requires": "on:measure_key"},
+                         {"value": "key_bpm", "label": "Tonart und Tempo (10A - 126)",
+                          "requires": ["on:measure_key", "on:measure_bpm"]},
+                         {"value": "key_bpm_energy", "label": "Tonart, Tempo und Energie (10A - 126 - E7)",
+                          "requires": ["on:measure_key", "on:measure_bpm", "on:measure_mood"]},
+                         {"value": "key_energy", "label": "Tonart und Energie (10A - E7)",
+                          "requires": ["on:measure_key", "on:measure_mood"]},
+                         {"value": "energy", "label": "Nur Energie (E7)",
+                          "requires": "on:measure_mood"}],
              "help": "Die Tonart folgt der Schreibweise unter „Tonart-Feld“, z. B. „1m - 126“ "
                      "bei Open Key. Energie (1–10) stammt aus der Genre-/Stimmungs-Analyse."},
             {"key": "bpmkey_comment_existing", "type": "select", "width": "half",
+             "requires": ["analysis", "on:measure_key|measure_mood"],
              "label": "Vorhandener Kommentar",
              "show_if": {"key": "bpmkey_comment_content", "not_value": "none"},
              "options": [{"value": "if_empty", "label": "Nur wenn leer"},
@@ -252,18 +264,15 @@ GROUPS = [
     },
     {
         "id": "bpmkey_genremood", "parent": "bpmkey", "title": "Genre & Stimmung",
-        "note": "Stil, Stimmung und Energie erkennen die Essentia-Modelle der "
-                "MTG (Universitat Pompeu Fabra), Lizenz CC BY-NC-SA 4.0 (nur "
-                "nicht-kommerziell). Genre-Vorschläge erscheinen im Tags-Dialog "
-                "über dem Genre-Feld; Energie und Stimmung als eigene Spalten. "
-                "Das Genre schreibt nur ein Klick auf einen Vorschlag.",
         "fields": [
             {"key": "genremood_min_percent", "type": "number", "width": "half",
+             "requires": ["genremood", "on:measure_genre"],
              "label": "Genre-Vorschläge ab", "unit": "%",
              "min": 1, "max": 90, "step": 1,
              "help": "Schwächere Treffer werden nicht vorgeschlagen. Es "
                      "erscheinen höchstens fünf Vorschläge."},
             {"key": "genremood_write_mood", "type": "select", "width": "half",
+             "requires": ["genremood", "on:measure_mood"],
              "label": "Stimmung in die Datei schreiben",
              "options": [{"value": "no", "label": "Nein"},
                          {"value": "tag", "label": "Als Mood-Tag (z. B. Party, Happy)"}],
@@ -273,23 +282,50 @@ GROUPS = [
         ],
     },
     {
+        "id": "stems", "title": "Stems",
+        "fields": [
+            {"key": "stems_model", "type": "model"},
+            {"key": "stems_title_acapella", "type": "text", "width": "half",
+             "requires": "stems",
+             "label": "Titel-Zusatz Acapella",
+             "help": "Wird an den Titel angehängt."},
+            {"key": "stems_title_instrumental", "type": "text", "width": "half",
+             "requires": "stems",
+             "label": "Titel-Zusatz Instrumental"},
+            {"key": "stems_genre_acapella", "type": "text", "width": "half",
+             "requires": "stems",
+             "break": True, "label": "Genre Acapella",
+             "help": "Ersetzt das Genre des Haupttracks."},
+            {"key": "stems_genre_instrumental", "type": "text", "width": "half",
+             "requires": "stems",
+             "label": "Genre Instrumental"},
+            {"key": "stems_max_minutes", "requires": "stems", "type": "number", "width": "half",
+             "break": True,
+             "label": "Längere Dateien überspringen", "unit": "min",
+             "min": 1, "max": 600, "step": 1,
+             "help": "Dateien über dieser Länge (z. B. DJ-Mixe) werden nicht "
+                     "getrennt. Rechenzeit rund ein Zehntel der Spieldauer, ohne "
+                     "Grafikbeschleunigung rund ein Sechstel."},
+        ],
+    },
+    {
         "id": "rename", "title": "Dateinamen",
-        "note": "Für „Dateien automatisch umbenennen“ in den Einzelprüfungen. "
-                "Dateien, die schon in einem der Bibliotheksordner oben liegen, "
-                "werden nie umbenannt.",
         "fields": [
             {"key": "rename_pattern", "type": "text", "label": "Namensmuster",
              "placeholder": rename_mod.DEFAULT_PATTERN,
-             "help": "Platzhalter: "
-                     + ", ".join("{" + k + "} = " + label
+             "help": "## Platzhalter\n"
+                     + "\n".join("• {" + k + "} = " + label
                                  for k, label in rename_mod.PLACEHOLDERS)
-                     + ". „_“ trennt die Kategorien, „-“ Wörter innerhalb einer "
-                       "Kategorie. Ein Platzhalter ohne Wert lässt seine "
-                       "Kategorie ersatzlos entfallen — {bitrate} bleibt bei "
-                       "verlustfreien Formaten (FLAC/WAV/AIFF/ALAC) leer. "
-                       "Beispiel: daft-punk_get-lucky_116bpm_8a_320kbps_2013.mp3. "
-                       "Alles wird klein geschrieben, Umlaute werden "
-                       "ausgeschrieben (ä → ae)."},
+                     + "\n## Regeln\n"
+                       "• „_“ trennt die Kategorien, „-“ Wörter innerhalb einer "
+                       "Kategorie.\n"
+                       "• Ein Platzhalter ohne Wert lässt seine Kategorie "
+                       "ersatzlos entfallen — {bitrate} bleibt bei verlustfreien "
+                       "Formaten (FLAC/WAV/AIFF/ALAC) leer.\n"
+                       "• Alles wird klein geschrieben, Umlaute werden "
+                       "ausgeschrieben (ä → ae).\n"
+                       "## Beispiel\n"
+                       "> daft-punk_get-lucky_116bpm_8a_320kbps_2013.mp3"},
         ],
     },
     {
@@ -395,15 +431,6 @@ GROUPS = [
                      "die Tags danach selbst, im Hintergrund. Ohne Auswahl hier "
                      "bleiben die zugehörigen Knöpfe komplett ausgeblendet, auch "
                      "wenn Mixed In Key installiert ist."},
-            {"key": "external_music", "type": "app", "appList": "musics", "label": "Music App", "width": "half",
-             "reload": True,
-             "help": "Schaltet die Music.app-Integration frei: Playlisten-Baum, "
-                     "„In Music öffnen“, Bibliothek-Import aus der Einzelprüfung, "
-                     "„Music.app abgleichen“ und Cover-Autofill. Anders als bei "
-                     "Editor/Mixed In Key kein automatisches Suchen — Music.app "
-                     "ist auf jedem Mac vorhanden, die Auswahl hier ist deshalb "
-                     "ein bewusstes Ein-/Ausschalten. Leer = nichts davon wird "
-                     "angezeigt oder ausgeführt."},
             {"key": "aac_encoder", "type": "text", "label": "AAC-Encoder", "width": "half",
              "placeholder": "aac",
              "help": "ffmpeg-Encodername für AAC-Neukodierung (calibrate, "
@@ -432,6 +459,33 @@ GROUPS = [
         ],
     },
     {
+        "id": "music", "title": "Music.app",
+        "fields": [
+            {"key": "external_music", "type": "app", "appList": "musics", "label": "Music App",
+             "reload": True,
+             "help": "Schaltet die Music.app-Integration frei: Playlisten-Baum, "
+                     "„In Music öffnen“, Bibliothek-Import aus der Einzelprüfung, "
+                     "„Music.app abgleichen“ und Cover-Autofill. Anders als bei "
+                     "Editor/Mixed In Key kein automatisches Suchen — Music.app "
+                     "ist auf jedem Mac vorhanden, die Auswahl hier ist deshalb "
+                     "ein bewusstes Ein-/Ausschalten. Leer = nichts davon wird "
+                     "angezeigt oder ausgeführt."},
+            {"key": "cover_auto_fill", "type": "bool", "width": "half",
+             "label": "Cover aus Music.app übernehmen",
+             "show_if": {"key": "external_music", "not_empty": True},
+             "help": "Trägt beim Bibliothek-Scan automatisch das in Music.app "
+                     "hinterlegte Cover nach, wenn eine neu gefundene Datei "
+                     "noch keins hat — unabhängig vom Dateiformat, auch für "
+                     "WAV/AIFF, wo Music.app das Cover nicht in der Datei "
+                     "selbst speichert. Prüft bei jedem Scan außerdem, ob ein "
+                     "so übernommenes Cover sich in Music.app inzwischen "
+                     "geändert hat oder dort entfernt wurde. Löst NICHT beim "
+                     "Import über die Einzelprüfung aus — der Knopf „Manuell "
+                     "neu analysieren“ gleicht das Cover dagegen immer ab, "
+                     "unabhängig von dieser Einstellung."},
+        ],
+    },
+    {
         "id": "rekordbox", "title": "Rekordbox",
         "fields": [
             {"key": "external_rekordbox", "type": "app", "appList": "rekordboxes",
@@ -441,9 +495,11 @@ GROUPS = [
                      "Sind mehrere installiert (z.B. „rekordbox 6“ und "
                      "„rekordbox 7“), legt sie auch fest, welche Version für den "
                      "Bibliothekszugriff (Playlisten bearbeiten, Präsenz-Abgleich, "
-                     "Cues) verwendet wird. Leer lassen, dann wird die neueste "
-                     "installierte Version automatisch verwendet."},
+                     "Cues) verwendet wird. Ohne Auswahl ist die Rekordbox-"
+                     "Integration aus (Seitenbaum, Knöpfe, Abgleich) und die "
+                     "Einstellungen darunter sind gesperrt."},
             {"key": "rekordbox_playlist", "type": "text", "rbpick": True, "reload": True,
+             "requires": "rekordbox",
              "label": "Rekordbox-Playlist",
              "placeholder": "z.B. ##WORK/Neue Tracks",
              "help": "Bereits bestehende Rekordbox-Playlist. Über den "
@@ -455,6 +511,7 @@ GROUPS = [
                      "aktuellen Playlist-Baum und geht nur bei geschlossenem "
                      "Rekordbox. Leer lassen, dann bleibt der Knopf ausgeblendet."},
             {"key": "rekordbox_waveform_style", "type": "select", "break": True, "width": "half",
+             "requires": "rekordbox",
              "label": "Waveform-Stil",
              "options": [{"value": "standard", "label": "Standard"},
                          {"value": "rgb", "label": "RGB"},
@@ -463,19 +520,22 @@ GROUPS = [
                      "nur, wenn der Track in Rekordbox vorhanden, dort analysiert "
                      "ist und die passende Analysedatei existiert — sonst "
                      "automatisch ebenfalls die graue Standard-Waveform."},
-            {"key": "rekordbox_min_cutoff_khz", "type": "number", "unit": "kHz",
-             "min": 0, "max": 22, "step": 0.5, "label": "Mindest-Cutoff",
-             "help": "Tracks mit gemessenem Cutoff darunter lösen die Warnung aus."},
             {"key": "rekordbox_quality_check", "type": "bool", "width": "half",
+             "requires": "rekordbox",
              "label": "Qualitätsprüfung beim Import",
              "help": "Prüft beim Hinzufügen zu einer Rekordbox-Playlist "
                      "(Knopf oder Drag & Drop) den "
-                     "gemessenen Cutoff jedes Tracks gegen die Schwelle rechts "
+                     "gemessenen Cutoff jedes Tracks gegen den Mindest-Cutoff darunter "
                      "— unabhängig von Verdikt oder manueller "
                      "Korrektur-Markierung. Liegt ein Track darunter (oder ist "
                      "der Cutoff nicht messbar), kommt vor dem Hinzufügen eine "
                      "Warnung mit der Wahl, trotzdem hinzuzufügen."},
+            {"key": "rekordbox_min_cutoff_khz", "type": "number", "unit": "kHz",
+             "requires": ["rekordbox", "on:rekordbox_quality_check"],
+             "min": 0, "max": 22, "step": 0.5, "label": "Mindest-Cutoff",
+             "help": "Tracks mit gemessenem Cutoff darunter lösen die Warnung aus."},
             {"key": "rekordbox_mytags", "type": "bool", "break": True, "width": "half",
+             "requires": "rekordbox",
              "label": "Tags als „My Tag“ übertragen",
              "help": "Setzt beim Hinzufügen zu einer Rekordbox-Playlist die "
                      "erkannten Stimmungen und eigenen Tags jedes Tracks als "
@@ -484,20 +544,33 @@ GROUPS = [
                      "dort nicht mehr zutreffende Tags werden entfernt, die "
                      "übrigen My-Tag-Spalten bleiben unberührt."},
             {"key": "rekordbox_mytag_category", "type": "text", "width": "half",
+             "requires": ["rekordbox", "on:rekordbox_mytags"],
              "label": "My-Tag-Spalte",
              "placeholder": "TrackTab",
              "help": "Name einer My-Tag-Spalte in Rekordbox. Rekordbox hat "
                      "vier feste Spalten, neue lassen sich nicht anlegen — "
                      "eine davon in Rekordbox umbenennen (Rechtsklick auf den "
                      "Spaltenkopf im My-Tag-Fenster), z. B. in „TrackTab“."},
-        ],
-    },
-    {
-        "id": "performance", "title": "Leistung",
-        "fields": [
-            {"key": "workers", "type": "number", "label": "Parallele Prozesse",
-             "min": 0, "max": 32, "step": 1,
-             "help": "0 bedeutet: alle Kerne bis auf einen."},
+            {"key": "stems_rekordbox", "type": "select", "width": "half",
+             "break": True, "requires": ["rekordbox", "stems"],
+             "label": "Stems in Rekordbox übernehmen",
+             "options": [{"value": "cues", "label": "Ja, mit Cues"},
+                         {"value": "no_cues", "label": "Ja, ohne Cues"},
+                         {"value": "off", "label": "Nein"}],
+             "help": "Für „Stems generieren“ → „Speichern“. Cues = Hot Cues, "
+                     "Memory Cues und Loops des Haupttracks. Nur wenn der "
+                     "Haupttrack in Rekordbox steht und Stem und Haupttrack "
+                     "dasselbe Format haben (MP3 → MP3, WAV/AIFF/FLAC → AIFF). "
+                     "Aus einem AAC-Track (.m4a) entsteht ein MP3-Stem, "
+                     "dessen Beatgrid nicht passen würde – er wird nicht "
+                     "übernommen. Beatgrid, BPM und Tonart kommen immer vom "
+                     "Haupttrack."},
+            {"key": "rekordbox_backup_folder", "type": "button", "danger": False,
+             "icon": "folder", "label": "Rekordbox-Backup-Ordner öffnen",
+             "help": "Bevor TrackTab die Rekordbox-Datenbank öffnet, legt es dort "
+                     "eine Kopie der master.db ab (die letzten 10 bleiben). Bei "
+                     "Problemen mit Rekordbox lässt sich daraus der vorige Stand "
+                     "zurückholen."},
         ],
     },
 ]
@@ -525,7 +598,7 @@ def current(cfg: dict | None = None) -> dict:
 
 
 def describe() -> dict:
-    from . import bpmkey, genremood, media
+    from . import bpmkey, genremood, media, stems
     ensure_apple_music_column_view()
     defaults = current(_defaults_cfg())
     detected = media.find_audio_editor()
@@ -538,10 +611,21 @@ def describe() -> dict:
             "detected_rekordbox": detected_rekordbox or "",
             # libsonare vorhanden? Ohne blendet die Oberflaeche die BPM-/Tonart-
             # Analyse aus (siehe bpmkey.available()).
-            "bpmkey_available": bpmkey.available(),
+            "bpmkey_available": bpmkey.available() and bool(
+                cfgmod.load().get("measure_bpm", True) or cfgmod.load().get("measure_key", True)),
             # onnxruntime + Modelle vorhanden? Sonst Genre-/Stimmungs-Analyse
             # ausblenden (siehe genremood.available()).
-            "genremood_available": genremood.available(),
+            "genremood_available": genremood.available() and bool(
+                cfgmod.load().get("measure_genre", True) or cfgmod.load().get("measure_mood", True)),
+            # onnxruntime + Demucs-Modell vorhanden? Sonst „Stems erzeugen“
+            # ausblenden (siehe stems.available()).
+            "stems_available": stems.available(),
+            # Nur "installiert?" -- anders als *_available oben unabhaengig von
+            # den Mess-Schaltern. Daran haengt das Sperren der Einstellungen
+            # (Feld-Attribut "requires"); sonst sperrte "BPM und Tonart aus"
+            # die eigenen Schalter und liesse sich nicht zuruecknehmen.
+            "bpmkey_installed": bpmkey.available(),
+            "genremood_installed": genremood.available(),
             # Kein UI-Feld (kein Setting zum Editieren, nur Anzeige im
             # Backup-Block) -- deshalb hier separat statt ueber _FIELDS/current().
             "backup_keep": int(cfgmod.load().get("backup_keep", 10)),

@@ -51,6 +51,8 @@ CREATE TABLE IF NOT EXISTS files (
     codec           TEXT,
     codec_family    TEXT,
     raw_cutoff_hz   REAL,
+    plateau_db      REAL,
+    edge_segments   TEXT,
     integrated_lufs REAL,
     true_peak_dbtp  REAL,
     lra_lu          REAL,
@@ -142,9 +144,22 @@ CREATE TABLE IF NOT EXISTS rekordbox (
 -- wurden und in Rekordbox noch auf dem alten Stand stehen. Der Abgleich laeuft
 -- gebuendelt ueber den Knopf "Rekordbox abgleichen" (ein Oeffnen, ein Backup
 -- von master.db), nicht je Zusammenfuehrung.
+-- 'prior_path': bei umbenannten Dateien der Pfad, unter dem Rekordbox den
+-- Track noch kennt (NULL = Pfad unveraendert, nur Tags nachzuziehen).
 CREATE TABLE IF NOT EXISTS rekordbox_pending (
-    path TEXT PRIMARY KEY,
-    ts   REAL
+    path       TEXT PRIMARY KEY,
+    ts         REAL,
+    prior_path TEXT
+);
+
+-- Freigegebene Stem-Dateien (Acapella/Instrumental), die noch nicht in
+-- Rekordbox stehen, weil es beim Freigeben lief. 'path' ist die Stem-Datei,
+-- 'source_path' der Haupttrack, dessen Beatgrid sie bekommt. Abgearbeitet wird
+-- nur ueber "Rekordbox abgleichen" (kein Hintergrund-Watcher).
+CREATE TABLE IF NOT EXISTS rekordbox_stem_pending (
+    path        TEXT PRIMARY KEY,
+    source_path TEXT NOT NULL,
+    ts          REAL
 );
 
 -- Datum, an dem ein Track laut Music.app zur Bibliothek hinzugefuegt wurde.
@@ -272,6 +287,7 @@ _COLUMNS = [
     "is_brickwall", "at_nyquist", "gated_blocks", "total_blocks",
     "measured_kbps", "declared_class", "class_steps", "verdict", "confidence",
     "reasons", "spectrum", "codec", "codec_family", "raw_cutoff_hz",
+    "plateau_db", "edge_segments",
     "integrated_lufs", "true_peak_dbtp", "lra_lu",
     "genre", "bpm", "has_cover",
     "album_artist", "composer", "year", "comment", "track_no", "track_total",
@@ -302,6 +318,8 @@ _MIGRATIONS = [
     ("tag_issues", "TEXT"),
     ("key", "TEXT"),
     ("key_raw", "TEXT"),
+    ("plateau_db", "REAL"),
+    ("edge_segments", "TEXT"),
 ]
 
 
@@ -320,6 +338,9 @@ def _ensure_playlist_columns(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(playlists)")}
     if "fav_slot" not in existing:
         conn.execute("ALTER TABLE playlists ADD COLUMN fav_slot INTEGER")
+    pending = {row["name"] for row in conn.execute("PRAGMA table_info(rekordbox_pending)")}
+    if "prior_path" not in pending:
+        conn.execute("ALTER TABLE rekordbox_pending ADD COLUMN prior_path TEXT")
     conn.commit()
 
 
@@ -480,6 +501,7 @@ def save(conn: sqlite3.Connection, rows: list[dict]) -> None:
         r["analyzed_at"] = now
         r["reasons"] = json.dumps(r.get("reasons", []), ensure_ascii=False)
         r["spectrum"] = json.dumps(r.get("spectrum", []))
+        r["edge_segments"] = json.dumps(r.get("edge_segments", []))
         r["tag_issues"] = json.dumps(r.get("tag_issues", []), ensure_ascii=False)
         payload.append(tuple(r.get(c) for c in _COLUMNS))
     placeholders = ",".join("?" * len(_COLUMNS))
@@ -630,8 +652,8 @@ def delete_cached_cover(conn: sqlite3.Connection, path: str) -> None:
 # Delete-vor-Update auf: dort ist der Pfad allein der Schluessel-Anteil, der
 # wandert, die zweite Haelfte (playlist_id) bleibt.
 _PATH_TABLES = ("files", "ignored", "corrected", "waveform",
-                "rekordbox", "rekordbox_pending", "music_added", "cover_cache",
-                "playlist_items", "dup_dismissed", "genremood", "user_tags")
+                "rekordbox", "rekordbox_pending", "rekordbox_stem_pending",
+                "music_added", "cover_cache", "playlist_items", "dup_dismissed", "genremood", "user_tags")
 
 
 def move_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> bool:
@@ -748,7 +770,7 @@ def reconcile_case_renames(conn: sqlite3.Connection,
 # Daten. Ohne 'files'-Zeile sind sie unerreichbarer Ballast, und sie lassen
 # sich jederzeit neu berechnen bzw. abgleichen.
 _PRUNE_TABLES = ("files", "waveform", "rekordbox", "rekordbox_pending",
-                  "music_added", "genremood")
+                  "rekordbox_stem_pending", "music_added", "genremood")
 
 
 def prune_missing(conn: sqlite3.Connection, existing: set[str]) -> list[str]:
@@ -1248,9 +1270,28 @@ def rekordbox_pending_add(conn: sqlite3.Connection, paths: list[str]) -> None:
     conn.commit()
 
 
-def rekordbox_pending_list(conn: sqlite3.Connection) -> list[str]:
-    return [r["path"] for r in conn.execute(
-        "SELECT path FROM rekordbox_pending ORDER BY ts, path")]
+def rekordbox_pending_add_rename(conn: sqlite3.Connection, new_path: str,
+                                 old_path: str) -> None:
+    """Merkt einen umbenannten Track vor: Rekordbox kennt ihn noch unter
+    'old_path'. Nach move_path() aufrufen (zieht eine schon vorhandene
+    Vormerkung auf den neuen Pfad). Bei mehrfachem Umbenennen bleibt der
+    ERSTE Pfad erhalten -- nur der steht in Rekordbox."""
+    row = conn.execute("SELECT prior_path FROM rekordbox_pending WHERE path = ?",
+                       (new_path,)).fetchone()
+    if row is None:
+        conn.execute("INSERT INTO rekordbox_pending (path, ts, prior_path) VALUES (?, ?, ?)",
+                     (new_path, time.time(), old_path))
+    elif not row["prior_path"]:
+        conn.execute("UPDATE rekordbox_pending SET prior_path = ? WHERE path = ?",
+                     (old_path, new_path))
+    conn.commit()
+
+
+def rekordbox_pending_list(conn: sqlite3.Connection) -> list[dict]:
+    """[{path, prior_path}] -- prior_path ist der Pfad, den Rekordbox kennt."""
+    return [{"path": r["path"], "prior_path": r["prior_path"] or r["path"]}
+            for r in conn.execute(
+                "SELECT path, prior_path FROM rekordbox_pending ORDER BY ts, path")]
 
 
 def rekordbox_pending_count(conn: sqlite3.Connection) -> int:
@@ -1259,6 +1300,29 @@ def rekordbox_pending_count(conn: sqlite3.Connection) -> int:
 
 def rekordbox_pending_clear(conn: sqlite3.Connection, paths: list[str]) -> None:
     conn.executemany("DELETE FROM rekordbox_pending WHERE path = ?",
+                     [(p,) for p in paths])
+    conn.commit()
+
+
+def rekordbox_stem_pending_add(conn: sqlite3.Connection, stem_path: str,
+                               source_path: str) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO rekordbox_stem_pending (path, source_path, ts) "
+        "VALUES (?, ?, ?)", (stem_path, source_path, time.time()))
+    conn.commit()
+
+
+def rekordbox_stem_pending_list(conn: sqlite3.Connection) -> list[dict]:
+    return [{"path": r["path"], "source": r["source_path"]} for r in conn.execute(
+        "SELECT path, source_path FROM rekordbox_stem_pending ORDER BY ts, path")]
+
+
+def rekordbox_stem_pending_count(conn: sqlite3.Connection) -> int:
+    return conn.execute("SELECT COUNT(*) FROM rekordbox_stem_pending").fetchone()[0]
+
+
+def rekordbox_stem_pending_clear(conn: sqlite3.Connection, paths: list[str]) -> None:
+    conn.executemany("DELETE FROM rekordbox_stem_pending WHERE path = ?",
                      [(p,) for p in paths])
     conn.commit()
 

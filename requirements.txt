@@ -18,9 +18,9 @@ Pillow>=10.0        # Cover-Pruefung/-Verkleinerung bei Auffaelligkeiten (app/ta
 
 # BPM-/Tonart-Analyse (app/bpmkey.py). Optional: fehlt das Paket, blendet die
 # Oberflaeche die Funktion aus. Das PyPI-Wheel gibt es nur fuer macOS arm64
-# (Apple Silicon); es zieht numpy>=2.4.6 nach. Version bewusst gepinnt (junges
+# (Apple Silicon); es zieht numpy>=2.0.2 nach. Version bewusst gepinnt (junges
 # Projekt, haeufige Releases).
-libsonare==1.9.1 ; sys_platform == "darwin" and platform_machine == "arm64"
+libsonare==1.10.0 ; sys_platform == "darwin" and platform_machine == "arm64"
 
 # Genre-Vorschlaege, Stimmung, Energie (app/genremood.py). Optional wie
 # libsonare: fehlt das Paket oder fehlen die Modelle (./fetch_models.sh),

@@ -944,6 +944,85 @@ def add_to_music_library(paths: list[str]) -> list[str]:
 _CLOUD_LIBRARY_STATUSES = {"matched", "uploaded", "purchased", "subscription", "prerelease"}
 
 
+def music_track_ids(path: str, title: str | None) -> list[str]:
+    """
+    Persistente IDs der Music.app-Tracks, deren 'location' genau 'path' ist --
+    Vorstufe zu music_set_location(): nach dem Umbenennen der Datei ist der
+    alte Ort nicht mehr lesbar (der Track gilt als fehlend), die ID dagegen
+    bleibt gueltig. Matching und Fallstricke wie in remove_from_music_library()
+    (Titel-Vorfilter, 'location' je Kandidat einzeln, Koerzierung ausserhalb
+    des tell-Blocks). Ohne Titel (0 Treffer) statt einer Vollsuche.
+    """
+    if not title:
+        return []
+    script = (
+        'on run argv\n'
+        '  set thePath to item 1 of argv\n'
+        '  set theTitle to item 2 of argv\n'
+        '  set candidates to {}\n'
+        '  tell application "Music"\n'
+        '    try\n'
+        '      set candidates to (every track of library playlist 1 whose name is theTitle)\n'
+        '    end try\n'
+        '  end tell\n'
+        '  set theIds to {}\n'
+        '  repeat with c in candidates\n'
+        '    set theLoc to missing value\n'
+        '    set theId to ""\n'
+        '    tell application "Music"\n'
+        '      try\n'
+        '        set theLoc to location of c\n'
+        '        set theId to persistent ID of c\n'
+        '      end try\n'
+        '    end tell\n'
+        '    if theLoc is not missing value and theId is not "" then\n'
+        '      try\n'
+        '        if (POSIX path of theLoc) is thePath then set end of theIds to theId\n'
+        '      end try\n'
+        '    end if\n'
+        '  end repeat\n'
+        '  set AppleScript\'s text item delimiters to ","\n'
+        '  set outText to theIds as text\n'
+        '  set AppleScript\'s text item delimiters to ""\n'
+        '  return outText\n'
+        'end run'
+    )
+    result = subprocess.run(["osascript", "-e", script, str(path), str(title)],
+                            capture_output=True, timeout=30)
+    if result.returncode != 0:
+        raise MediaToolMissing(
+            result.stderr.decode("utf-8", "replace").strip()[:250]
+            or "Music.app konnte den Track nicht suchen")
+    out = result.stdout.decode("utf-8", "replace").strip()
+    return [i for i in out.split(",") if i]
+
+
+def music_set_location(persistent_id: str, new_path: str) -> None:
+    """
+    Zeigt einen Music.app-Track auf eine andere Datei (die umbenannte) --
+    Playlisten, Wiedergabezaehler und Bewertung bleiben erhalten. Die Datei
+    muss unter 'new_path' schon existieren. Die alias-Koerzierung steht
+    ausserhalb des tell-Blocks (sonst -1700, siehe add_to_music_library()).
+    Wirft MediaToolMissing, wenn Music.app die Aenderung ablehnt.
+    """
+    script = (
+        'on run argv\n'
+        '  set theId to item 1 of argv\n'
+        '  set theAlias to POSIX file (item 2 of argv) as alias\n'
+        '  tell application "Music"\n'
+        '    set t to first track of library playlist 1 whose persistent ID is theId\n'
+        '    set location of t to theAlias\n'
+        '  end tell\n'
+        'end run'
+    )
+    result = subprocess.run(["osascript", "-e", script, str(persistent_id), str(new_path)],
+                            capture_output=True, timeout=30)
+    if result.returncode != 0:
+        raise MediaToolMissing(
+            result.stderr.decode("utf-8", "replace").strip()[:250]
+            or "Music.app konnte den Ort nicht ändern")
+
+
 def remove_from_music_library(path: str, title: str | None = None) -> tuple[int, bool]:
     """
     Entfernt den Track mit dieser 'location' aus der Music.app-Bibliothek --

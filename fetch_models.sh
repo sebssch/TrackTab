@@ -1,6 +1,6 @@
 #!/bin/bash
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  TrackTab — Modelle fuer Genre/Stimmung/Energie laden          ║
+# ║  TrackTab — Modelle laden (Genre/Stimmung/Energie)      ║
 # ╚══════════════════════════════════════════════════════════════╝
 # Laedt die Essentia-Modelle (MTG, Universitat Pompeu Fabra) einmalig nach
 # vendor/models/essentia/. Lizenz der Modelle: CC BY-NC-SA 4.0 -- nur
@@ -67,3 +67,7 @@ done
 # Pruefsummen festhalten -- ein spaeterer Lauf erkennt so beschaedigte Dateien.
 ( cd "$DEST" && shasum -a 256 *.onnx *.json > SHA256SUMS )
 echo "Modelle liegen in $DEST ($(du -sh "$DEST" | cut -f1))."
+
+# Stem-Trennung (Demucs): bewusst NICHT hier -- die Gewichte werden nicht
+# mit der App ausgeliefert, der Nutzer laedt sie in den Einstellungen
+# (app/stems.py, Lizenz siehe THIRD_PARTY_LICENSES.md).

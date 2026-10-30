@@ -36,7 +36,7 @@ import uuid
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from . import __version__
 from . import audit_log
@@ -56,6 +56,8 @@ from . import rekordbox as rekordbox_mod
 from . import report as report_mod
 from . import rewrite as rewrite_mod
 from . import scanner
+from . import stemjob as stemjob_mod
+from . import stems as stems_mod
 from . import settings as settings_mod
 from . import stats as stats_mod
 from . import taganomaly as taganomaly_mod
@@ -1066,6 +1068,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(settings_mod.describe())
         elif route == "/api/scan/status":
             self._json({"ok": True, **SCAN.state})
+        elif route == "/api/stems/status":
+            self._get_stems_status()
+        elif route == "/api/stems/download":
+            self._get_stems_download()
+        elif route == "/api/stems/model":
+            self._json({"ok": True, **self._stems_model_info()})
         elif route == "/api/backups":
             self._get_backups()
         elif route == "/api/stats":
@@ -1378,7 +1386,8 @@ class _Handler(BaseHTTPRequestHandler):
         with self.lock:
             conn = db_mod.connect(cfgmod.load())
             try:
-                count = db_mod.rekordbox_pending_count(conn)
+                count = (db_mod.rekordbox_pending_count(conn)
+                         + db_mod.rekordbox_stem_pending_count(conn))
             finally:
                 conn.close()
         self._json({"count": count})
@@ -1914,6 +1923,27 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_analyse_path()
         elif route == "/api/bpmkey":
             self._post_bpmkey()
+        elif route == "/api/stems":
+            self._post_stems()
+        elif route == "/api/stems/model-download":
+            self._json({"ok": True, "started": stems_mod.download_start(),
+                        **self._stems_model_info()})
+        elif route == "/api/stems/model-cancel":
+            stems_mod.download_cancel()
+            self._json({"ok": True})
+        elif route == "/api/stems/model-remove":
+            if stems_mod.download_state()["running"]:
+                self._fail("Download läuft noch", 409)
+            else:
+                stems_mod.remove_model()
+                self._json({"ok": True, **self._stems_model_info()})
+        elif route == "/api/stems/cancel":
+            stemjob_mod.JOBS.cancel()
+            self._json({"ok": True})
+        elif route == "/api/stems/discard":
+            self._post_stems_discard()
+        elif route == "/api/stems/approve":
+            self._post_stems_approve()
         elif route == "/api/ignore-update":
             self._post_ignore_update()
         elif route == "/api/genremood":
@@ -1922,6 +1952,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_user_tags()
         elif route == "/api/rename":
             self._post_rename()
+        elif route == "/api/rename-library":
+            self._post_rename_library()
         elif route == "/api/add-to-library":
             self._post_add_to_library()
         elif route == "/api/rekordbox-add-playlist":
@@ -2413,6 +2445,148 @@ class _Handler(BaseHTTPRequestHandler):
             self._rebuild(cfg)
         self._json({"ok": True, "results": results})
 
+    def _post_rename_library(self) -> None:
+        """
+        Benennt Bibliothekstracks nach cfg["rename_pattern"] um und zieht
+        alles nach, was am Pfad haengt: DB-Zeile (db.move_path(), damit auch
+        Playlisten, Merklisten, Wellenform ...), den Music.app-Track (zeigt
+        per 'set location' auf die neue Datei, Playlisten und Wiedergabe-
+        zaehler bleiben) und Rekordbox' DjmdContent-Zeile.
+
+        Reihenfolge je Datei: Music-IDs ermitteln (solange der alte Ort noch
+        lesbar ist) -> Datei umbenennen -> Music umbiegen. Lehnt Music.app ab,
+        wird die Umbenennung zurueckgenommen, damit kein toter Track
+        entsteht. Ist Rekordbox geoeffnet, wird der Pfad nur vorgemerkt
+        (rekordbox_pending.prior_path) und spaeter ueber "Rekordbox
+        abgleichen" geschrieben -- ein Schreibzugriff auf master.db
+        waehrend es laeuft ist riskant.
+
+        Lock-Regel: ffprobe, AppleScript und Rekordbox AUSSERHALB von
+        self.lock, nur move_path() darin.
+
+        Antwort positionsgleich zu 'paths'; status 'renamed' | 'unchanged' |
+        'no_data' | 'error'.
+        """
+        from . import rename as rename_mod
+
+        try:
+            payload = json.loads(self._body(1_000_000).decode("utf-8"))
+            paths = [str(p) for p in payload["paths"]]
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if not paths:
+            self._fail("Keine Datei angegeben")
+            return
+
+        cfg = cfgmod.load()
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                known = {p: db_mod.row_for_path(conn, p) for p in paths}
+                in_rekordbox = db_mod.rekordbox_paths(conn)
+            finally:
+                conn.close()
+        for p in paths:
+            if known[p] is None:
+                self._reject_missing(p)
+                return
+
+        rb_blocked = False
+        if cfg.get("rekordbox_playlist") and any(p in in_rekordbox for p in paths):
+            try:
+                rb_blocked = rekordbox_mod.is_running() or rekordbox_mod.agent_running()
+            except Exception:                            # noqa: BLE001
+                rb_blocked = False
+
+        music_on = bool(cfg.get("external_music"))
+        results = []
+        renamed: list[tuple[str, str]] = []
+        for old in paths:
+            row = known[old]
+            if not os.path.isfile(old):
+                results.append({"path": old, "status": "error", "error": "Datei fehlt"})
+                continue
+            try:
+                new_plan = rename_mod.plan(old, cfg, allow_library=True)
+                if new_plan["status"] != "rename":
+                    results.append(new_plan)
+                    continue
+                new = new_plan["new_path"]
+                music_ids = []
+                if music_on:
+                    music_ids = media.music_track_ids(old, row["title"] or Path(old).stem)
+                os.rename(old, new)
+                try:
+                    for pid in music_ids:
+                        media.music_set_location(pid, new)
+                except Exception:                        # noqa: BLE001
+                    os.rename(new, old)                  # kein toter Music-Track
+                    raise
+            except Exception as exc:                     # noqa: BLE001
+                results.append({"path": old, "status": "error", "error": str(exc)})
+                continue
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    db_mod.move_path(conn, old, new)
+                finally:
+                    conn.close()
+            audit_log.log("umbenannt", new, f"vorher {os.path.basename(old)}")
+            renamed.append((old, new))
+            results.append({"path": old, "status": "renamed", "new_path": new,
+                            "name": os.path.basename(new),
+                            "music": bool(music_ids)})
+
+        rekordbox_result = None
+        rb_moves = [{"path": n, "prior_path": o} for o, n in renamed if o in in_rekordbox]
+        if rb_moves:
+            conn = db_mod.connect(cfg)
+            try:
+                metadata = {m["path"]: db_mod.row_for_path(conn, m["path"]) for m in rb_moves}
+                metadata = {k: v for k, v in metadata.items() if v is not None}
+            finally:
+                conn.close()
+            queue = rb_blocked
+            if not queue:
+                try:
+                    with self._rekordbox_lock:
+                        res = rekordbox_mod.update_relocated_tracks(rb_moves, metadata)
+                    rekordbox_result = {"running": False, "queued": 0, **res}
+                    for p in res["updated"]:
+                        audit_log.log("rekordbox-korrigiert", p, "nach Umbenennen")
+                except rekordbox_mod.RekordboxRunning:
+                    queue = True        # Rekordbox ging zwischendurch auf
+            if queue:
+                # Vormerken statt abbrechen: "Rekordbox abgleichen" schreibt
+                # die Pfade spaeter gebuendelt (siehe _post_rekordbox_pending_apply()).
+                with self.lock:
+                    conn = db_mod.connect(cfg)
+                    try:
+                        for m in rb_moves:
+                            db_mod.rekordbox_pending_add_rename(conn, m["path"], m["prior_path"])
+                        pending = (db_mod.rekordbox_pending_count(conn)
+                                   + db_mod.rekordbox_stem_pending_count(conn))
+                    finally:
+                        conn.close()
+                rekordbox_result = {"running": True, "queued": len(rb_moves),
+                                    "pending": pending}
+
+        rows = []
+        if renamed:
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    rows = self._compact_rows(conn, cfg, [n for _, n in renamed])
+                finally:
+                    conn.close()
+            self._rebuild(cfg)
+        new_rows = {n: r for (_, n), r in zip(renamed, rows)}
+        for res in results:
+            if res["status"] == "renamed":
+                res["row"] = new_rows.get(res["new_path"])
+        self._json({"ok": True, "results": results, "rekordbox": rekordbox_result})
+
     def _post_add_to_library(self) -> None:
         """
         Importiert Dateien richtig in die Music.app-Bibliothek (nicht nur
@@ -2546,6 +2720,235 @@ class _Handler(BaseHTTPRequestHandler):
 
         self._json({"ok": True, "count": len(paths), "locations": locations,
                     "moved": moved, "final": final, "rows": rows})
+
+    # ── Stems (Acapella / Instrumental) ────────────────────────────────────
+
+    @staticmethod
+    def _stems_model_info() -> dict:
+        """Stand des Stem-Modells fuer den Einstellungs-Dialog."""
+        return {"available": stems_mod.available(),
+                "size": stems_mod.model_size(),
+                "download": stems_mod.download_state()}
+
+    def _get_stems_status(self) -> None:
+        """Stand des laufenden oder zuletzt fertigen Stem-Auftrags. Fertige
+        Vorschau-Dateien werden hier fuer /api/audio freigegeben (der
+        Vorschau-Player nutzt denselben Auslieferungsweg wie jeder Track)."""
+        state = stemjob_mod.JOBS.state
+        for info in (state.get("previews") or {}).values():
+            self._unscanned_paths.add(info["path"])
+        self._json({"ok": True, **state})
+
+    def _get_stems_download(self) -> None:
+        """Eine Hoerprobe als fertige Datei herunterladen (Tags, Cover und
+        Name wie beim Speichern, stemjob.export()), ohne sie neben das
+        Original zu legen. Die getaggte Kopie wird nach dem Ausliefern
+        geloescht, die Hoerprobe bleibt."""
+        q = self._query()
+        try:
+            path, name = stemjob_mod.JOBS.export(
+                unquote(q.get("job", "")), unquote(q.get("kind", "")), cfgmod.load())
+        except (stemjob_mod.JobError, tags_mod.TagError, OSError) as exc:
+            self._send(404, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
+            return
+        try:
+            mime = "audio/aiff" if path.lower().endswith(".aiff") else "audio/mpeg"
+            # Name kommt aus Tags (freier Text): ASCII-Ersatz fuer alte
+            # Browser plus RFC-5987-Form, ohne Zeichen fuer Header-Injection.
+            safe = "".join(c for c in name if c not in ('\r', '\n', '"', "/", "\\"))
+            ascii_name = safe.encode("ascii", "replace").decode("ascii").replace("?", "_")
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(os.path.getsize(path)))
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="{ascii_name}"; '
+                             f"filename*=UTF-8''{quote(safe, safe='')}")
+            self._security_headers()
+            self.end_headers()
+            with open(path, "rb") as fh:
+                while True:
+                    chunk = fh.read(_CHUNK)
+                    if not chunk:
+                        break
+                    try:
+                        self.wfile.write(chunk)
+                    except (BrokenPipeError, ConnectionResetError):
+                        return
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+    def _post_stems(self) -> None:
+        """Startet die Trennung (nur Vorschau, es entsteht keine Datei im
+        Zielordner). Antwort sofort; Fortschritt ueber /api/stems/status."""
+        cfg = cfgmod.load()
+        if not stems_mod.available():
+            self._fail("Stem-Trennung ist nicht verfügbar (Modell fehlt)", 501)
+            return
+        payload = self._json_payload()
+        if payload is None:
+            return
+        path = str(payload.get("path") or "")
+        kinds = [str(k) for k in (payload.get("kinds") or [])]
+        row, ok, path = self._authorize_or_relocate(path)
+        if not ok:
+            self._reject_missing(path)
+            return
+        try:
+            state = stemjob_mod.JOBS.start(path, kinds, cfg,
+                                           fast=payload.get("quality") == "fast")
+        except stemjob_mod.JobError as exc:
+            self._fail(str(exc), 409)
+            return
+        self._json({"ok": True, **state})
+
+    def _post_stems_discard(self) -> None:
+        payload = self._json_payload()
+        if payload is None:
+            return
+        kinds = payload.get("kinds")
+        removed = stemjob_mod.JOBS.discard(
+            str(payload.get("job") or ""),
+            [str(k) for k in kinds] if kinds else None)
+        for p in removed:
+            self._unscanned_paths.discard(p)
+        self._json({"ok": True, **stemjob_mod.JOBS.state})
+
+    def _post_stems_approve(self) -> None:
+        """
+        Gibt EINEN Stem aus der Vorschau frei: Datei neben das Original legen
+        (Name nach rename_pattern), Tags und Cover des Haupttracks
+        uebernehmen, in die Datenbank aufnehmen, in die Music.app-Bibliothek
+        importieren und -- steht der Haupttrack in Rekordbox -- dort samt
+        Beatgrid anlegen. Laeuft Rekordbox, wird der Stem vorgemerkt und erst
+        ueber "Rekordbox abgleichen" uebernommen.
+
+        Lock-Regel wie _post_add_to_library(): Dateiarbeit, Messung, AppleScript
+        und Rekordbox laufen AUSSERHALB von self.lock.
+        """
+        from .analyzer import analyse_file
+
+        cfg = cfgmod.load()
+        payload = self._json_payload()
+        if payload is None:
+            return
+        job_id = str(payload.get("job") or "")
+        kind = str(payload.get("kind") or "")
+        state = stemjob_mod.JOBS.state
+        preview = ((state.get("previews") or {}).get(kind) or {}).get("path", "")
+        source = state.get("path") or ""
+        try:
+            done = stemjob_mod.JOBS.finalize(job_id, kind, cfg)
+        except (stemjob_mod.JobError, tags_mod.TagError, OSError) as exc:
+            self._fail(str(exc), 409)
+            return
+        if preview:
+            self._unscanned_paths.discard(preview)
+        final = done["path"]
+        self._unscanned_paths.add(final)
+        audit_log.log("stems", final, f"{kind} von {source}")
+
+        # Music.app: best effort -- scheitert nur dieser Teil, bleibt der Stem
+        # trotzdem gespeichert (siehe _require_music zu diesem Muster).
+        music = None
+        if cfg.get("external_music"):
+            try:
+                loc = media.add_to_music_library([final])
+                music = True
+                new_path = loc[0] if loc else ""
+                if new_path and new_path != final and os.path.isfile(new_path):
+                    self._unscanned_paths.discard(final)
+                    self._unscanned_paths.add(new_path)
+                    final = new_path
+                audit_log.log("import", final, "Music-Bibliothek (Stem)")
+            except Exception as exc:                  # noqa: BLE001
+                music = str(exc)
+
+        # Messen ohne Lock, dann speichern (wie _post_add_to_library).
+        fresh = []
+        try:
+            st = os.stat(final)
+            fresh.append(analyse_file((final, st.st_size, st.st_mtime, cfg)))
+        except OSError:
+            pass
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                if fresh:
+                    db_mod.save(conn, fresh)
+                has_row = db_mod.row_for_path(conn, final) is not None
+                if has_row and music is True:
+                    db_mod.mark_music_added(conn, [final])
+                if has_row:
+                    db_mod.log_event(conn, "track_added", final,
+                                     in_music=music is True)
+                in_rekordbox = source in db_mod.rekordbox_paths(conn)
+                metadata = {final: db_mod.row_for_path(conn, final)}
+            finally:
+                conn.close()
+
+        # Rekordbox: nur wenn der Haupttrack dort steht, die Einstellung es
+        # will und Stem und Haupttrack dasselbe Format haben (sonst passt das
+        # kopierte Beatgrid nicht, siehe stemjob.rekordbox_compatible()).
+        rb_mode = cfg.get("stems_rekordbox") or "cues"
+        rb = {"status": "skipped"}
+        if in_rekordbox and has_row and rb_mode != "off":
+            try:
+                if not stemjob_mod.rekordbox_compatible(source):
+                    rb = {"status": "format"}
+            except Exception:                         # noqa: BLE001
+                rb = {"status": "format"}
+        if in_rekordbox and has_row and rb_mode != "off" and rb["status"] != "format":
+            busy = False
+            try:
+                busy = rekordbox_mod.is_running() or rekordbox_mod.agent_running()
+            except Exception:                         # noqa: BLE001
+                busy = True
+            if not busy:
+                try:
+                    with self._rekordbox_lock:
+                        res = rekordbox_mod.add_stems(
+                            [{"path": final, "source": source}], metadata,
+                            cues=rb_mode == "cues")
+                    if res["added"]:
+                        rb = {"status": "added", "grid": bool(res["grid"].get(final)),
+                              "errors": res["errors"]}
+                        with self.lock:
+                            conn = db_mod.connect(cfg)
+                            try:
+                                db_mod.mark_rekordbox_present(conn, [final])
+                            finally:
+                                conn.close()
+                    else:
+                        rb = {"status": "error",
+                              "error": next(iter(res["errors"].values()), "übersprungen")}
+                except rekordbox_mod.RekordboxRunning:
+                    busy = True
+                except Exception as exc:              # noqa: BLE001
+                    rb = {"status": "error", "error": str(exc)}
+            if busy:
+                with self.lock:
+                    conn = db_mod.connect(cfg)
+                    try:
+                        db_mod.rekordbox_stem_pending_add(conn, final, source)
+                        pending = (db_mod.rekordbox_pending_count(conn)
+                                   + db_mod.rekordbox_stem_pending_count(conn))
+                    finally:
+                        conn.close()
+                rb = {"status": "pending", "pending": pending}
+
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                rows = self._compact_rows(conn, cfg, [final])
+            finally:
+                conn.close()
+            self._rebuild(cfg)
+        self._json({"ok": True, "path": final, "kind": kind, "row": rows[0],
+                    "music": music, "rekordbox": rb,
+                    "state": stemjob_mod.JOBS.state})
 
     def _post_rekordbox_add_playlist(self) -> None:
         """
@@ -2752,28 +3155,46 @@ class _Handler(BaseHTTPRequestHandler):
         self._json({"ok": True, "matched": matched, "checked": total})
 
     def _post_rekordbox_pending_apply(self) -> None:
-        """Schreibt alle vorgemerkten Tag-Aenderungen (siehe
-        _rename_tag_value()) in EINEM Durchlauf nach master.db -- ein Oeffnen,
-        ein Backup, ein Commit. Rekordbox laeuft -> sticky-Fehler, die
-        Vormerkungen bleiben erhalten. Bearbeitete Pfade (auch 'nicht
-        gefunden') werden abgeraeumt, nur Einzelfehler bleiben stehen."""
+        """Schreibt alle vorgemerkten Aenderungen in EINEM Durchlauf nach
+        master.db: Tag-Aenderungen (siehe _rename_tag_value()) und freigegebene
+        Stems (siehe _post_stems_approve()) -- ein Oeffnen, ein Backup, ein
+        Commit je Art. Rekordbox laeuft -> sticky-Fehler, die Vormerkungen
+        bleiben erhalten. Bearbeitete Pfade (auch 'nicht gefunden') werden
+        abgeraeumt, nur Einzelfehler bleiben stehen."""
         cfg = cfgmod.load()
         with self.lock:
             conn = db_mod.connect(cfg)
             try:
-                paths = db_mod.rekordbox_pending_list(conn)
+                pending_items = db_mod.rekordbox_pending_list(conn)
+                paths = [i["path"] for i in pending_items]
                 metadata = {p: db_mod.row_for_path(conn, p) for p in paths}
+                stem_items = db_mod.rekordbox_stem_pending_list(conn)
+                stem_meta = {i["path"]: db_mod.row_for_path(conn, i["path"])
+                             for i in stem_items}
             finally:
                 conn.close()
         metadata = {k: v for k, v in metadata.items() if v is not None}
-        if not paths:
+        if not paths and not stem_items:
             self._json({"ok": True, "updated": [], "not_found": [], "errors": {},
-                        "pending": 0})
+                        "pending": 0, "stems_added": []})
             return
+        result = {"updated": [], "not_found": [], "errors": {}}
+        stem_result = {"added": [], "skipped": [], "errors": {}, "grid": {}}
         try:
             with self._rekordbox_lock:
-                result = rekordbox_mod.update_relocated_tracks(
-                    [{"path": p, "prior_path": p} for p in paths], metadata)
+                if paths:
+                    result = rekordbox_mod.update_relocated_tracks(
+                        pending_items, metadata)
+                if stem_items:
+                    # Stems ohne DB-Zeile (Datei inzwischen weg) gibt es nicht
+                    # mehr -- sie wandern ohne Eintrag aus der Warteschlange.
+                    todo = [i for i in stem_items
+                            if stem_meta.get(i["path"]) is not None
+                            and os.path.isfile(i["path"])]
+                    if todo:
+                        stem_result = rekordbox_mod.add_stems(
+                            todo, {k: v for k, v in stem_meta.items() if v is not None},
+                            cues=(cfg.get("stems_rekordbox") or "cues") == "cues")
         except rekordbox_mod.RekordboxRunning as exc:
             self._json({"ok": False, "error": str(exc), "sticky": True}, 500)
             return
@@ -2781,16 +3202,29 @@ class _Handler(BaseHTTPRequestHandler):
             self._fail(str(exc), 500)
             return
         done = list(result["updated"]) + list(result["not_found"])
+        stems_done = (list(stem_result["added"]) + list(stem_result["skipped"])
+                      + [i["path"] for i in stem_items
+                         if stem_meta.get(i["path"]) is None
+                         or not os.path.isfile(i["path"])])
         with self.lock:
             conn = db_mod.connect(cfg)
             try:
                 db_mod.rekordbox_pending_clear(conn, done)
-                remaining = db_mod.rekordbox_pending_count(conn)
+                db_mod.rekordbox_stem_pending_clear(conn, stems_done)
+                if stem_result["added"]:
+                    db_mod.mark_rekordbox_present(conn, list(stem_result["added"]))
+                remaining = (db_mod.rekordbox_pending_count(conn)
+                             + db_mod.rekordbox_stem_pending_count(conn))
             finally:
                 conn.close()
         for p in result["updated"]:
             audit_log.log("rekordbox-tags", p, "ueber Abgleich (vorgemerkt)")
-        self._json({"ok": True, **result, "pending": remaining})
+        for p in stem_result["added"]:
+            audit_log.log("rekordbox-stem", p, "ueber Abgleich (vorgemerkt)")
+        self._json({"ok": True, **result, "pending": remaining,
+                    "stems_added": stem_result["added"],
+                    "stems_errors": stem_result["errors"],
+                    "stems_grid": stem_result["grid"]})
 
     def _post_rekordbox_scan(self) -> None:
         """Erster Schritt der Pfad-Korrektur: findet DjmdContent-Zeilen, deren
@@ -3068,8 +3502,18 @@ class _Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError) as exc:
             self._fail(f"Ungültige Anfrage: {exc}")
             return
-        row = self._known_file(path)
-        if row is None:
+        # Nicht _known_file(): das verlangt eine vorhandene Datei. Liegt sie
+        # schon im Papierkorb (Music.app/Rekordbox/Finder waren schneller,
+        # oder ein frueherer Aufruf hier scheiterte nach dem Music.app-
+        # Entfernen, siehe unten), bliebe die Zeile sonst fuer immer stehen.
+        # Freigabe weiterhin nur fuer Pfade mit DB-Zeile; ohne Datei wird
+        # unten nichts angefasst ausser der eigenen DB.
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            row = db_mod.row_for_path(conn, path)
+        finally:
+            conn.close()
+        if row is None or (os.path.lexists(path) and not os.path.isfile(path)):
             self._reject_missing(path)
             return
 
@@ -3108,8 +3552,13 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 media.move_to_trash(path)
             except Exception as exc:                     # noqa: BLE001
-                self._fail(f"Papierkorb: {exc}", 500)
-                return
+                # Music.app legt die Datei nach 'delete' zeitversetzt in den
+                # Papierkorb -- zwischen lexists() und Finder-Aufruf kann sie
+                # verschwinden. Dann ist das Ziel erreicht, kein Fehler.
+                if os.path.lexists(path):
+                    self._fail(f"Papierkorb: {exc}", 500)
+                    return
+                already_gone = True
         audit_log.log("papierkorb-durch-music" if (already_gone and removed_from_music)
                       else "datei-fehlt-entfernt" if already_gone else "papierkorb", path)
 
@@ -3549,7 +3998,9 @@ class _Handler(BaseHTTPRequestHandler):
         cfg = cfgmod.load()
         minutes = int(cfg.get("bpmkey_max_minutes") or 10)
         try:
-            result = bpmkey_mod.analyse(path, minutes * 60)
+            result = bpmkey_mod.analyse(path, minutes * 60,
+                                        cfg.get("measure_bpm", True),
+                                        cfg.get("measure_key", True))
         except bpmkey_mod.TooLongError:
             # Kein Fehler: zu lange Dateien (DJ-Mixe) werden bewusst uebersprungen.
             self._json({"ok": True, "status": "skipped", "reason": "too_long",
@@ -3632,7 +4083,8 @@ class _Handler(BaseHTTPRequestHandler):
         # Gemeinsames Laengenlimit beider Analysen.
         minutes = int(cfg.get("bpmkey_max_minutes") or 10)
         try:
-            result = genremood_mod.analyse(path, minutes * 60)
+            result = genremood_mod.restrict(
+                genremood_mod.analyse(path, minutes * 60), cfg)
         except genremood_mod.TooLongError:
             self._json({"ok": True, "status": "skipped", "reason": "too_long",
                         "minutes": minutes, "row": None})
@@ -5126,6 +5578,8 @@ def serve(console, port: int = 8756, open_browser: bool = True) -> int:
     # belegtem Port kehrt serve() oben zurueck, ohne durch das finally unten
     # zu kommen, das ihn sonst wieder anhalten muesste.
     REPORT.start()
+    # Vorschau-Dateien eines frueheren Laufs, die niemand freigegeben hat.
+    stemjob_mod.cleanup_all()
 
     url = f"http://127.0.0.1:{port}/tracktab.html"
     console.print(f"[bold green]Report läuft:[/bold green] {url}")

@@ -1,0 +1,2 @@
+pyobjc-core 13.0
+Lizenz laut Paket-Metadaten: MIT

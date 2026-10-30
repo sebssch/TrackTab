@@ -87,14 +87,18 @@ def _decode(path: str, channels: int, max_seconds: float) -> np.ndarray:
     return np.frombuffer(out.stdout, dtype="<f4")
 
 
-def analyse(path: str, max_seconds: float = 600.0) -> dict:
+def analyse(path: str, max_seconds: float = 600.0,
+            want_bpm: bool = True, want_key: bool = True) -> dict:
     """Misst Tempo und Tonart. Rueckgabe: {"bpm": int (0 = unbekannt),
     "camelot": str ("" = keine Dur/Moll-Tonart erkannt), "confidence": float}.
 
     Dateien ueber max_seconds werden nicht gemessen: TooLongError, ohne
     ffmpeg-Lauf, wenn mutagen die Dauer kennt; sonst erkennt der Dekodierlauf
     sie an mehr Samples als erlaubt. Sonst RuntimeError, wenn libsonare fehlt
-    oder die Datei sich nicht dekodieren laesst."""
+    oder die Datei sich nicht dekodieren laesst.
+
+    want_bpm/want_key: nicht Gewuenschtes wird gar nicht gemessen (Ergebnis 0
+    bzw. "") -- plan_fields() schreibt dafuer dann nichts."""
     lib = _lib()
     if lib is None:
         raise RuntimeError("libsonare ist nicht installiert")
@@ -108,15 +112,18 @@ def analyse(path: str, max_seconds: float = 600.0) -> dict:
         raise RuntimeError("Zu kurz für eine BPM-/Tonart-Analyse")
     with _MEASURE_LOCK:
         audio = lib.Audio.from_buffer(samples, _SAMPLE_RATE)
-        bpm = float(audio.detect_bpm() or 0.0)
-        key = audio.detect_key()
-    mode = int(key.mode)
+        bpm = float(audio.detect_bpm() or 0.0) if want_bpm else 0.0
+        key = audio.detect_key() if want_key else None
     camelot = ""
-    if mode in (0, _MODE_MINOR):                       # Dur / Moll
-        camelot = tags._pc_to_camelot(int(key.root), mode == _MODE_MINOR)
+    confidence = 0.0
+    if key is not None:
+        mode = int(key.mode)
+        if mode in (0, _MODE_MINOR):                   # Dur / Moll
+            camelot = tags._pc_to_camelot(int(key.root), mode == _MODE_MINOR)
+        confidence = float(key.confidence)
     return {"bpm": int(round(bpm)) if bpm > 0 else 0,
             "camelot": camelot,
-            "confidence": float(key.confidence)}
+            "confidence": confidence}
 
 
 def _mode(value) -> str:

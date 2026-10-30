@@ -243,8 +243,10 @@ def _analyse_genremood(conn, cfg: dict, result: dict, enabled: bool,
     if not enabled:
         return
     from . import audit_log, bpmkey, genremood, taganomaly
-    gm_ok = genremood.available()
-    bk_ok = bpmkey.available()
+    gm_ok = genremood.available() and bool(
+        cfg.get("measure_genre", True) or cfg.get("measure_mood", True))
+    bk_ok = bpmkey.available() and bool(
+        cfg.get("measure_bpm", True) or cfg.get("measure_key", True))
     if not (gm_ok or bk_ok):
         return
     # Gemeinsames Laengenlimit beider Analysen.
@@ -257,6 +259,8 @@ def _analyse_genremood(conn, cfg: dict, result: dict, enabled: bool,
     if bk_ok:
         for field, flag in (("bpmkey_write_bpm", "bpm"), ("bpmkey_write_key", "key")):
             mode = bpmkey._mode(cfg.get(field, "yes"))
+            if not cfg.get("measure_" + flag, True):
+                mode = "no"
             bk_cfg[field] = "no" if mode == "no" else "if_empty"
             if mode != "no":
                 if flag == "bpm":
@@ -275,12 +279,14 @@ def _analyse_genremood(conn, cfg: dict, result: dict, enabled: bool,
         gm_err = bk_err = False
         if path in gm_todo:
             try:
-                gm = genremood.analyse(path, max_seconds)
+                gm = genremood.restrict(genremood.analyse(path, max_seconds), cfg)
             except Exception:                              # noqa: BLE001
                 gm_err = True
         if path in bk_todo:
             try:
-                bk = bpmkey.analyse(path, max_seconds)
+                bk = bpmkey.analyse(path, max_seconds,
+                                    cfg.get("measure_bpm", True),
+                                    cfg.get("measure_key", True))
             except bpmkey.TooLongError:
                 pass
             except Exception:                              # noqa: BLE001

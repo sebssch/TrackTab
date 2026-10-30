@@ -382,6 +382,19 @@ def mood_text(moods: dict) -> str:
     return ", ".join(mood_names(moods))
 
 
+def restrict(result: dict, cfg: dict) -> dict:
+    """Beschraenkt ein Messergebnis auf die eingeschalteten Teile
+    (measure_genre / measure_mood). Gemessen wird immer in einem Modelllauf;
+    hier wird nur entschieden, was uebernommen wird."""
+    out = dict(result)
+    if not cfg.get("measure_genre", True):
+        out["genres"] = []
+    if not cfg.get("measure_mood", True):
+        out["moods"] = {}
+        out["energy"] = 0
+    return out
+
+
 def plan_fields(cfg: dict, result: dict, existing: dict, existing_mood: str) -> dict:
     """Entscheidet, was in die Datei geschrieben wird -- im Format von
     tags.write_tags() (nur geaenderte Felder, leer = nichts zu tun).

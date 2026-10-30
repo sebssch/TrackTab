@@ -179,6 +179,18 @@ def defaults() -> dict:
         "cliff_span_hz": 1000.0,
         "cliff_min_db": 15.0,
         "steep_brickwall_db": 25.0,
+        # Plateau-Pruefung: das Band ueber einer Kante muss sich um mindestens
+        # diesen Anteil der Kantenhoehe vom Pegel darunter absetzen, sonst
+        # ist es eine Luecke statt eines Tiefpasses (siehe spectral.py).
+        "plateau_min_ratio": 0.8,
+        "plateau_ceiling_hz": 22000.0,
+        # Kantensuche je Zeitabschnitt (Stabilitaet, zusammengesetzte Quellen)
+        "edge_segment_s": 20.0,
+        "edge_min_segments": 4,
+        "edge_presence_high": 0.8,
+        "edge_presence_low": 0.5,
+        "edge_cluster_hz": 300.0,
+        "edge_mixed_min_hz": 1000.0,
 
         "cutoff_classes": {
             "mp3": [
@@ -214,6 +226,9 @@ def defaults() -> dict:
         # gemessen: ~13-16 dB statt >50 dB). Mit ./run.command calibrate
         # nachjustieren.
         "lossless_min_steepness_db": 10.0,
+        # Stabile Kante unterhalb davon im OK-Bereich -> Hinweis "aus einer
+        # verlustbehafteten Quelle exportiert" (LAME 320 = 20,2 kHz).
+        "lossless_source_max_khz": 21.0,
         "aac_encoder": "aac",   # nativer ffmpeg-Encoder, ueberall verfuegbar
 
         # --- Lautheit (EBU R128 / ITU-R BS.1770 ueber ffmpeg 'loudnorm') ---
@@ -429,6 +444,14 @@ def defaults() -> dict:
         # Einstellungsgruppe. Die Tonart steht in Feld UND Kommentar in der
         # Schreibweise von key_notation.
         # Neue Einzelpruefungs-Dateien automatisch analysieren (je Analyse):
+        # Was gemessen wird (je Teilanalyse einzeln): BPM und Tonart sind zwei
+        # getrennte libsonare-Aufrufe (abgeschaltet = wirklich uebersprungen),
+        # Genre/Stimmung+Energie teilen sich einen Modelllauf (abgeschaltet =
+        # Ergebnis wird nicht uebernommen).
+        "measure_bpm": True,
+        "measure_key": True,
+        "measure_genre": True,
+        "measure_mood": True,
         "bpmkey_auto_drops": True,
         "genremood_auto_drops": False,
         # Laengere Dateien (DJ-Mixe) werden nicht analysiert, Minuten (beide):
@@ -451,6 +474,20 @@ def defaults() -> dict:
         "genremood_min_percent": 5,
         # Stimmungen als Mood-Tag schreiben (TXXX:MOOD / MOOD): no | tag.
         "genremood_write_mood": "no",
+
+        # Stem-Trennung (Demucs/onnxruntime, app/stems.py): Acapella und
+        # Instrumental aus einem Track. Titel-Zusatz und Genre der neuen Datei;
+        # alle anderen Tags, das Cover und der Dateiname (rename_pattern) kommen
+        # vom Haupttrack. Laengere Dateien (DJ-Mixe) werden nicht getrennt.
+        "stems_title_acapella": "(Acapella)",
+        "stems_title_instrumental": "(Instrumental)",
+        "stems_genre_acapella": "Acapella",
+        "stems_genre_instrumental": "Instrumental",
+        "stems_max_minutes": 15,
+        # Stem in Rekordbox anlegen (nur wenn der Haupttrack dort steht und
+        # Haupttrack und Stem dasselbe Format haben, siehe
+        # stemjob.rekordbox_compatible()): off | no_cues | cues.
+        "stems_rekordbox": "cues",
 
         # Oberflaechen-Sprache: auto (folgt navigator.language im Browser)
         # oder ein fester Sprachcode. de/en uebersetzt (siehe app/webui/

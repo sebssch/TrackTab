@@ -8,6 +8,12 @@ datas = [
     ("resources", "resources"),      # Standard-Ableton-Vorlage, siehe
 ]                                    # config.default_daw_template_path()
 
+# Lizenztexte gehoeren in jede weitergegebene App (GPL-Teile, siehe LICENSE).
+datas.append(("LICENSE", "."))
+datas.append(("NOTICE.md", "."))
+datas.append(("THIRD_PARTY_LICENSES.md", "."))
+datas.append(("licenses", "licenses"))
+
 import os
 if os.path.isdir("vendor"):
     datas.append(("vendor", "vendor"))   # statisches ffmpeg/ffprobe und die
@@ -58,12 +64,16 @@ a = Analysis(
     binaries=_sonare_binaries + _ort_binaries,
     datas=datas,
     hiddenimports=["app.analyzer", "app.classify", "app.spectral", "app.probe",
-                   "app.macapp", "app.bpmkey", "app.genremood"]
+                   "app.macapp", "app.bpmkey", "app.genremood", "app.stems", "app.stemjob"]
                   + _encodings + _sonare_hidden + _ort_hidden,
     hookspath=[],
     excludes=["tkinter", "matplotlib", "pytest", "PyInstaller"],
     noarchive=False,
 )
+# Die Demucs-Gewichte duerfen nicht mit der App ausgeliefert werden (Lizenz, siehe
+# NOTICE.md); der Nutzer laedt sie in den Einstellungen. Ein vorhandenes
+# vendor/models/demucs/ aus dem Entwicklungsbetrieb bleibt deshalb draussen.
+a.datas = [d for d in a.datas if not d[0].startswith("vendor/models/demucs/")]
 pyz = PYZ(a.pure)
 
 exe = EXE(

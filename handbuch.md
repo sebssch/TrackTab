@@ -115,31 +115,29 @@ Oben rechts wechselst du zwischen zwei Ansichten:
 
 ## Einstellungen
 
-Unter dem Zahnrad-Symbol passt du Bibliothekspfade, Analyse-Empfindlichkeit, Klassengrenzen, externe Programme (Audio-Editor, DAW, Mixed In Key, Music App, Rekordbox) und weitere Optionen an. Jede Gruppe lässt sich einzeln auf die Vorgabe zurücksetzen.
+Unter dem Zahnrad-Symbol passt du Bibliothekspfade, Analyse-Empfindlichkeit, Klassengrenzen, externe Programme (Audio-Editor, DAW, Mixed In Key, Music App, Rekordbox) und weitere Optionen an. Links wählst du die Seite, das Suchfeld darüber findet jede Einstellung nach Name oder Hilfetext. Ein Punkt in der Navigation markiert Seiten mit geänderten Werten. Die meisten Gruppen lassen sich einzeln auf die Vorgabe zurücksetzen.
 
 ![Einstellungen-Dialog](docs/003-einstellungen.png)
 
 *Der Einstellungen-Dialog.*
 
-Die zwölf Gruppen im Überblick:
+Die Seiten im Überblick:
 
-| Gruppe | Was sich dort einstellen lässt |
+| Seite | Was sich dort einstellen lässt |
 |---|---|
-| **Bibliothek** | Musikordner, Dateiendungen, ausgeschlossene Ordner, Mindestdauer |
-| **Suche** | Tippfehler-Toleranz, Mindestzeichen für Autovervollständigung, Standard-Suchfilter (siehe [Suchen und filtern](#suchen-und-filtern)) |
-| **Darstellung** | Sprache, Farbschema, Schriftgröße, Designfarbe |
-| **Analyse: BPM, Tonart, Genre & Stimmung** | Eine gemeinsame Gruppe für beide Analysen: Automatik für Einzelprüfungen (je Analyse), ein gemeinsames Längenlimit und – in den Abschnitten Tonart-Feld, BPM-Feld, Kommentar-Feld und Genre & Stimmung – was in welches Feld geschrieben wird. Im Abschnitt Tonart-Feld steht auch die Schreibweise der Tonart (Camelot, Open Key, Notennamen), siehe [Tonart](#tonart) und [Genre, Stimmung und Energie](#genre-stimmung-und-energie) |
+| **Bibliothek und Darstellung** | **Bibliothek:** Musikordner, Dateiendungen, ausgeschlossene Ordner, Mindestdauer, wie viele Dateien der Scan gleichzeitig misst (kleiner = Mac bleibt beim Scan flüssiger, Scan dauert länger). **Darstellung:** Sprache, Farbschema, Schriftgröße, Designfarbe. **Suche:** Tippfehler-Toleranz, Mindestzeichen für Autovervollständigung, Standard-Suchfilter (siehe [Suchen und filtern](#suchen-und-filtern)) |
 | **Spaltenansichten** | Standard-Spaltenansicht für Listen ohne eigene Zuordnung (siehe [Spalten anpassen](#spalten-anpassen)) |
-| **Rekordbox** | Rekordbox-App, Ziel-Playlist für den Schnellzugriff, Waveform-Stil (siehe [Bibliothek scannen](#bibliothek-scannen)), Stimmungen und eigene Tags als „My Tag“ übertragen (siehe [Genre, Stimmung und Energie](#genre-stimmung-und-energie)) |
-| **Externe Programme** | Audio-Editor, DAW, Mixed In Key, Music App, AAC-Encoder (siehe [Die Buttonleiste](#die-buttonleiste)) |
-| **Shops** | Welche Plattformen als Such-Icons in der Buttonleiste erscheinen (siehe [Die Buttonleiste](#die-buttonleiste)) |
 | **Dateinamen** | Namensmuster fürs automatische Umbenennen (siehe [Dateien automatisch umbenennen](#dateien-automatisch-umbenennen)) |
-| **Analyse** | Cutoff- und Klassengrenzen je Format (siehe [Ist die Bitrate korrekt?](#ist-die-bitrate-korrekt)) |
-| **Lautheit** | LUFS-Referenzbereich, True-Peak-Warnschwelle (siehe [Ist die Bitrate korrekt?](#ist-die-bitrate-korrekt)) |
-| **Leistung** | Anzahl paralleler Analyse-Prozesse beim Scannen |
+| **BPM, Tonart und Genre** | Eine gemeinsame Seite für beide Analysen: welche Teile gemessen werden (BPM, Tonart, Genre-Vorschläge, Stimmung & Energie), Automatik für Einzelprüfungen (je Analyse), ein gemeinsames Längenlimit und – in den Abschnitten Tonart-Feld, BPM-Feld, Kommentar-Feld und Genre & Stimmung – was in welches Feld geschrieben wird. Im Abschnitt Tonart-Feld steht auch die Schreibweise der Tonart (Camelot, Open Key, Notennamen), siehe [Tonart](#tonart) und [Genre, Stimmung und Energie](#genre-stimmung-und-energie) |
+| **Stems** | Trennmodell laden oder entfernen, Titel-Zusatz und Genre der neuen Dateien, Längenlimit (siehe [Stems erzeugen](#stems-erzeugen-acapella--instrumental)) |
+| **Music.app** | Music App auswählen, Cover aus Music.app übernehmen |
+| **Rekordbox** | Rekordbox-App, Ziel-Playlist für den Schnellzugriff, Waveform-Stil (siehe [Bibliothek scannen](#bibliothek-scannen)), Qualitätsprüfung beim Import mit Mindest-Cutoff, Stimmungen und eigene Tags als „My Tag“ übertragen (siehe [Genre, Stimmung und Energie](#genre-stimmung-und-energie)), Stems in Rekordbox übernehmen, Rekordbox-Backup-Ordner öffnen. Ohne ausgewählte Rekordbox-Installation sind alle außer der Programmwahl ausgegraut |
+| **Programme und Shops** | **Externe Programme:** Audio-Editor, DAW, Mixed In Key, AAC-Encoder. **Shops:** welche Plattformen als Such-Icons in der Buttonleiste erscheinen (siehe [Die Buttonleiste](#die-buttonleiste)) |
+| **Backup und Protokoll** | Datenbank-Backup erstellen und wiederherstellen, Backup-Ordner und Ordner des Änderungsprotokolls öffnen |
+| **Messwerte** | **Analyse:** Cutoff- und Klassengrenzen je Format. **Lautheit:** LUFS-Referenzbereich, True-Peak-Warnschwelle (siehe [Ist die Bitrate korrekt?](#ist-die-bitrate-korrekt)) |
 
 > [!tip]
-> Ist unter „Externe Programme" die Music App ausgewählt, sollten in Music.app selbst (Einstellungen → Dateien) diese beiden Optionen aktiviert sein: „Medienordner automatisch verwalten" und „Beim Hinzufügen zur Mediathek Dateien in den Medienordner kopieren". Nur so legt Music.app importierte Dateien zuverlässig in seinem eigenen Medienordner ab, und TrackTab kann Pfadänderungen durch Music.app (Umbenennen, Umsortieren) automatisch nachvollziehen.
+> Ist auf der Seite „Music.app" die Music App ausgewählt, sollten in Music.app selbst (Einstellungen → Dateien) diese beiden Optionen aktiviert sein: „Medienordner automatisch verwalten" und „Beim Hinzufügen zur Mediathek Dateien in den Medienordner kopieren". Nur so legt Music.app importierte Dateien zuverlässig in seinem eigenen Medienordner ab, und TrackTab kann Pfadänderungen durch Music.app (Umbenennen, Umsortieren) automatisch nachvollziehen.
 >
 > ![Empfohlene Music.app-Einstellungen](docs/apple-music-config.png)
 
@@ -161,6 +159,11 @@ Jede Datei bekommt ein **Verdikt**:
 Dahinter steckt eine spektrale Analyse: Bei komprimierten Formaten (MP3, AAC) hinterlässt eine geringere Bitrate eine erkennbare Grenze in den hohen Frequenzen. Wurde eine Datei aus einer niedrigeren Bitrate hochgerechnet, bleibt diese Grenze auch nach dem Neukodieren sichtbar — auch wenn die Datei jetzt als 320 kbps deklariert ist. 
 
 Bei verlustfreien Formaten (ALAC, FLAC, WAV, AIFF) gibt es keine deklarierte Bitrate zum Vergleich; hier zählt allein, ob überhaupt eine solche Grenze vorhanden ist — denn in einer wirklich verlustfreien Datei sollte keine sein.
+
+TrackTab prüft die Grenze außerdem Stück für Stück über die Laufzeit. Daraus entstehen zwei Hinweise in der Begründung, die das Verdikt selbst nicht ändern:
+
+- **„Vermutlich aus mehreren Quellen zusammengesetzt"** — die Grenze springt zwischen Stellen, die zu verschiedenen Bitraten passen. Typisch für Edits, Mashups und Bootlegs, in denen Material unterschiedlicher Qualität steckt.
+- **„Vermutlich aus einer ~320 kbps Quelle exportiert"** — eine verlustfreie Datei (z. B. AIFF) zeigt durchgehend die Grenze einer 320er-MP3. Klanglich meist unproblematisch, die Datei ist aber nicht wirklich verlustfrei entstanden.
 
 
 
@@ -238,7 +241,7 @@ Für die verlässlichste Wiedergabe aller unterstützten Formate empfiehlt sich 
    Genre-, Interpret- und Album-Änderungen aus dem **Zusammenführen** werden nicht sofort nach Rekordbox geschrieben, sondern vorgemerkt; die Zahl steht als Zähler am Knopf. Im Abgleich-Dialog überträgt die Option **„Vorgemerkte Tags übertragen"** alle gesammelt in einem Durchlauf (Rekordbox muss dafür geschlossen sein; es entsteht nur ein Backup der Rekordbox-Datenbank).
 
    > [!tip] 
->Damit dieser Button angezeigt wird, muss in den Einstellungen "Rekordbox" als Programm ausgewählt sein.
+>Damit dieser Button angezeigt wird, muss in den Einstellungen "Rekordbox" als Programm ausgewählt sein. Bis dahin sind auch die übrigen Rekordbox-Einstellungen (Playlist, Waveform-Stil, Qualitätsprüfung, My Tag, Stems) ausgegraut; sie werden frei, sobald du oben ein Rekordbox auswählst.
 
 ## Music.app abgleichen
   
@@ -405,7 +408,7 @@ Tracks, zu denen TrackTab keine Datei hat, stehen trotzdem an ihrer Stelle in de
 
 **Reihenfolge ändern:** Zieh Zeilen innerhalb einer Rekordbox-Playlist an eine neue Stelle — die neue Reihenfolge wird in Rekordbox übernommen. Die Spalte **„#"** zeigt die Position in der Playlist (auch in eigenen und Music-App-Playlisten). Sortierst du die Tabelle nach einer anderen Spalte, z. B. nach Titel, ändert das nur die Ansicht; die Zahlen in „#" bleiben die echte Reihenfolge. Ein Klick auf „#" (oder der dritte Klick auf eine andere Spalte) stellt die Playlist-Reihenfolge wieder her.
 
-Für alle drei Aktionen gilt: **Rekordbox muss geschlossen sein**, ebenso der Hintergrunddienst „rekordboxAgent" (Menüleisten-Symbol). Vor jedem Schreiben legt TrackTab ein Backup der Rekordbox-Bibliothek an (`backup/rekordbox/`); beim Entfernen aus der Sammlung wandert auch die Rekordbox-Analyse des Tracks (Beatgrid, Wellenform) dorthin, sodass sich alles vollständig zurückspielen lässt.
+Für alle drei Aktionen gilt: **Rekordbox muss geschlossen sein**, ebenso der Hintergrunddienst „rekordboxAgent" (Menüleisten-Symbol). Vor jedem Schreiben legt TrackTab ein Backup der Rekordbox-Bibliothek an (`backup/rekordbox/`, zu öffnen über ⚙ Einstellungen → Rekordbox → „Rekordbox-Backup-Ordner öffnen“); beim Entfernen aus der Sammlung wandert auch die Rekordbox-Analyse des Tracks (Beatgrid, Wellenform) dorthin, sodass sich alles vollständig zurückspielen lässt.
 
 Einzelne Rekordbox-Smart-Playlists verwenden Zeitregeln, die nur Rekordbox selbst auswerten kann. Sie erscheinen im Baum, ihr Inhalt bleibt aber leer — TrackTab sagt das beim Öffnen.
 
@@ -559,7 +562,7 @@ Die Spalte **Tonart** zeigt jede Tonart als farbige Bubble. Die Farben folgen de
   - **Tonart-Feld** und **BPM-Feld:** „In … schreiben“ mit **Ja** (überschreibt einen vorhandenen Wert), **Ja, nur wenn leer** (ein vorhandener Wert bleibt stehen) oder **Nein**. Die BPM werden als ganze Zahl gespeichert.
   - **Kommentar-Feld:** Ein gemeinsamer Eintrag für BPM-/Tonart- und Genre-/Stimmungs-Analyse. „In Kommentar-Feld schreiben“: nichts, Tonart (`10A`), Tonart und Tempo (`10A - 126`), Tonart, Tempo und Energie (`10A - 126 - E7`), Tonart und Energie (`10A - E7`) oder nur Energie (`E7`). Jede Analyse ergänzt die Werte, die sie misst, die übrigen kommen aus der Datei bzw. der letzten Analyse — der Eintrag sieht also immer gleich aus, egal welche Analyse zuletzt lief. Bei einem vorhandenen Kommentar wählst du „Nur wenn leer“, „Überschreiben“, „Voranstellen“ oder „Anhängen“ (getrennt durch ` - `); ein früherer eigener Eintrag — vorn oder hinten — zählt dabei als leer bzw. wird ersetzt, nie doppelt geschrieben. **„Fehlendes ergänzen“** lässt vorhandene Werte unverändert stehen und fügt nur die fehlenden Teile nach dem gewählten Schema an derselben Stelle an: Steht schon `8A - 128` im Kommentar (z. B. aus Mixed In Key), wird daraus `8A - 128 - E7`; aus `8A - 128 - Lieblingsmix` wird `8A - 128 - E7 - Lieblingsmix`.
   - Die Tonart steht überall in der Schreibweise, die du im Abschnitt Tonart-Feld gewählt hast (Camelot, Open Key oder Notennamen).
-  - Die Messung ist eine Einschätzung, kein Urteil: Beim Tempo kommt gelegentlich die halbe oder doppelte BPM heraus, bei der Tonart manchmal die parallele Dur-/Moll-Tonart. Die Funktion ist nur auf Macs mit Apple Silicon verfügbar; auf anderen Macs erscheinen die Knöpfe nicht.
+  - Die Messung ist eine Einschätzung, kein Urteil: Beim Tempo kommt gelegentlich die halbe oder doppelte BPM heraus, bei der Tonart manchmal die parallele Dur-/Moll-Tonart. Die Funktion ist nur auf Macs mit Apple Silicon verfügbar; auf anderen Macs erscheinen die Knöpfe nicht, und die zugehörigen Einstellungen sind ausgegraut (mit Hinweis auf den Grund).
 - **Rekordbox:** Beim Übertragen **neuer** Tracks nach Rekordbox wird die Tonart mit gesetzt. Tracks, die schon in Rekordbox stehen, bleiben unberührt — Rekordbox kann ihre Daten über „Track-ID abrufen“ jederzeit selbst aus der Datei neu einlesen.
 
 ## Genre, Stimmung und Energie
@@ -576,7 +579,18 @@ TrackTab hört sich einen Track an und schätzt, welcher Stil er ist, welche Sti
 - **Suchen:** `/Energie 8`, `/Energie >7` oder `/Energie 3-5` (Energie wie in der Spalte angezeigt, also gerundet); `/Stimmung Party` oder `/Tag Warm-up` für erkannte Stimmungen und eigene Tags — nach dem Parameter erscheinen alle vergebenen Tags als Auswahl. Mit `/No` davor ausschließen.
 - **In die Datei schreiben (optional):** Standardmäßig bleibt die Datei unberührt, die Ergebnisse stehen nur in TrackTab. Die Energie kann Teil des gemeinsamen Kommentar-Eintrags werden (⚙ Einstellungen → Analyse → Kommentar-Feld, z. B. `8A - 128 - E7`, so auch in Rekordbox sichtbar), die Stimmungen als Mood-Tag (Abschnitt Genre & Stimmung, z. B. „Party, Happy“). Das Genre selbst schreibt TrackTab nie ungefragt — dafür ist der Klick auf einen Vorschlag da.
 - **Als „My Tag“ nach Rekordbox (optional):** Rekordbox liest den Mood-Tag aus der Datei nicht, hat dafür aber „My Tag“. Ist unter ⚙ Einstellungen → Rekordbox „Tags als ‚My Tag‘ übertragen“ eingeschaltet, setzt TrackTab beim Hinzufügen zu einer Rekordbox-Playlist (Knopf oder Drag & Drop) die erkannten Stimmungen (englisch, wie im Mood-Tag) und deine eigenen Tags als My Tags — auch bei Tracks, die schon in der Playlist stehen. Ein erneutes Hinzufügen legt nichts doppelt an. Vorher einmal in Rekordbox eine der vier My-Tag-Spalten umbenennen (Rechtsklick auf den Spaltenkopf im My-Tag-Fenster), z. B. in „TrackTab“, und denselben Namen im Feld „My-Tag-Spalte“ eintragen; neue Spalten lässt Rekordbox nicht zu. Diese Spalte gehört dann TrackTab: Tags, die für einen übertragenen Track nicht mehr zutreffen, werden dort entfernt. Die übrigen My-Tag-Spalten bleiben unberührt.
-- **Gut zu wissen:** Die Modelle wurden an Discogs-Daten trainiert und kennen 400 Stile; bei Nischen-Genres oder Edits liegen sie auch mal daneben. Die Funktion ist nur auf Macs mit Apple Silicon ab macOS 14 verfügbar; sonst erscheinen die Knöpfe nicht. Die Modelle stehen unter der Lizenz CC BY-NC-SA 4.0 und dürfen nur nicht-kommerziell genutzt werden.
+- **Gut zu wissen:** Die Modelle wurden an Discogs-Daten trainiert und kennen 400 Stile; bei Nischen-Genres oder Edits liegen sie auch mal daneben. Die Funktion ist nur auf Macs mit Apple Silicon ab macOS 14 verfügbar; sonst erscheinen die Knöpfe nicht, und die zugehörigen Einstellungen sind ausgegraut. Die Modelle stehen unter der Lizenz CC BY-NC-SA 4.0 und dürfen nur nicht-kommerziell genutzt werden.
+
+## Stems erzeugen (Acapella & Instrumental)
+
+TrackTab kann einen Track in **Gesang (Acapella)** und **Begleitung (Instrumental)** trennen — komplett auf deinem Mac, ohne Internet. Grundlage ist das Modell Demucs. Es gehört aus Lizenzgründen nicht zur App: Lade es einmalig unter **Einstellungen → Stems → Modell laden** (nach Bestätigung des Lizenzhinweises, rund 170 MB). Bis dahin sind die Stem-Funktionen ausgeblendet und die übrigen Stem-Einstellungen ausgegraut.
+
+- **Starten:** Menü ⋮ einer Zeile → „Stems generieren …“. Du wählst, ob du Acapella, Instrumental oder beides möchtest, dazu die Qualität (Schnell: etwa 15 % kürzere Rechenzeit, an den Abschnittsübergängen selten leichte Artefakte; Genau: volle Überlappung), und startest mit „Stems generieren“. Der Fortschritt steht in Prozent im Dialog, eine laufende Trennung lässt sich abbrechen; mit „Minimieren“ blockiert er die Oberfläche nicht mehr, ein Fortschritts-Hinweis läuft unten mit, und bei Abschluss öffnet ein Klick auf den Hinweis die Hörprobe wieder.
+- **Hörprobe zuerst:** Nach dem Trennen (auf Grafikchip und Neural Engine des Macs; ein 4-Minuten-Track braucht rund 15–25 Sekunden. Beim allerersten Mal bereitet TrackTab das Modell zusätzlich bis zu einer Minute lang vor, danach nach jedem App-Start einmalig rund 10 Sekunden) erscheint für jeden Stem eine Wellenform mit Play/Pause, Stopp und Zeitanzeige. Ein Klick (oder Ziehen) in die Wellenform springt an die Stelle und spielt dort vor; es spielt immer nur ein Stem. **Es ist noch nichts gespeichert.** Erst „Speichern“ legt die Datei an; „Herunterladen“ lädt den Stem nur als Datei herunter (mit denselben Tags, Cover und Namen wie beim Speichern, aber ohne ihn neben das Original zu legen oder irgendwo einzutragen; danach kannst du ihn trotzdem noch speichern); „Löschen“ oder Schließen wirft die Hörprobe weg.
+- **Was bei „Speichern“ passiert:** Die Datei landet im Ordner des Originals. Der Name folgt dem Namensmuster aus ⚙ Einstellungen → Dateinamen. Alle Tags und das Cover stammen vom Haupttrack; nur der **Titel** bekommt „(Acapella)“ bzw. „(Instrumental)“ angehängt und das **Genre** lautet „Acapella“ bzw. „Instrumental“ (beides unter ⚙ Einstellungen → Stems änderbar). Danach wird die Datei in TrackTab aufgenommen, in die Music-Bibliothek importiert (wenn Music eingestellt ist) und — steht der Haupttrack in Rekordbox — dort angelegt.
+- **Format:** Verlustfreie Originale (AIFF, WAV, FLAC, ALAC) ergeben AIFF, MP3/AAC-Originale ergeben MP3 mit 320 kbps.
+- **Rekordbox:** Übernommen wird der Stem nur, wenn der Haupttrack in Rekordbox steht und Stem und Haupttrack dasselbe Format haben — also MP3 → MP3 oder WAV/AIFF/FLAC → AIFF. Aus einem AAC-Track (.m4a) entsteht ein MP3-Stem, bei dem das Beatgrid nicht passen würde; er bleibt in TrackTab und Music, Rekordbox bekommt ihn nicht (der Dialog sagt das). Unter ⚙ Einstellungen → Rekordbox → „Stems in Rekordbox übernehmen“ (ausgegraut, solange das Stem-Modell nicht geladen ist; der Link darunter führt zur Seite Stems) wählst du „Ja, mit Cues“ (Standard), „Ja, ohne Cues“ oder „Nein“. Der Stem bekommt BPM, Tonart, Dauer, Beatgrid und Cover des Haupttracks — mit Cues zusätzlich alle Hot Cues, Memory Cues und Loops — und steht in denselben Playlists. Als Wellenform zeigt Rekordbox zunächst die des Haupttracks. Analysierst du den Stem in Rekordbox neu, bekommt er seine eigene, Rekordbox setzt dabei aber auch das Beatgrid neu (bei einer Acapella meist schlechter). Läuft Rekordbox, wird der Stem vorgemerkt (Zähler am Knopf „Rekordbox abgleichen“) und erst übernommen, wenn du Rekordbox schließt und „Rekordbox abgleichen“ → „Vorgemerktes übertragen“ startest. Die Übernahme von Beatgrid und Cues ist noch nicht in Rekordbox selbst geprüft — schau dir den ersten Stem dort an.
+- **Gut zu wissen:** Die Trennung ist nie perfekt — Gesangsreste im Instrumental oder Instrumentenreste in der Acapella kommen vor. Dateien über dem Limit (Standard 15 Minuten) werden nicht getrennt. Das Modell steht laut Quelle unter CC BY-NC 4.0 (nicht-kommerziell). Nur im Zeilenmenü der Bibliothek, noch nicht in der Sammelleiste und den Einzelprüfungen.
 
 ## Tags bearbeiten
 
@@ -703,15 +717,23 @@ So werden die Namen gebaut:
 
 Übersprungen wird:
 
-- **Dateien, die schon in einem deiner Bibliotheksordner liegen.** Dort sind sie über ihren Pfad verknüpft (Music.app, Rekordbox, Playlisten) — ein neuer Name würde diese Verweise zerreißen.
+- **Dateien, die schon in einem deiner Bibliotheksordner liegen.** Dort sind sie über ihren Pfad verknüpft (Music.app, Rekordbox, Playlisten) — ein neuer Name würde diese Verweise zerreißen. Dafür gibt es einen eigenen Weg, der sie mitzieht: siehe [Bibliothekstracks umbenennen](#bibliothekstracks-umbenennen).
 - **Dateien ohne Interpret und Titel.** Ein Name aus lauter technischen Werten (`320kbps.mp3`) sagt weniger aus als der vorhandene Dateiname.
 - Dateien, die bereits genau so heißen.
+
+### Bibliothekstracks umbenennen
+
+Auch Tracks in der Bibliotheksliste lassen sich nach demselben Muster umbenennen: im Zeilenmenü **Datei umbenennen** oder als Sammelaktion für eine Auswahl. TrackTab zieht dabei alles nach, was am Pfad hängt:
+
+- **Datenbank, Playlisten, Merklisten** — laufen mit.
+- **Music.app** — der Track wird auf die neue Datei umgebogen (Playlisten und Wiedergabezähler bleiben). Lehnt Music.app das ab, wird die Umbenennung zurückgenommen. Nach einer späteren Tag-Änderung kann Music.app die Datei in seinem Medienordner wieder selbst umsortieren, wenn dort „Medienordner automatisch organisieren“ an ist.
+- **Rekordbox** — der Pfad wird in der Sammlung korrigiert. Läuft Rekordbox, wird der neue Pfad nur vorgemerkt und beim nächsten „Rekordbox abgleichen“ (Rekordbox vorher beenden) in die Sammlung geschrieben.
 
 Ein Fortschritts-Hinweis zeigt an, wie weit das Umbenennen ist; am Ende steht, wie viele Dateien umbenannt und wie viele aus welchem Grund übersprungen wurden. Die Zuordnung in TrackTab wird dabei sofort mitgezogen — Abspielen, Metadaten bearbeiten, neu messen und der Import funktionieren direkt weiter, ohne die Dateien erneut öffnen zu müssen.
 
 ## Statistik
 
-Der Button „Statistik" in der Kopfzeile zeigt eine Jahres-/Monats-Auswertung: wie viele Aktionen (Korrekturen, Konvertierungen, Tag-Änderungen, Cover, Papierkorb, Umbenennungen, Rekordbox-/Music.app-Abgleich, …) in welchem Monat passiert sind, wie viel insgesamt gehört wurde, und welche Titel, Interpreten und Genres am meisten Wiedergabezeit hatten. Ein Jahres-Dropdown wechselt zwischen den Jahren, für die es Daten gibt; „Neu berechnen" aktualisiert die Zahlen sofort. Bei den meistgehörten Titeln legt „Playlist aus Top 50 erstellen" eine neue Playlist mit den bis zu 50 meistgehörten Titeln des gewählten Jahres an.
+Der Button „Statistik" in der Kopfzeile zeigt eine Jahres-/Monats-Auswertung: wie viele Aktionen (Korrekturen, Konvertierungen, Tag-Änderungen, Cover, Papierkorb, Umbenennungen, Rekordbox-/Music.app-Abgleich, …) in welchem Monat passiert sind, wie viel insgesamt gehört wurde, und welche Titel, Interpreten und Genres am meisten Wiedergabezeit hatten. Die meistgehörten Titel sind nach Anzahl der Wiedergaben sortiert (bei Gleichstand nach Hörzeit). Ein Jahres-Dropdown wechselt zwischen den Jahren, für die es Daten gibt; „Neu berechnen" aktualisiert die Zahlen sofort. Bei den meistgehörten Titeln legt „Playlist aus Top 50 erstellen" eine neue Playlist mit den bis zu 50 meistgehörten Titeln des gewählten Jahres an. Entsprechend legt „Playlist aus vollständig Gehörten erstellen“ bei „Am vollständigsten gehört“ eine Playlist aus den dort gelisteten Titeln an.
 
 ![Statistik-Dashboard](docs/013-statistik.png)
 

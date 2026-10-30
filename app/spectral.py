@@ -11,9 +11,12 @@ Ablauf:
      Ein Encoder-Tiefpass bleibt darin als harte Kante stehen, waehrend
      inhaltlich hoehenarme Stellen herausgemittelt werden.
   4. Die staerkste Kante im Spektrum suchen. Ein Encoder-Tiefpass ist eine
-     Brickwall: unterhalb Musik, oberhalb exakte Null. Findet sich keine
-     ausreichend steile Kante, hat die Datei gar keinen Tiefpass — dann gilt
-     der Inhalt als bis zur Bandgrenze reichend.
+     Brickwall: unterhalb Musik, oberhalb exakte Null — und zwar bis ganz
+     oben (Plateau-Pruefung, sonst zaehlt auch eine Luecke im Spektrum).
+     Findet sich keine ausreichend steile Kante, hat die Datei gar keinen
+     Tiefpass — dann gilt der Inhalt als bis zur Bandgrenze reichend.
+  5. Dieselbe Suche je Zeitabschnitt: ein Encoder-Tiefpass steht in jedem
+     Abschnitt, eine wandernde Kante verraet zusammengesetztes Material.
 
 Die Kantensuche ist bewusst der einzige Massstab. Ein fester Pegelschwellwert
 scheitert an verlustfreiem Material (dort liegt oben echter Inhalt statt
@@ -39,6 +42,8 @@ class SpectralResult:
     cutoff_hz: float = 0.0
     raw_cutoff_hz: float = 0.0       # Position der Kante ohne cliff_min_db-Filter
     steepness_db: float = 0.0        # Hoehe der staerksten Kante
+    plateau_db: float = 0.0          # Abstand zum gesamten Band ueber der Kante
+    edge_segments: list = field(default_factory=list)  # [[hz, db], ...] je Abschnitt
     is_brickwall: bool = False
     nyquist_hz: float = 0.0
     at_nyquist: bool = False         # Inhalt reicht bis an die Bandgrenze
@@ -106,15 +111,57 @@ def _window_means(spec_db: np.ndarray, n: int) -> tuple[np.ndarray, np.ndarray]:
     return lo, hi
 
 
-def _find_edge(freqs: np.ndarray, smooth_db: np.ndarray, nyquist: float,
-               cfg: dict) -> tuple[float, float, float]:
+def _plateau_margin(freqs: np.ndarray, smooth_db: np.ndarray, lo_avg: np.ndarray,
+                    hi_avg: np.ndarray, start: int, end: int, span_bins: int,
+                    nyquist: float, cfg: dict) -> np.ndarray:
     """
-    Sucht die staerkste Abwaertskante im oberen Spektrum.
+    Abstand zwischen dem Band unter einer Position und dem GESAMTEN Band
+    darueber (90. Perzentil von knapp ueber der Position bis zur Obergrenze).
 
-    Rueckgabe: (cutoff_hz, kantenhoehe_db, halbwert_db).
+    Die Kantenhoehe allein vergleicht nur je 1 kHz links und rechts. Eine
+    Luecke im Spektrum, ueber der wieder voller Inhalt kommt, sieht darin aus
+    wie ein Tiefpass — an echtem Material gemessen: 320er ohne LAME-Kopf mit
+    einem Loch bei 19,2-20,2 kHz und Inhalt bis 22 kHz darueber, bisher als
+    FAKE eingestuft. Ein Encoder-Tiefpass laesst darueber dagegen nichts mehr
+    durch, der Abstand ist dort so gross wie die Kante selbst.
+
+    Gerechnet wird auf einem 50-Hz-Raster (Perzentil je Position waere bei
+    ~2.400 Kandidaten zu teuer); jede Position uebernimmt den Wert des
+    naechsthoeheren Rasterpunkts. Rueckgabe: Array in Spektrumslaenge, NaN
+    ausserhalb von [start, end).
+    """
+    margin = np.full(freqs.size, np.nan)
+    bin_hz = float(freqs[1] - freqs[0])
+    ceiling = min(nyquist * 0.98, float(cfg["plateau_ceiling_hz"]))
+    top = int(np.searchsorted(freqs, ceiling))
+    # Uebergangsbereich der Kante selbst (Glaettung + Flanke) nicht mitzaehlen
+    guard = span_bins // 2
+    step = max(1, int(round(50.0 / bin_hz)))
+    grid = np.arange(start, end + step, step)
+    values = np.empty(grid.size)
+    for n, g in enumerate(grid):          # g < freqs.size, da end = size - span_bins
+        a = g + guard
+        if top - a >= step:
+            values[n] = lo_avg[g] - np.percentile(smooth_db[a:top], 90.0)
+        else:
+            # Kante liegt zu nah an der Obergrenze: nichts darueber zu pruefen
+            values[n] = lo_avg[g] - hi_avg[g]
+    idx = np.arange(start, end)
+    margin[start:end] = values[np.minimum((idx - start + step - 1) // step, grid.size - 1)]
+    return margin
+
+
+def _find_edge(freqs: np.ndarray, smooth_db: np.ndarray, nyquist: float,
+               cfg: dict) -> tuple[float, float, float, float]:
+    """
+    Sucht die staerkste Abwaertskante im oberen Spektrum, ueber der das
+    Spektrum leise BLEIBT (siehe _plateau_margin()).
+
+    Rueckgabe: (cutoff_hz, kantenhoehe_db, halbwert_db, plateau_db).
     Die Kantenhoehe ist der Pegelunterschied zwischen dem Band unter und dem
     Band ueber der Kante — bei einem Encoder-Tiefpass typisch 30-60 dB, bei
-    einem natuerlich ausrollenden Master nur wenige dB.
+    einem natuerlich ausrollenden Master nur wenige dB. plateau_db ist der
+    Abstand zum gesamten Band darueber.
     """
     bin_hz = float(freqs[1] - freqs[0])
     span_bins = max(3, int(round(float(cfg["cliff_span_hz"]) / bin_hz)))
@@ -123,18 +170,22 @@ def _find_edge(freqs: np.ndarray, smooth_db: np.ndarray, nyquist: float,
     drop = lo_avg - hi_avg
 
     # Nur Positionen mit vollstaendigen Fenstern auf beiden Seiten pruefen
-    valid = np.zeros(freqs.size, dtype=bool)
     start = max(span_bins, int(np.searchsorted(freqs, float(cfg["search_floor_hz"]))))
     end = freqs.size - span_bins
     if end <= start:
-        return float(nyquist), 0.0, 0.0
-    valid[start:end] = True
+        return float(nyquist), 0.0, 0.0, 0.0
 
-    masked = np.where(valid, drop, -np.inf)
+    # Verhaeltnis statt fester dB-Zahl: gilt so fuer MP3-Kanten (40-60 dB)
+    # wie fuer die flachen Kanten in verlustfreien Containern (10-16 dB).
+    plateau = _plateau_margin(freqs, smooth_db, lo_avg, hi_avg, start, end,
+                              span_bins, nyquist, cfg)
+    stays_quiet = plateau >= float(cfg["plateau_min_ratio"]) * drop
+    masked = np.full(freqs.size, -np.inf)
+    masked[start:end] = np.where(stays_quiet[start:end], drop[start:end], -np.inf)
     best = int(np.argmax(masked))
     best_drop = float(masked[best])
     if not np.isfinite(best_drop):
-        return float(nyquist), 0.0, 0.0
+        return float(nyquist), 0.0, 0.0, 0.0
 
     # Kantenmitte: hoechste Frequenz, die noch ueber dem Halbwert liegt
     half = (lo_avg[best] + hi_avg[best]) / 2.0
@@ -143,7 +194,41 @@ def _find_edge(freqs: np.ndarray, smooth_db: np.ndarray, nyquist: float,
     window = smooth_db[lo_i:hi_i]
     above = np.flatnonzero(window >= half)
     cutoff_i = lo_i + int(above[-1]) if above.size else best
-    return float(freqs[cutoff_i]), best_drop, float(half)
+    return float(freqs[cutoff_i]), best_drop, float(half), float(plateau[best])
+
+
+def _spectrum_db(spec: np.ndarray, freqs: np.ndarray, cfg: dict) -> np.ndarray:
+    """Perzentil je Bin ueber die uebergebenen Bloecke, geglaettet, in dB."""
+    power = np.percentile(spec, float(cfg["block_percentile"]), axis=0)
+    spec_db = 10.0 * np.log10(power + _EPS)
+    return _smooth(spec_db, float(freqs[1] - freqs[0]), float(cfg["smooth_hz"]))
+
+
+def _segment_edges(spec: np.ndarray, kept_idx: np.ndarray, freqs: np.ndarray,
+                   nyquist: float, sample_rate: int, nfft: int, cfg: dict) -> list:
+    """
+    Dieselbe Kantensuche je Zeitabschnitt (edge_segment_s) statt ueber das
+    ganze Stueck. Ein Encoder-Tiefpass steht in JEDEM Abschnitt; eine Kante,
+    die nur das Perzentil ueber das ganze Stueck zeigt, kann von einzelnen
+    Passagen kommen. Wandert die Kante zwischen Abschnitten, ist das Stueck
+    meist aus mehreren Quellen zusammengesetzt (Edit, Mashup, Bootleg) — an
+    echtem Material gesehen, kein Zeichen fuer ein Master.
+
+    spec: Spektren der Gate-Bloecke, kept_idx deren Blocknummern im Signal.
+    Rueckgabe: [[cutoff_hz, kantenhoehe_db], ...] je Abschnitt mit genug
+    lauten Bloecken; ohne Kante [nyquist, 0].
+    """
+    per_segment = max(1, int(round(float(cfg["edge_segment_s"]) * sample_rate / nfft)))
+    seg_of = kept_idx // per_segment
+    out = []
+    for seg in np.unique(seg_of):
+        sel = seg_of == seg
+        if int(sel.sum()) < int(cfg["min_gated_blocks"]):
+            continue
+        cutoff, drop, _, _ = _find_edge(freqs, _spectrum_db(spec[sel], freqs, cfg),
+                                        nyquist, cfg)
+        out.append([round(cutoff, 1), round(drop, 1)])
+    return out
 
 
 def analyse(path: str, sample_rate: int, duration_s: float, cfg: dict,
@@ -193,12 +278,9 @@ def analyse(path: str, sample_rate: int, duration_s: float, cfg: dict,
     win_gain = np.sum(win ** 2)
     spec = np.abs(np.fft.rfft(blocks[keep] * win, axis=1)) ** 2
     spec /= win_gain
-    power = np.percentile(spec, float(cfg["block_percentile"]), axis=0)
-    spec_db = 10.0 * np.log10(power + _EPS)
 
     freqs = np.fft.rfftfreq(nfft, d=1.0 / sample_rate)
-    bin_hz = freqs[1] - freqs[0]
-    smooth_db = _smooth(spec_db, bin_hz, float(cfg["smooth_hz"]))
+    smooth_db = _spectrum_db(spec, freqs, cfg)
 
     # --- Referenzpegel (Mitten) und Rauschboden (oberstes Band) ---
     lo, hi = cfg["ref_band_hz"]
@@ -211,10 +293,13 @@ def analyse(path: str, sample_rate: int, duration_s: float, cfg: dict,
     )
 
     # --- Cutoff ueber die staerkste Kante ---
-    cutoff, drop, threshold = _find_edge(freqs, smooth_db, nyquist, cfg)
+    cutoff, drop, threshold, plateau = _find_edge(freqs, smooth_db, nyquist, cfg)
     res.raw_cutoff_hz = cutoff
     res.steepness_db = drop
     res.threshold_db = threshold
+    res.plateau_db = plateau
+    res.edge_segments = _segment_edges(spec, np.flatnonzero(keep), freqs, nyquist,
+                                       sample_rate, nfft, cfg)
     res.is_brickwall = drop >= float(cfg["steep_brickwall_db"])
 
     if drop < float(cfg["cliff_min_db"]):

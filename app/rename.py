@@ -263,13 +263,17 @@ def _same_file(a: Path, b: Path) -> bool:
 
 # ── Hauptweg ──────────────────────────────────────────────────────────────
 
-def plan(path: str, cfg: dict) -> dict:
+def plan(path: str, cfg: dict, allow_library: bool = False) -> dict:
     """Was mit einer Datei passieren wuerde, ohne sie anzufassen.
 
     status: 'rename' | 'unchanged' | 'in_library' | 'no_data'
+
+    allow_library: Bibliothekstracks ebenfalls umbenennen (der Aufrufer
+    zieht dann DB, Music.app und Rekordbox nach, siehe
+    server._post_rename_library()).
     """
     source = Path(path)
-    if is_in_library(path, cfg):
+    if not allow_library and is_in_library(path, cfg):
         return {"path": path, "status": "in_library"}
     pattern = cfg.get("rename_pattern") or DEFAULT_PATTERN
     values = values_for(read_meta(path))
@@ -282,7 +286,7 @@ def plan(path: str, cfg: dict) -> dict:
     return {"path": path, "status": "rename", "new_path": str(target)}
 
 
-def rename_file(path: str, cfg: dict) -> dict:
+def rename_file(path: str, cfg: dict, allow_library: bool = False) -> dict:
     """Benennt eine Datei nach dem konfigurierten Muster um.
 
     Verschiebt nie in einen anderen Ordner -- nur der Name aendert sich.
@@ -291,7 +295,7 @@ def rename_file(path: str, cfg: dict) -> dict:
     diesem Pfad weiterarbeiten (Datenbank, Autorisierung, Oberflaeche) --
     unter dem alten ist die Datei nicht mehr auffindbar.
     """
-    result = plan(path, cfg)
+    result = plan(path, cfg, allow_library)
     if result["status"] != "rename":
         return result
     try:

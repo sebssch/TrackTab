@@ -1,0 +1,178 @@
+libsonare
+Copyright 2024 libsonare contributors
+
+This product includes software developed by third parties. Below is the
+attribution for each third-party component whose code reaches a distributed
+binary, and for the project from which algorithms were ported.
+
+================================================================================
+librosa
+================================================================================
+
+  Copyright (c) 2013--2023, librosa development team
+
+  Licensed under the ISC License.
+
+  libsonare ports audio analysis algorithms from librosa, a Python library for
+  music and audio analysis.
+
+  https://github.com/librosa/librosa
+
+================================================================================
+KissFFT
+================================================================================
+
+  Copyright (c) 2003-2010, Mark Borgerding. All rights reserved.
+
+  Licensed under the BSD 3-Clause License (SPDX: BSD-3-Clause).
+
+  https://github.com/mborgerding/kissfft
+
+  Vendored in: third_party/kissfft/
+
+================================================================================
+r8brain-free-src
+================================================================================
+
+  Copyright (c) 2013-2025 Aleksey Vaneev
+
+  Licensed under the MIT License.
+
+  https://github.com/avaneev/r8brain-free-src
+
+  Vendored in: third_party/r8brain/
+
+  r8brain-free-src bundles FFT implementations by other authors under
+  third_party/r8brain/fft/. The MIT notice above covers Aleksey Vaneev's work
+  only; each bundled implementation keeps its own copyright and terms:
+
+    Ooura FFT (fft4g.h) — the implementation r8brain's own resampler uses,
+    since neither R8B_PFFFT nor R8B_IPP is defined. PFFFT below is compiled
+    separately by this project when SONARE_USE_PFFFT is on.
+
+      Copyright (C) 1996-2001 Takuya OOURA
+
+      Used with permission granted by the author's license.
+
+      http://www.kurims.kyoto-u.ac.jp/~ooura/fft.html
+
+    PFFFT and PFFFT DOUBLE (pffft*.c, pffft*.h, simd/pf_*.h)
+
+      Copyright (c) 2013 Julien Pommier
+      Copyright (c) 2020 Hayati Ayguen
+      Copyright (c) 2020 Dario Mambro
+
+      Derived from FFTPACK v4, authored by Dr Paul Swarztrauber of NCAR, and
+      distributed under the FFTPACK v5 license (SPDX: BSD-3-Clause):
+
+        Copyright (c) 2004 the University Corporation for Atmospheric
+        Research ("UCAR"). All rights reserved. Developed by NCAR's
+        Computational and Information Systems Laboratory, UCAR,
+        www.cisl.ucar.edu.
+
+      https://bitbucket.org/jpommier/pffft
+      https://github.com/marton78/pffft
+
+    AVX-to-NEON translation layer (simd/pf_neon_double_from_avx.h)
+
+      Copyright (C) 2020 Huawei Technologies Co., Ltd. All rights reserved.
+
+      Licensed under the Apache License, Version 2.0 (SPDX: Apache-2.0).
+
+      https://github.com/kunpengcompute/AvxToNeon
+
+================================================================================
+dr_libs (dr_wav)
+================================================================================
+
+  Copyright 2023 David Reid
+
+  Available as a choice of Public Domain (Unlicense) or MIT No Attribution
+  (MIT-0).
+
+  https://github.com/mackron/dr_libs
+
+  Vendored in: third_party/dr_libs/
+
+================================================================================
+minimp3
+================================================================================
+
+  To the extent possible under law, the author(s) have dedicated all copyright
+  and related and neighboring rights to this software to the public domain
+  worldwide.
+
+  Licensed under CC0 1.0 Universal (Public Domain Dedication).
+
+  https://github.com/lieff/minimp3
+
+  Vendored in: third_party/minimp3/
+
+================================================================================
+Eigen
+================================================================================
+
+  Copyright (c) Benoit Jacob, Gael Guennebaud and the other Eigen contributors
+
+  Licensed under the Mozilla Public License 2.0 (SPDX: MPL-2.0). Some files in
+  the upstream distribution carry BSD or LGPL terms instead; libsonare compiles
+  with EIGEN_MPL2_ONLY, which upstream defines as a guarantee that no LGPL file
+  is included and makes including one a compilation error.
+
+  Eigen is header-only and is not vendored: the build uses a system Eigen 3.3 or
+  newer where one is installed and otherwise fetches 3.4.1 at configure time.
+  Either way its code is compiled into the distributed binaries, which is why it
+  is listed here. Source for the version a binary was built against is available
+  from the URL below.
+
+  https://gitlab.com/libeigen/eigen
+
+================================================================================
+SADIE II HRTF Database
+================================================================================
+
+  Copyright 2018, University of York.
+
+  Licensed under the Apache License, Version 2.0 (SPDX: Apache-2.0).
+
+  libsonare embeds a derived subset of the SADIE II database's subject D1
+  (KU100) head-related impulse responses as the playback renderer's default
+  HRTF set. The original measurements were reduced to a 5-degree-azimuth by
+  15-degree-elevation grid, converted to 128-tap minimum-phase filters with a
+  separately extracted interaural time delay per direction, and quantized to
+  int16 in libsonare's own SHRF container format.
+
+  Citation: Armstrong, C., Thresh, L., Murphy, D., Kearney, G. (2018). "A
+  Perceptual Evaluation of Individual and Non-Individual HRTFs: A Case Study
+  of the SADIE II Database." Applied Sciences, 8(11), 2029.
+
+  https://www.york.ac.uk/sadie-project/database.html
+
+  Embedded as: src/playback/default.shrf
+
+  The stereo.binaural insert embeds a further reduction of that set's
+  elevation-0 row: left/right mirror-averaged 64-tap minimum-phase filters and
+  ITDs (src/mastering/stereo/binaural_ring.inc).
+
+================================================================================
+Japanese vowel formant data (Yazawa and Kondo)
+================================================================================
+
+  Licensed under CC-BY-4.0. Yazawa, K. and Kondo, M. (2019), Japanese vowel
+  length data, Zenodo record 15227304 (https://zenodo.org/records/15227304).
+  The male-speaker mean formants of /a e i o u/ set the vowel ratios of the
+  effects.filter.vowel table (src/effects/filter/vowel_filter.cpp).
+
+================================================================================
+soundings renderer (GS classic insertion-effect graph)
+================================================================================
+
+  Copyright (c) 2026 libraz
+
+  Licensed under the MIT License.
+
+  The classic GS insertion-effect realisation (src/midi/synth/gs_classic/)
+  ports the node-graph renderer of the soundings measurement project to C++,
+  and src/midi/synth/gs_classic_models.inc is generated from that project's
+  model files by tools/gs/classic_models.py. The measurements themselves are
+  dedicated to the public domain (CC0).

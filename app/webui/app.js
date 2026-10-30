@@ -63,6 +63,18 @@ function applyStaticI18n() {
 }
 document.addEventListener("DOMContentLoaded", applyStaticI18n);
 
+// Offenes Overlay/Popup sperrt das Scrollen des Hintergrunds: Die Overlays
+// werden an vielen Stellen per style.display geoeffnet, deshalb beobachten
+// wir ihr style-Attribut statt jede Oeffnungsstelle anzufassen.
+document.addEventListener("DOMContentLoaded", () => {
+  const overlays = document.querySelectorAll(".overlay");
+  const sync = () => document.body.classList.toggle("overlay-open",
+    [...overlays].some(o => o.style.display && o.style.display !== "none"));
+  const mo = new MutationObserver(sync);
+  overlays.forEach(o => mo.observe(o, {attributes: true, attributeFilter: ["style", "class"]}));
+  sync();
+});
+
 // PWA-Installierbarkeit (sw.js). "load" statt "DOMContentLoaded": die
 // Registrierung braucht kein DOM-Element und soll nicht mit dem initialen
 // Rendern eines ggf. grossen eingebetteten Datensatzes konkurrieren.
@@ -1083,6 +1095,7 @@ const ICONS = {
   question: SVG('<path d="M9.5 9a2.5 2.5 0 114.7 1.2c-.9.8-1.7 1.4-1.7 2.8"/>' +
                 '<line x1="12.5" y1="17" x2="12.5" y2="17.01"/>'),
   trash: SVG(LUCIDE_ICONS["trash"]),
+  cloudDownload: SVG(LUCIDE_ICONS["cloud-download"]),
   delete: SVG(LUCIDE_ICONS["delete"]),
   uncorrect: SVG(LUCIDE_ICONS["circle-dashed-check"]),
   exportZip: SVG(LUCIDE_ICONS["file-down"]),
@@ -1099,7 +1112,16 @@ const ICONS = {
   // geschieht so nur hier, nicht an jeder Verwendungsstelle.
   analyseBpmKey: SVG(LUCIDE_ICONS["clef-treble"]),
   analyseGenreMood: SVG(LUCIDE_ICONS["party-popper"]),
+  splitStems: SVG(LUCIDE_ICONS["split"]),
+  stemSave: SVG(LUCIDE_ICONS["save"]),
+  // Wie der Export-Knopf der Sammelleiste (exportZip), ein Symbol fuer "Datei herunterladen".
+  stemDownload: SVG(LUCIDE_ICONS["file-down"]),
+  stemPlay: SVG(LUCIDE_ICONS["play"], "currentColor"),
+  stemPause: SVG(LUCIDE_ICONS["pause"], "currentColor"),
+  stemStop: SVG(LUCIDE_ICONS["square"], "currentColor"),
+  stemMinimize: SVG(LUCIDE_ICONS["minimize-2"]),
   keySync: SVG(LUCIDE_ICONS["replace"]),
+  renameFile: SVG(LUCIDE_ICONS["file-type-corner"]),
   spectrogram: SVG(LUCIDE_ICONS["chart-no-axes-column"] || LUCIDE_ICONS["audio-lines"]),
   pencil: SVG(LUCIDE_ICONS["pencil"]),
   sparkles: SVG(LUCIDE_ICONS["sparkles"]),
@@ -3809,12 +3831,20 @@ function progressToast(text, opts) {
       barEl.style.width = Math.max(0, Math.min(100, pct)) + "%";
       if (text2 != null) textEl.textContent = text2;
     },
-    done(text2, warn) {
+    // opts.sticky: bleibt stehen, bis man ihn anklickt (opts.onClick laeuft
+    // dabei) -- fuer Hinweise, die man nicht verpassen soll.
+    done(text2, warn, opts) {
       barWrap.classList.remove("indeterminate");
       barEl.style.width = "100%";
       if (text2 != null) {
         textEl.textContent = text2;
         el.className = "toast progress " + toastLevel(text2, warn) + " show";
+      }
+      if (opts && opts.sticky) {
+        el.style.cursor = "pointer";
+        el.style.pointerEvents = "auto";
+        el.onclick = () => { close(0); if (opts.onClick) opts.onClick(); };
+        return;
       }
       close(1200);              // voller Balken soll kurz sichtbar bleiben
     },
@@ -3939,6 +3969,10 @@ async function initStorage() {
         BPMKEY_AUTO = !!s.values.bpmkey_auto_drops;
         // Genre-/Stimmungs-Analyse (onnxruntime + Modelle), gleiche Logik.
         GENREMOOD_AVAILABLE = !!s.genremood_available;
+        // Stem-Trennung (onnxruntime + Demucs-Modell), gleiche Logik.
+        STEMS_AVAILABLE = !!s.stems_available;
+        BPMKEY_INSTALLED = !!s.bpmkey_installed;
+        GENREMOOD_INSTALLED = !!s.genremood_installed;
         GENREMOOD_AUTO = !!s.values.genremood_auto_drops;
         GENREMOOD_MIN_PERCENT = Number(s.values.genremood_min_percent) || 5;
         GENREMOOD_WRITES = String(s.values.bpmkey_comment_content || "").includes("energy") ||
@@ -6372,6 +6406,12 @@ function rowMoreMenuItems(r) {
       label: t("rowmenu.genremood"), action: () => analyseGenreMood([r]),
     });
   }
+  if (!r.gone && apiMode && STEMS_AVAILABLE) {
+    items.push({
+      icon: ICONS.splitStems, cls: "", title: t("action.stems_title"),
+      label: t("rowmenu.stems"), action: () => openStemsDialog(r),
+    });
+  }
   if (!r.gone && apiMode && !r.ext) {
     items.push({
       icon: ICONS.pickaxe, cls: "", title: t("action.rescan"),
@@ -6389,6 +6429,12 @@ function rowMoreMenuItems(r) {
     items.push({
       icon: ICONS.fix, cls: "", title: t("action.fix_bitrate", {kbps: r.mk}),
       label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r),
+    });
+  }
+  if (!r.gone && apiMode && !r.ext) {
+    items.push({
+      icon: ICONS.renameFile, cls: "", title: t("action.rename_library_title"),
+      label: t("rowmenu.rename_file"), action: () => renameLibraryRows([r]),
     });
   }
   if (apiMode && keyNeedsSync(r)) {
@@ -7137,6 +7183,7 @@ function renderBulkBar() {
       `<button class="iconbtn plain" id="bulkFix" title="${esc(t("bulk.fix_title"))}">${ICONS.fix}</button>`,
       selRows.some(hasAutoFixableTagIssues) ? `<button class="iconbtn plain" id="bulkFixTags"
         title="${esc(t("bulk.action_fix_tag_issues"))}">${TREE_ICONS.tag_issues}</button>` : "",
+      `<button class="iconbtn plain" id="bulkRenameFile" title="${esc(t("action.rename_library_title"))}">${ICONS.renameFile}</button>`,
       bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.keySync}</button>` : "",
       anyNonGone ? `<button class="iconbtn plain" id="bulkCorrect" title="${esc(t("bulk.correct_title"))}">${ICONS.correct}</button>
     <button class="iconbtn plain" id="bulkUncorrect" title="${esc(t("bulk.uncorrect_title"))}">${ICONS.uncorrect}</button>` : "",
@@ -7200,6 +7247,8 @@ function renderBulkBar() {
   const bulkFixTagsBtn = document.getElementById("bulkFixTags");
   if (bulkFixTagsBtn) bulkFixTagsBtn.onclick = () => bulkApply("fixtags");
   const bulkRows = () => [...state.selected].map(i => DATA[i]).filter(Boolean);
+  const bulkRenameBtn = document.getElementById("bulkRenameFile");
+  if (bulkRenameBtn) bulkRenameBtn.onclick = () => renameLibraryRows(bulkRows().filter(r => !r.gone && !r.ext));
   const bulkKeySyncBtn = document.getElementById("bulkKeySync");
   if (bulkKeySyncBtn) bulkKeySyncBtn.onclick = () => writeKeyToFiles(bulkRows(), false);
   const bulkBpmKeyBtn = document.getElementById("bulkBpmKey");
@@ -7319,6 +7368,55 @@ function askFixTagIssuesBulk(rows) {
 // nur fuer Zeilen mit Abweichung (keyNeedsSync()). isDrop=true: Zeilen aus den
 // Einzelpruefungen, deren Zeile der Server mangels DB-Eintrag nicht
 // zurueckliefern kann (fieldsToDropRow()).
+// Benennt Bibliothekstracks nach dem Namensmuster um. Der Server zieht DB,
+// Music.app und Rekordbox mit (siehe _post_rename_library()); hier wird nur
+// die Zeile uebernommen. Abspielen stoppen, weil die Datei unter dem alten
+// Pfad nicht mehr existiert.
+async function renameLibraryRows(rows) {
+  if (!rows.length) return;
+  const label = t("toast.rename_lib_running", {count: rows.length});
+  const pt = progressToast(label);
+  rows.forEach(r => stopPlayerFor(r.p));
+  const byPath = new Map(rows.map(r => [r.p, r]));
+  let data;
+  try {
+    const res = await fetch("/api/rename-library", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({paths: rows.map(r => r.p)})});
+    data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  } catch (err) {
+    pt.fail(t("toast.rename_lib_failed", {error: err.message}));
+    return;
+  }
+  let renamed = 0, unchanged = 0, noData = 0, failed = 0, lastError = "";
+  for (const item of data.results) {
+    if (item.status === "renamed") {
+      const target = byPath.get(item.path);
+      if (target && item.row) applyRowUpdate(target.i, item.row);
+      renamed++;
+    } else if (item.status === "unchanged") unchanged++;
+    else if (item.status === "no_data") noData++;
+    else { failed++; lastError = `${baseName(item.path)}: ${item.error || ""}`; }
+  }
+  const parts = [];
+  if (renamed) parts.push(t("toast.rename_lib_done", {count: renamed}));
+  if (unchanged) parts.push(t("drop.rename.done_unchanged", {count: unchanged}));
+  if (noData) parts.push(t("drop.rename.done_no_data", {count: noData}));
+  const rbq = data.rekordbox && data.rekordbox.queued;
+  if (rbq) {
+    RB_PENDING = data.rekordbox.pending || RB_PENDING + rbq;
+    renderRekordboxSyncButton();
+    parts.push(t("toast.rename_lib_rb_pending", {count: rbq}));
+  }
+  if (failed) parts.push(t("toast.rename_lib_item_failed", {count: failed, error: lastError}));
+  const msg = parts.join(" · ") || t("drop.rename.done_none");
+  if (failed) pt.fail(msg);
+  else pt.done(msg, renamed ? false : "soft");
+  state.selected.clear();
+  render();
+}
+
 async function writeKeyToFiles(rows, isDrop) {
   const todo = rows.filter(r => keyNeedsSync(r) && (!isDrop || r.nativePath));
   if (!todo.length) {
@@ -7431,6 +7529,342 @@ async function analyseBpmKey(rows, isDrop, opts) {
   } else if (failed) note(t("toast.bpmkey_failed", {failed, error: lastError}), "soft");
   else if (skipped) note(t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}), "soft");
   if (!isDrop) { state.selected.clear(); render(); }
+}
+
+// ── Stems (Acapella / Instrumental) ───────────────────────────────────
+// Dreistufig und bewusst mit Vorschau: Auswahl -> Server trennt und legt nur
+// Hoerproben an (/api/stems, Fortschritt per /api/stems/status) -> erst der
+// Klick auf "Speichern" legt die Datei an, uebernimmt Tags/Cover und traegt
+// sie in Datenbank, Music und Rekordbox ein (/api/stems/approve).
+//
+// Der Dialog kann waehrend der Trennung minimiert werden: dann blockiert er die
+// Oberflaeche nicht, ein Fortschritts-Toast laeuft weiter, und bei Abschluss
+// erscheint ein Hinweis, der den Dialog (Hoerprobe) wieder oeffnet. Zustand
+// steht in stemsCtl (es laeuft immer hoechstens ein Auftrag, siehe stemjob.py).
+const STEMS_KINDS = ["acapella", "instrumental"];
+const stemsCtl = {active: false, r: null, job: "", stage: "idle", previews: {},
+                  timer: 0, toast: null, minimized: false, pct: 0, error: "", phase: ""};
+
+const stemsApi = async (url, payload) => {
+  const res = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload || {})});
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  return data;
+};
+
+function stemsBtn(icon, label, cls) {
+  return `<span class="btnicon stembtn">${icon || ""}</span> <span>${esc(label)}</span>`;
+}
+
+function openStemsDialog(r) {
+  if (stemsCtl.active) {
+    if (stemsCtl.r && stemsCtl.r.p === r.p) stemsShow();
+    else note(t("stems.busy"), "soft");
+    return;
+  }
+  Object.assign(stemsCtl, {active: true, r, job: "", stage: "choose", previews: {},
+    timer: 0, toast: null, minimized: false, pct: 0, error: ""});
+  if (queueState.current) queueAudio.pause();
+  stopPlayerFor(r.p);
+  stemsShow();
+}
+
+function stemsShow() {
+  stemsCtl.minimized = false;
+  document.getElementById("stemsOverlay").style.display = "flex";
+  stemsRender();
+}
+
+function stemsStopAudio() {
+  document.querySelectorAll("#stemsBody audio").forEach(a => a.pause());
+}
+
+// Schliesst den Dialog endgueltig; nicht gespeicherte Hoerproben werden
+// verworfen (der Server loescht sie).
+async function stemsClose() {
+  stemsStopAudio();
+  clearInterval(stemsCtl.timer);
+  document.getElementById("stemsOverlay").style.display = "none";
+  const {job, previews, toast} = stemsCtl;
+  if (toast) toast.fail(t("stems.cancelled"));
+  Object.assign(stemsCtl, {active: false, stage: "idle", previews: {}, job: "", toast: null});
+  if (job && Object.keys(previews).length) {
+    try { await stemsApi("/api/stems/discard", {job}); } catch (_) {}
+  }
+}
+
+function stemsMinimize() {
+  stemsStopAudio();
+  stemsCtl.minimized = true;
+  document.getElementById("stemsOverlay").style.display = "none";
+  if (stemsCtl.stage === "working" && !stemsCtl.toast) {
+    stemsCtl.toast = progressToast(t("stems.toast_running", {pct: stemsCtl.pct}));
+    stemsCtl.toast.update(stemsCtl.pct);
+  }
+}
+
+function stemsSetButtons(list) {
+  const btns = document.getElementById("stemsBtns");
+  btns.innerHTML = list.map((b, i) =>
+    `<button class="act" data-i="${i}">${stemsBtn(b.icon, b.label)}</button>`).join("");
+  list.forEach((b, i) => { btns.querySelector(`[data-i="${i}"]`).onclick = b.onclick; });
+}
+
+function stemsRender() {
+  const body = document.getElementById("stemsBody");
+  const titleEl = document.getElementById("stemsTitle");
+  const r = stemsCtl.r;
+  const label = k => t("stems.kind_" + k);
+  const cancel = {icon: "", label: t("action.cancel"), onclick: stemsClose};
+
+  if (stemsCtl.stage === "choose") {
+    titleEl.textContent = t("stems.title");
+    body.innerHTML = `
+      <div class="confirmfile">${esc(r.a)} — ${esc(r.t)}</div>
+      <p class="confirmnote">${esc(t("stems.choose_note"))}</p>
+      <div class="optlist">${STEMS_KINDS.map(k => `
+        <div class="optrow"><div class="opttext">
+          <label for="stems_${k}" class="optlabel">${esc(label(k))}</label>
+          <div class="opthelp">${esc(t("stems.kind_" + k + "_help"))}</div></div>
+          <label class="toggle"><input id="stems_${k}" type="checkbox" checked>
+            <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+        </div>`).join("")}
+        <div class="optrow"><div class="opttext">
+          <label for="stems_quality" class="optlabel">${esc(t("stems.quality"))}</label>
+          <div class="opthelp">${esc(t("stems.quality_help"))}</div></div>
+          <select id="stems_quality">
+            <option value="fast">${esc(t("stems.quality_fast"))}</option>
+            <option value="exact">${esc(t("stems.quality_exact"))}</option>
+          </select>
+        </div></div>`;
+    let q = "exact";
+    try { q = localStorage.getItem("stemsQuality") === "fast" ? "fast" : "exact"; } catch (_) {}
+    document.getElementById("stems_quality").value = q;
+    stemsSetButtons([cancel, {icon: ICONS.splitStems, label: t("stems.start"), onclick: stemsStart}]);
+    return;
+  }
+  if (stemsCtl.stage === "working") {
+    titleEl.textContent = t("stems.title");
+    body.innerHTML = `<p class="confirmnote" id="stemsStatus"></p>
+      <div class="toast-bar" style="margin-top:8px"><i id="stemsBar"></i></div>`;
+    stemsPaintProgress();
+    stemsSetButtons([
+      {icon: "", label: t("stems.cancel_run"), onclick: async () => {
+        try { await stemsApi("/api/stems/cancel"); } catch (_) {}
+        stemsClose();
+      }},
+      {icon: ICONS.stemMinimize, label: t("stems.minimize"), onclick: stemsMinimize}]);
+    return;
+  }
+  if (stemsCtl.stage === "preview") {
+    titleEl.textContent = t("stems.preview_title");
+    const kinds = Object.keys(stemsCtl.previews);
+    body.innerHTML = `
+      <p class="confirmnote">${esc(t("stems.preview_note"))}</p>
+      ${kinds.map(k => `
+        <div class="stemcard" data-kind="${k}">
+          <div class="stemhead"><b>${esc(label(k))}</b></div>
+          <canvas class="stemwave" data-kind="${k}"></canvas>
+          <audio preload="auto" src="/api/audio?path=${encodeURIComponent(stemsCtl.previews[k].path)}"></audio>
+          <div class="stemplayer">
+            <button class="iconbtn plain" data-play="${k}" title="${esc(t("stems.play"))}">${ICONS.stemPlay}</button>
+            <button class="iconbtn plain" data-stop="${k}" title="${esc(t("stems.stop"))}">${ICONS.stemStop}</button>
+            <span class="stemtime" data-time="${k}">0:00 / 0:00</span>
+          </div>
+          <div class="stemacts">
+            <button class="act" data-discard="${k}">${stemsBtn(ICONS.trash, t("stems.discard"))}</button>
+            <button class="act" data-download="${k}" title="${esc(t("stems.download_title"))}">${
+              stemsBtn(ICONS.stemDownload, t("stems.download"))}</button>
+            <button class="act" data-approve="${k}">${stemsBtn(ICONS.stemSave, t("stems.approve"))}</button>
+          </div>
+          <div class="stemresult" id="stemres_${k}"></div>
+        </div>`).join("")}`;
+    body.querySelectorAll("[data-approve]").forEach(b => b.onclick = () => stemsApprove(b.dataset.approve));
+    body.querySelectorAll("[data-discard]").forEach(b => b.onclick = () => stemsDiscard(b.dataset.discard));
+    body.querySelectorAll("[data-download]").forEach(b => b.onclick = () => stemsDownload(b.dataset.download));
+    kinds.forEach(stemsWireWave);
+    stemsSetButtons([{icon: "", label: t("action.close"), onclick: stemsClose}]);
+    return;
+  }
+  // error
+  titleEl.textContent = t("stems.title");
+  body.innerHTML = `<p class="confirmnote">${esc(stemsCtl.error)}</p>`;
+  stemsSetButtons([{icon: "", label: t("action.close"), onclick: stemsClose}]);
+}
+
+function stemsPaintProgress() {
+  const bar = document.getElementById("stemsBar");
+  if (bar) bar.style.width = stemsCtl.pct + "%";
+  const st = document.getElementById("stemsStatus");
+  // "prepare": erster Lauf im Prozess, CoreML uebersetzt das Modell noch.
+  const preparing = stemsCtl.phase === "prepare";
+  if (st) st.textContent = preparing ? t("stems.preparing") : t("stems.working", {pct: stemsCtl.pct});
+  if (stemsCtl.toast) stemsCtl.toast.update(stemsCtl.pct,
+    preparing ? t("stems.preparing") : t("stems.toast_running", {pct: stemsCtl.pct}));
+}
+
+async function stemsStart() {
+  const kinds = STEMS_KINDS.filter(k => document.getElementById("stems_" + k).checked);
+  if (!kinds.length) { note(t("stems.none_selected"), "soft"); return; }
+  const quality = document.getElementById("stems_quality").value === "fast" ? "fast" : "exact";
+  try { localStorage.setItem("stemsQuality", quality); } catch (_) {}
+  try {
+    const st = await stemsApi("/api/stems", {path: stemsCtl.r.p, kinds, quality});
+    stemsCtl.job = st.id;
+    stemsCtl.stage = "working";
+    stemsCtl.pct = 0;
+    stemsCtl.phase = st.phase || "";
+    stemsRender();
+    stemsCtl.timer = setInterval(stemsPoll, 1000);
+  } catch (err) {
+    note(t("stems.failed", {error: err.message}), "soft");
+  }
+}
+
+async function stemsPoll() {
+  if (!stemsCtl.active) return;
+  let st;
+  try { st = await (await fetch("/api/stems/status")).json(); } catch (_) { return; }
+  if (!stemsCtl.active || st.id !== stemsCtl.job) return;
+  stemsCtl.pct = Math.round(100 * (st.progress || 0));
+  stemsCtl.phase = st.phase || "";
+  if (st.status === "running") { stemsPaintProgress(); return; }
+  clearInterval(stemsCtl.timer);
+  const toast = stemsCtl.toast;
+  stemsCtl.toast = null;
+  if (st.status === "cancelled") { if (toast) toast.fail(t("stems.cancelled")); stemsClose(); return; }
+  if (st.status === "ready") {
+    stemsCtl.previews = st.previews || {};
+    stemsCtl.stage = "preview";
+    const name = `${stemsCtl.r.a} — ${stemsCtl.r.t}`;
+    if (stemsCtl.minimized) {
+      // Im Hintergrund fertig geworden: Hinweis, der den Dialog wieder oeffnet.
+      if (toast) toast.done(t("stems.toast_ready", {name}), false, {sticky: true, onClick: stemsShow});
+      else note(t("stems.toast_ready", {name}));
+    } else {
+      if (toast) toast.done(t("stems.toast_ready_short"));
+      stemsRender();
+    }
+    return;
+  }
+  stemsCtl.stage = "error";
+  stemsCtl.error = st.error === "too_long" ? t("stems.too_long") : t("stems.failed", {error: st.error || ""});
+  if (toast) toast.fail(stemsCtl.error);
+  if (stemsCtl.minimized) stemsCtl.minimized = false;
+  document.getElementById("stemsOverlay").style.display = "flex";
+  stemsRender();
+}
+
+// Wellenform der Hoerprobe: Huellkurve vom Server (previews[k].peaks), Abspiel-
+// position und Klick zum Springen. Gezeichnet wird nur, solange das Audio
+// spielt oder sich die Position aendert -- keine eigene Dauerschleife.
+function stemsWireWave(kind) {
+  const body = document.getElementById("stemsBody");
+  const canvas = body.querySelector(`canvas.stemwave[data-kind="${kind}"]`);
+  const audio = canvas.parentElement.querySelector("audio");
+  const playBtn = body.querySelector(`[data-play="${kind}"]`);
+  const stopBtn = body.querySelector(`[data-stop="${kind}"]`);
+  const timeEl = body.querySelector(`[data-time="${kind}"]`);
+  const prev = stemsCtl.previews[kind] || {};
+  const peaks = prev.peaks || [];
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth || 480, h = 64;
+  canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  const ctx = canvas.getContext("2d");
+  let raf = 0;
+  const dur = () => audio.duration || prev.duration || 0;
+  const paint = () => {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    if (peaks.length) drawPlainWave(ctx, w, h, peaks);
+    const d = dur();
+    const x = d ? (audio.currentTime / d) * w : 0;
+    ctx.globalCompositeOperation = "source-atop";     // gespielter Teil in Akzentfarbe
+    ctx.fillStyle = theme().accent || "#2f6fed";
+    ctx.fillRect(0, 0, x, h);
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillRect(Math.max(0, x - 1), 0, 2, h);
+    timeEl.textContent = fmtTime(Math.floor(audio.currentTime)) + " / " + fmtTime(Math.round(d));
+    playBtn.innerHTML = audio.paused ? ICONS.stemPlay : ICONS.stemPause;
+    playBtn.title = t(audio.paused ? "stems.play" : "stems.pause");
+    if (!audio.paused && !audio.ended) raf = requestAnimationFrame(paint);
+  };
+  const kick = () => { cancelAnimationFrame(raf); paint(); };
+  ["play", "pause", "seeked", "loadedmetadata", "ended", "timeupdate"].forEach(ev => audio.addEventListener(ev, kick));
+  // Immer nur ein Stem gleichzeitig: Start eines Stems haelt die anderen an.
+  audio.addEventListener("play", () =>
+    body.querySelectorAll("audio").forEach(a => { if (a !== audio) a.pause(); }));
+  playBtn.onclick = () => { if (audio.paused) audio.play().catch(() => {}); else audio.pause(); };
+  stopBtn.onclick = () => { audio.pause(); audio.currentTime = 0; kick(); };
+  // Klick/Ziehen in die Wellenform: dorthin springen (und abspielen, falls es
+  // noch stand -- zum schnellen Vorhoeren).
+  const seekTo = e => {
+    const d = dur();
+    if (!d) return;
+    const rect = canvas.getBoundingClientRect();
+    audio.currentTime = d * Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    kick();
+  };
+  let dragging = false;
+  canvas.onpointerdown = e => {
+    dragging = true; canvas.setPointerCapture(e.pointerId); seekTo(e);
+    if (audio.paused) audio.play().catch(() => {});
+  };
+  canvas.onpointermove = e => { if (dragging) seekTo(e); };
+  canvas.onpointerup = e => { dragging = false; canvas.releasePointerCapture(e.pointerId); };
+  paint();
+}
+
+function stemsSettle(kind, html) {
+  const card = document.querySelector(`#stemsBody .stemcard[data-kind="${kind}"]`);
+  if (!card) return;
+  card.querySelector("audio").pause();
+  card.querySelector(".stemacts").remove();
+  card.querySelector(".stemresult").innerHTML = html;
+  delete stemsCtl.previews[kind];
+}
+
+async function stemsApprove(kind) {
+  const card = document.querySelector(`#stemsBody .stemcard[data-kind="${kind}"]`);
+  card.querySelectorAll("button").forEach(b => b.disabled = true);
+  card.querySelector("audio").pause();
+  try {
+    const d = await stemsApi("/api/stems/approve", {job: stemsCtl.job, kind});
+    const idx = adoptLibraryRows([d.row]);
+    if (idx.length) { invalidateFieldValueCache(); render(); }
+    const parts = [t("stems.saved", {name: baseName(d.path)})];
+    if (d.music === true) parts.push(t("stems.music_ok"));
+    else if (typeof d.music === "string") parts.push(t("stems.music_failed", {error: d.music}));
+    const rb = d.rekordbox || {};
+    if (rb.status === "added") parts.push(t(rb.grid ? "stems.rb_added_grid" : "stems.rb_added"));
+    else if (rb.status === "pending") {
+      RB_PENDING = rb.pending || RB_PENDING + 1;
+      renderRekordboxSyncButton();
+      parts.push(t("stems.rb_pending"));
+    } else if (rb.status === "format") parts.push(t("stems.rb_format"));
+    else if (rb.status === "error") parts.push(t("stems.rb_failed", {error: rb.error || ""}));
+    stemsSettle(kind, parts.map(x => `<div>${esc(x)}</div>`).join(""));
+  } catch (err) {
+    card.querySelectorAll("button").forEach(b => b.disabled = false);
+    document.getElementById("stemres_" + kind).textContent = t("stems.failed", {error: err.message});
+  }
+}
+
+// Hoerprobe als fertige Datei (Tags, Cover, Name wie beim Speichern) ueber den
+// Browser herunterladen; die Hoerprobe bleibt, Speichern geht danach weiter.
+function stemsDownload(kind) {
+  const a = document.createElement("a");
+  a.href = `/api/stems/download?job=${encodeURIComponent(stemsCtl.job)}&kind=${encodeURIComponent(kind)}`;
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+async function stemsDiscard(kind) {
+  try { await stemsApi("/api/stems/discard", {job: stemsCtl.job, kinds: [kind]}); } catch (_) {}
+  stemsSettle(kind, esc(t("stems.discarded")));
 }
 
 function bulkGenreMoodShown(rows, isDrop) {
@@ -9296,6 +9730,10 @@ let EDITOR_NAME = "";
 let DAW_NAME = "";
 let MIK_NAME = "";
 let BPMKEY_AVAILABLE = false, BPMKEY_AUTO = false;
+let STEMS_AVAILABLE = false;
+// Bibliothek/Modelle installiert -- unabhaengig von den Mess-Schaltern, nur fuer
+// das Sperren von Einstellungen (SETTING_REQUIREMENTS).
+let BPMKEY_INSTALLED = false, GENREMOOD_INSTALLED = false;
 let GENREMOOD_AVAILABLE = false, GENREMOOD_AUTO = false, GENREMOOD_MIN_PERCENT = 5,
   GENREMOOD_WRITES = false;
 let MUSIC_NAME = "";
@@ -9995,7 +10433,8 @@ async function openSettings() {
     ov.style.display = "flex";
     return;
   }
-  document.getElementById("settingsFile").textContent =
+  // Speicherort steht nur noch als Tooltip am Fussfeld (kein eigener Kopf mehr).
+  document.getElementById("settingsFoot").title =
     t("settings.changes_in", {file: schema.local_file});
   renderSettings();
   ov.style.display = "flex";
@@ -10111,6 +10550,7 @@ async function checkUpdateOnStart() {
 function fieldRows(fields) {
   const rows = [];
   for (const f of fields) {
+    if (f.after) continue;  // wird im Feld "after" mitgezeichnet (z.B. Verwaiste Ordner)
     if (f.break || !rows.length) rows.push([]);
     rows[rows.length - 1].push(f);
   }
@@ -10122,8 +10562,9 @@ function fieldRows(fields) {
 // Toggle. Alles andere bleibt bei der automatischen Flex-Breite (kein
 // width-Attribut -> .setfield ohne Breitenklasse).
 function fieldWidthClass(f) {
-  const width = f.width || (f.type === "bool" ? "half" : null);
-  return width ? ` ${width}` : "";
+  // Schalter, Auswahl und Zahl stehen als Zeile "Text links, Bedienelement
+  // rechts" (.inline); alle anderen Typen bekommen die volle Zeilenbreite.
+  return ["bool", "select", "number"].includes(f.type) ? " inline" : "";
 }
 
 // .setbody buendelt Hinweis + Felder (+ ggf. Unter-Accordions) in EINEM
@@ -10132,7 +10573,7 @@ function fieldWidthClass(f) {
 // .setgroup und blieben dadurch auch im eingeklappten Zustand sichtbar.
 function groupHTML(g, v, d, open, extraHtml) {
   return `
-    <div class="setgroup${open ? "" : " collapsed"}" data-group="${g.id}">
+    <div class="setgroup${open ? "" : " collapsed"}" data-group="${g.id}" data-sg="${g.id}">
       <div class="sethead">
         <div class="sethead-top">
           <span class="setchevron">${ICONS.chevronDown}</span>
@@ -10191,9 +10632,9 @@ function keySyncHintHtml() {
 // sind kein eigener Block mehr -- eine Playlist wird ueber ihren eigenen
 // Bearbeiten-Dialog markiert (askPlaylistProps()).
 const SETTINGS_LAYOUT = [
-  "library", "search", "display", "bpmkey", "columnviews",
-  "rekordbox", "tools", "shops", "rename", "analysis", "loudness",
-  "performance", "backup", "logs",
+  "library", "search", "display", "bpmkey", "stems", "columnviews",
+  "music", "rekordbox", "tools", "shops", "rename", "analysis", "loudness",
+  "backup", "logs",
 ];
 
 function renderSettings() {
@@ -10219,16 +10660,15 @@ function renderSettings() {
   document.getElementById("settingsBody").innerHTML = SETTINGS_LAYOUT
     .map(id => groupHtmlById[id] ?? dynamicBlocks[id]()).join("");
 
-  document.querySelectorAll(".sethead-top").forEach(head => head.onclick = e => {
-    if (e.target.closest("button")) return;
-    head.closest(".setgroup, .setsubgroup").classList.toggle("collapsed");
-  });
-
   document.querySelectorAll("[data-reset]").forEach(b => b.onclick = () =>
     postSettings("/api/settings/reset", {group: b.dataset.reset}));
 
   const orphanBtn = document.querySelector('[data-settings-action="orphan_cleanup"]');
   if (orphanBtn) orphanBtn.onclick = () => runOrphanCleanup(orphanBtn);
+  const rbBackupBtn = document.querySelector('[data-settings-action="rekordbox_backup_folder"]');
+  if (rbBackupBtn) rbBackupBtn.onclick = () => openBackupFolder("rekordbox",
+    document.getElementById("action_rekordbox_backup_folder_status"));
+  initStemsModelBox();
 
   document.querySelectorAll("[data-app-select]").forEach(sel => sel.onchange = () => {
     const input = document.getElementById("set_" + sel.dataset.appSelect);
@@ -10240,9 +10680,11 @@ function renderSettings() {
       input.style.display = "none";
     }
     applyShowIf();
+    applyRequires();
   });
-  document.getElementById("settingsBody").oninput = applyShowIf;
+  document.getElementById("settingsBody").oninput = () => { applyShowIf(); applyRequires(); };
   applyShowIf();
+  applyRequires();
 
   document.querySelectorAll("[data-color-opt]").forEach(btn => btn.onclick = () => {
     const key = btn.dataset.colorFor;
@@ -10265,6 +10707,97 @@ function renderSettings() {
   wireShopsBlock();
   wireBackupBlock();
   wireLogsBlock();
+  document.querySelectorAll("#settingsBody .sethint").forEach(h =>
+    h.insertAdjacentHTML("afterbegin", `<span class="hinticon">${SVG(LUCIDE_ICONS["info"])}</span>`));
+  initSettingsNav();
+}
+
+// ── Seitennavigation und Suche ────────────────────────────────────────
+// Alle Gruppen bleiben im DOM (collectSettings() liest jedes [data-key]);
+// die Navigation blendet nur per Klasse aus: .pg-off = andere Seite,
+// .sq-off = von der Suche ausgeblendet. Offen/zu gibt es nicht mehr.
+const SETTINGS_PAGES = [
+  {id: "general", icon: "library-big", nav: "settings.nav_general", label: "settings.page_general",
+   groups: ["library", "display", "search"]},
+  {id: "views", icon: "columns-3", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviews"]},
+  {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename"]},
+  {id: "bpmkey", icon: "audio-waveform", nav: "settings.nav_analysis", label: "settings.page_bpmkey", groups: ["bpmkey"]},
+  {id: "stems", icon: "layers", nav: "settings.nav_analysis", label: "settings.page_stems", groups: ["stems"]},
+  {id: "music", icon: "music", nav: "settings.nav_connections", label: "settings.page_music", groups: ["music"]},
+  {id: "rekordbox", icon: "disc-3", nav: "settings.nav_connections", label: "settings.page_rekordbox", groups: ["rekordbox"]},
+  {id: "tools", icon: "wrench", nav: "settings.nav_connections", label: "settings.page_tools", groups: ["tools", "shops"]},
+  {id: "data", icon: "database", nav: "settings.nav_data", label: "settings.page_data", groups: ["backup", "logs"]},
+  {id: "advanced", icon: "sliders-horizontal", nav: "settings.nav_advanced", label: "settings.page_advanced", groups: ["analysis", "loudness"]},
+];
+let settingsPage = "general";
+
+function initSettingsNav() {
+  const nav = document.getElementById("settingsNav");
+  const body = document.getElementById("settingsBody");
+  let lastNav = null, html = "";
+  SETTINGS_PAGES.forEach(p => {
+    if (p.nav !== lastNav) { html += `<div class="setnavgroup">${esc(t(p.nav))}</div>`; lastNav = p.nav; }
+    const changed = p.groups.some(id => body.querySelector(`[data-sg="${id}"] .chg`));
+    html += `<button type="button" class="setnavitem" data-page="${p.id}"><span class="setnavicon">${
+      SVG(LUCIDE_ICONS[p.icon])}</span><span>${esc(t(p.label))}</span>${
+      changed ? '<span class="setnavdot"></span>' : ""}</button>`;
+  });
+  nav.innerHTML = html;
+  nav.onclick = e => {
+    const b = e.target.closest("[data-page]");
+    if (!b) return;
+    const search = document.getElementById("settingsSearch");
+    search.value = "";
+    settingsPage = b.dataset.page;
+    applySettingsView();
+    body.scrollTop = 0;
+  };
+  const search = document.getElementById("settingsSearch");
+  search.value = "";
+  search.oninput = applySettingsView;
+  if (!SETTINGS_PAGES.some(p => p.id === settingsPage)) settingsPage = "general";
+  applySettingsView();
+}
+
+function applySettingsView() {
+  const body = document.getElementById("settingsBody");
+  const q = document.getElementById("settingsSearch").value.trim().toLowerCase();
+  const page = SETTINGS_PAGES.find(p => p.id === settingsPage);
+  document.querySelectorAll("#settingsNav [data-page]").forEach(b =>
+    b.classList.toggle("on", !q && b.dataset.page === settingsPage));
+  body.querySelectorAll(".sq-off").forEach(el => el.classList.remove("sq-off"));
+  body.querySelectorAll(":scope > .setgroup").forEach(g => {
+    g.classList.toggle("pg-off", !q && !page.groups.includes(g.dataset.sg));
+  });
+  body.querySelector(".setnone")?.remove();
+  if (!q) return;
+  let any = false;
+  const textOf = el => (el.textContent || "").toLowerCase();
+  body.querySelectorAll(":scope > .setgroup").forEach(g => {
+    const title = textOf(g.querySelector(".sethead b"));
+    const fields = [...g.querySelectorAll(".setfield")];
+    let hits = 0;
+    if (!fields.length || g.dataset.sg === "shops") {
+      hits = (title.includes(q) || textOf(g).includes(q)) ? 1 : 0;
+    } else {
+      fields.forEach(f => {
+        const own = textOf(f.querySelector("label") || f) + " " +
+          [...f.querySelectorAll(".sethelp")].map(textOf).join(" ");
+        const hit = own.includes(q) || title.includes(q);
+        f.classList.toggle("sq-off", !hit);
+        if (hit) hits++;
+      });
+      g.querySelectorAll(".setsubgroup").forEach(sg => {
+        const stitle = textOf(sg.querySelector(".sethead b"));
+        const visible = [...sg.querySelectorAll(".setfield")].some(f => !f.classList.contains("sq-off"));
+        sg.classList.toggle("sq-off", !visible && !stitle.includes(q));
+      });
+    }
+    g.classList.toggle("sq-off", !hits);
+    if (hits) any = true;
+  });
+  if (!any) body.insertAdjacentHTML("beforeend",
+    `<div class="setnone path">${esc(t("settings.search_none"))}</div>`);
 }
 
 // ── Aenderungsprotokoll ───────────────────────────────────────────────
@@ -10272,7 +10805,7 @@ function renderSettings() {
 // hier gibt es nichts zum Editieren, nur einen Knopf, der den Ordner mit den
 // taeglichen Log-Dateien im Finder oeffnet (siehe audit_log.py).
 function renderLogsBlock() {
-  return `<div class="setgroup collapsed">
+  return `<div class="setgroup collapsed" data-sg="logs">
     <div class="sethead">
       <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.logs_title"))}</b></div>
     </div>
@@ -10382,7 +10915,7 @@ function renderColumnViewsBlock() {
   colViewDefaultDraft = COLUMN_VIEW_DEFAULT;
   colViewMusicDefaultDraft = COLUMN_VIEW_MUSIC_DEFAULT;
   colViewDropDraft = COLUMN_VIEW_DROP;
-  return `<div class="setgroup collapsed">
+  return `<div class="setgroup collapsed" data-sg="columnviews">
     <div class="sethead">
       <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.column_views_title"))}</b></div>
     </div>
@@ -10517,7 +11050,7 @@ let shopDraft = [];
 
 function renderShopsBlock() {
   shopDraft = (schema.shops || []).map(s => ({...s}));
-  return `<div class="setgroup collapsed">
+  return `<div class="setgroup collapsed" data-sg="shops">
     <div class="sethead">
       <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.shops_title"))}</b>
         <button class="act small" data-reset="shops"><span class="btnicon">${ICONS.bookDown}</span> ${esc(t("settings.reset_default"))}</button>
@@ -10600,7 +11133,7 @@ async function saveShops() {
 // (Backup jetzt / wiederherstellen), keine Einstellungswerte zum Editieren.
 function renderBackupBlock() {
   const keep = schema.backup_keep || 10;
-  return `<div class="setgroup collapsed">
+  return `<div class="setgroup collapsed" data-sg="backup">
     <div class="sethead">
       <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.backup_title"))}</b></div>
     </div>
@@ -10611,7 +11144,6 @@ function renderBackupBlock() {
         <button class="act" id="btnBackupCreate"><span class="btnicon">${ICONS.databaseArrowDown}</span> ${esc(t("settings.backup_create"))}</button>
         <button class="act" id="btnBackupRestore"><span class="btnicon">${ICONS.databaseBackup}</span> ${esc(t("settings.backup_restore"))}</button>
         <button class="act" id="btnBackupFolderDb"><span class="btnicon">${ICONS.folder}</span> ${esc(t("settings.backup_folder_db"))}</button>
-        <button class="act" id="btnBackupFolderRb"><span class="btnicon">${ICONS.folder}</span> ${esc(t("settings.backup_folder_rb"))}</button>
       </div>
       <div id="backupStatus"></div>
     </div>
@@ -10668,42 +11200,81 @@ function wireBackupBlock() {
     }
   };
 
-  const openBackupFolder = which => async () => {
-    st.textContent = t("settings.folder_opening"); st.className = "";
-    try {
-      const res = await fetch("/api/backup-folder", {method: "POST",
-        headers: {"Content-Type": "application/json"}, body: JSON.stringify({which})});
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || t("error.unknown"));
-      st.textContent = "";
-    } catch (err) {
-      st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
+  document.getElementById("btnBackupFolderDb").onclick = () => openBackupFolder("db", st);
+}
+
+// Backup-Ordner im Finder oeffnen: "db" (eigene Datenbank, Block Backup) oder
+// "rekordbox" (master.db-Kopien, Aktion im Rekordbox-Reiter).
+async function openBackupFolder(which, st) {
+  st.textContent = t("settings.folder_opening"); st.classList.remove("warn");
+  try {
+    const res = await fetch("/api/backup-folder", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({which})});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    st.textContent = "";
+  } catch (err) {
+    st.textContent = t("error.generic", {error: err.message}); st.classList.add("warn");
+  }
+}
+
+// Hilfetext: ohne Zeilenumbruch ein Absatz wie bisher. Mit Zeilenumbruechen
+// strukturiert: "## " = Zwischenueberschrift, "• " = Listenpunkt, "> " =
+// Beispiel (Code). {platzhalter} werden als Code gesetzt.
+function helpHtml(text) {
+  if (!text.includes("\n")) return `<div class="sethelp">${esc(text)}</div>`;
+  const inline = x => esc(x).replace(/\{(\w+)\}/g, "<code>{$1}</code>");
+  let out = "", list = [];
+  const flush = () => { if (list.length) out += `<ul class="helplist">${list.join("")}</ul>`; list = []; };
+  for (const line of text.split("\n")) {
+    if (line.startsWith("• ")) {
+      const m = line.slice(2).match(/^(\{\w+\}) = (.*)$/);
+      list.push(m ? `<li class="kv"><code>${esc(m[1])}</code><span>${esc(m[2])}</span></li>`
+                  : `<li>${inline(line.slice(2))}</li>`);
+      continue;
     }
-  };
-  document.getElementById("btnBackupFolderDb").onclick = openBackupFolder("db");
-  document.getElementById("btnBackupFolderRb").onclick = openBackupFolder("rekordbox");
+    flush();
+    if (line.startsWith("## ")) out += `<div class="helphead">${esc(line.slice(3))}</div>`;
+    else if (line.startsWith("> ")) out += `<code class="helpex">${esc(line.slice(2))}</code>`;
+    else out += `<p>${inline(line)}</p>`;
+  }
+  flush();
+  return `<div class="sethelp rich">${out}</div>`;
 }
 
 function settingField(f, value, dflt) {
+  // Stem-Modell laden/entfernen -- kein Wert, kein data-key (nicht Teil von
+  // collectSettings()/validate()); Verdrahtung in initStemsModelBox().
+  if (f.type === "model") {
+    return `<div class="setfield full" id="stemsModelBox"></div>`;
+  }
   // Aktion statt Wert -- kein <label>/"geändert"-Vergleich, kein data-key
   // (also auch nicht Teil von collectSettings()/validate()). Der Klick wird
   // separat verdrahtet, siehe renderSettings().
   if (f.type === "button") {
     return `<div class="setfield${fieldWidthClass(f)}">
-      <button class="act danger" data-settings-action="${f.key}">${
+      <button class="act${f.danger === false ? "" : " danger"}" data-settings-action="${f.key}">${
         f.icon && ICONS[f.icon] ? `<span class="btnicon">${ICONS[f.icon]}</span> ` : ""}${esc(f.label)}</button>
       ${f.help ? `<div class="sethelp">${esc(f.help)}</div>` : ""}
       <div id="action_${f.key}_status" class="sethelp"></div>
     </div>`;
   }
   if (f.type === "folderlist") {
+    // Aktionsknopf, der neben "Ordner hinzufuegen" stehen soll (Feld mit after=<key>)
+    const sibling = schema.groups.flatMap(g => g.fields).find(x => x.after === f.key);
     return `<div class="setfield full">
       <label>${esc(f.label)}</label>
       <div class="folderlist" id="folderlist_${f.key}">${folderListRows(f.key, value || [])}</div>
-      <button type="button" class="act small" data-folder-add="${f.key}">
-        <span class="btnicon">${ICONS.folder}</span> ${esc(t("settings.add_folder"))}</button>
+      <div class="btnrow">
+        <button type="button" class="act small" data-folder-add="${f.key}">
+          <span class="btnicon">${ICONS.folder}</span> ${esc(t("settings.add_folder"))}</button>${
+        sibling ? `<button type="button" class="act small danger" data-settings-action="${sibling.key}">${
+          sibling.icon && ICONS[sibling.icon] ? `<span class="btnicon">${ICONS[sibling.icon]}</span> ` : ""}${
+          esc(sibling.label)}</button>` : ""}
+      </div>
       <input type="hidden" id="set_${f.key}" data-key="${f.key}" value="${esc((value || []).join("\n"))}">
-      ${f.help ? `<div class="sethelp">${esc(f.help)}</div>` : ""}
+      ${f.help ? `<div class="sethelp">${esc(f.help)}</div>` : ""}${
+        sibling ? `<div id="action_${sibling.key}_status" class="sethelp"></div>` : ""}
     </div>`;
   }
   const changed = JSON.stringify(value) !== JSON.stringify(dflt);
@@ -10751,6 +11322,7 @@ function settingField(f, value, dflt) {
   } else if (f.type === "select") {
     input = `<select id="set_${f.key}" data-key="${f.key}">${
       (f.options || []).map(o => `<option value="${esc(o.value)}"${
+        o.requires ? ` data-requires="${esc([].concat(o.requires).join(" "))}"` : ""}${
         o.value === value ? " selected" : ""}>${esc(o.label)}</option>`).join("")}</select>`;
   } else if (f.type === "color") {
     // Feste Vorgabefarben als Schwatch-Reihe statt Dropdown -- gleiche Optik
@@ -10772,8 +11344,102 @@ function settingField(f, value, dflt) {
     (f.show_if.not_empty ? ` data-show-if-not-empty="1"`
       : f.show_if.not_value !== undefined ? ` data-show-if-not-value="${esc(f.show_if.not_value)}"`
       : ` data-show-if-contains="${esc(f.show_if.contains)}"`) : "";
-  return `<div class="setfield${fieldWidthClass(f)}"${showIf}>${label}${input}
-          ${f.help ? `<div class="sethelp">${esc(f.help)}</div>` : ""}</div>`;
+  // requires: eine Kennung oder eine Liste (alle muessen erfuellt sein).
+  const reqIds = [].concat(f.requires || []).filter(id => settingRequirement(id));
+  const req = reqIds.length ? ` data-requires="${esc(reqIds.join(" "))}"` : "";
+  return `<div class="setfield${fieldWidthClass(f)}"${showIf}${req}>${label}${input}
+          ${f.help ? helpHtml(f.help) : ""}${req ? `<div class="sethelp reqhint"></div>` : ""}</div>`;
+}
+
+// Felder mit "requires" (settings.GROUPS) wirken nur, wenn eine optionale
+// Funktion verfuegbar ist. Sonst bleiben sie sichtbar, aber ausgegraut und
+// gesperrt (.req-off), mit Hinweis -- und, wenn sie sich auf einer ANDEREN
+// Seite einrichten laesst (page), einem Sprung dorthin. Der gespeicherte Wert
+// bleibt unberuehrt (collectSettings() liest auch gesperrte Felder). Neue
+// Abhaengigkeit = ein Eintrag hier + Text "settings.requires_<id>".
+// Bewusst die *_INSTALLED-Flags statt BPMKEY_/GENREMOOD_AVAILABLE: die sind
+// auch false, wenn der Nutzer das Messen abschaltet -- dann sperrten sich die
+// Mess-Schalter selbst und liessen sich nicht wieder einschalten.
+const SETTING_REQUIREMENTS = {
+  stems: {ok: () => STEMS_AVAILABLE, page: "stems"},
+  // Live-Wert des Felds oben auf derselben Seite: wer dort ein Rekordbox
+  // waehlt, sieht die Felder sofort frei, noch vor dem Speichern. Gleiche
+  // Bedingung wie REKORDBOX_NAME (ohne Auswahl ist die Integration aus).
+  rekordbox: {ok: () => !!(document.getElementById("set_external_rekordbox")?.value || "").trim(),
+              page: "rekordbox"},
+  bpmkey: {ok: () => BPMKEY_INSTALLED},
+  genremood: {ok: () => GENREMOOD_INSTALLED},
+  analysis: {ok: () => BPMKEY_INSTALLED || GENREMOOD_INSTALLED},
+};
+
+// Abhaengigkeit von einem SCHALTER im selben Dialog: "on:<key>" (muss an sein)
+// bzw. "on:<a>|<b>" (einer von beiden). Live-Wert, also sofort frei, wenn der
+// Schalter umgelegt wird. Der Hinweistext nennt den Schalter mit seinem Label.
+function settingRequirement(id) {
+  if (id.startsWith("on:")) {
+    const keys = id.slice(3).split("|");
+    // Innere Anfuehrungszeichen einfach setzen, der Hinweis setzt doppelte drumherum
+    // ("Tags als ‚My Tag‘ übertragen").
+    const name = k => ((schema?.groups || []).flatMap(g => g.fields)
+      .find(f => f.key === k)?.label || k).replace(/„([^“]*)“/g, "‚$1‘");
+    return {ok: () => keys.some(k => document.getElementById("set_" + k)?.checked),
+            names: () => keys.map(name),
+            text: () => keys.length > 1
+              ? t("settings.requires_on_any", {a: name(keys[0]), b: name(keys[1])})
+              : t("settings.requires_on", {name: name(keys[0])})};
+  }
+  const r = SETTING_REQUIREMENTS[id];
+  return r && {...r, text: () => t("settings.requires_" + id)};
+}
+
+// Erster nicht erfuellter Grund einer Liste (Reihenfolge wie in settings.GROUPS).
+function firstUnmetRequirement(ids) {
+  return ids.split(" ").find(x => !settingRequirement(x).ok());
+}
+
+function applyRequires() {
+  // Hinweis nur am ersten gesperrten Feld je Abschnitt und Grund -- sonst
+  // stuende auf der Seite "BPM, Tonart und Genre" ein Dutzend Mal derselbe Satz.
+  const hinted = new Set();
+  // Nur die Felder -- <option data-requires> behandelt der Feld-Durchlauf selbst.
+  document.querySelectorAll("#settingsBody .setfield[data-requires]").forEach(el => {
+    const id = firstUnmetRequirement(el.dataset.requires);
+    const req = id ? settingRequirement(id) : null;
+    const off = !!id;
+    const sg = el.closest("[data-sg]")?.dataset.sg || "";
+    const spot = sg + "|" + id;
+    // "analysis" (beide fehlen) sagt nichts Neues, wenn beide Einzelgruende
+    // im selben Abschnitt schon stehen.
+    const covered = id === "analysis"
+      && hinted.has(sg + "|bpmkey") && hinted.has(sg + "|genremood");
+    const showHint = off && !covered && !hinted.has(spot);
+    if (showHint) hinted.add(spot);
+    el.classList.toggle("req-off", off);
+    // Auch Knoepfe im Feld (z. B. "Playlist auswählen"), nicht den Link im Hinweis.
+    el.querySelectorAll("[data-key], button:not(.linkbtn)").forEach(c => { c.disabled = off; });
+    const hint = el.querySelector(".reqhint");
+    const elsewhere = req?.page && !SETTINGS_PAGES.find(p => p.id === req.page)
+      ?.groups.includes(sg);
+    // Auswahlfeld frei, aber einzelne Optionen haengen an einem Schalter
+    // (Kommentar-Feld): die Optionen sperren; steht die gewaehlte darunter,
+    // statt des Sperr-Hinweises sagen, was ihr fehlt.
+    let optText = "";
+    el.querySelectorAll("option[data-requires]").forEach(o => {
+      const miss = off ? null : firstUnmetRequirement(o.dataset.requires);
+      o.disabled = !!miss;
+      if (miss && o.selected) optText = t("settings.requires_option", {
+        name: (settingRequirement(miss).names?.() || [miss])[0]});
+    });
+    if (!off && optText) {
+      hint.innerHTML = `<span class="hinticon">${SVG(LUCIDE_ICONS["info"])}</span><span>${esc(optText)}</span>`;
+      return;
+    }
+    hint.innerHTML = showHint ? `<span class="hinticon">${SVG(LUCIDE_ICONS["lock"])}</span><span>${
+      esc(req.text())}</span>${elsewhere
+      ? `<button type="button" class="linkbtn" data-req-goto="${req.page}">${esc(t("settings.requires_goto_" + id))}</button>` : ""}` : "";
+    const go = hint.querySelector("[data-req-goto]");
+    if (go) go.onclick = () => document.querySelector(`#settingsNav [data-page="${go.dataset.reqGoto}"]`)?.click();
+  });
 }
 
 // Blendet Felder mit data-show-if-key/-contains (oder -not-empty/-not-value) ein/aus,
@@ -10970,6 +11636,69 @@ function collectSettings() {
     else out[el.dataset.key] = el.value;
   });
   return out;
+}
+
+// ── Stem-Modell (Einstellungen) ───────────────────────────────────────
+// Das Trennmodell liegt nicht im Bundle (Lizenz), der Nutzer laedt es hier.
+// Solange es fehlt, bleibt STEMS_AVAILABLE aus und die Stem-Einstiege fehlen.
+var _stemsModelTimer = null;
+var _stemsModelConsent = false;
+
+async function stemsModelCall(url) {
+  const res = await fetch(url, {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: "{}"});
+  return res.json();
+}
+
+function renderStemsModelBox(info) {
+  const box = document.getElementById("stemsModelBox");
+  if (!box) { clearTimeout(_stemsModelTimer); return; }
+  STEMS_AVAILABLE = !!info.available;
+  const dl = info.download || {};
+  let body;
+  if (dl.running) {
+    body = `<div class="sethelp">${esc(t("stems.model_loading", {pct: dl.pct || 0}))}</div>
+      <button type="button" class="act small" id="stemsModelCancel">${esc(t("stems.model_cancel"))}</button>`;
+  } else if (info.available) {
+    const mb = Math.round((info.size || 0) / 1048576);
+    body = `<div class="sethelp">${esc(t("stems.model_ready", {mb}))}</div>
+      <button type="button" class="act small danger" id="stemsModelRemove">${ICONS.trash} ${esc(t("stems.model_remove"))}</button>`;
+  } else {
+    body = `<div class="sethelp">${esc(t("stems.model_license"))}</div>
+      <label style="display:flex;gap:6px;align-items:flex-start;margin:6px 0"><input type="checkbox" id="stemsModelConsent"${
+        _stemsModelConsent ? " checked" : ""}> ${esc(t("stems.model_consent"))}</label>
+      <button type="button" class="act small" id="stemsModelLoad"${
+        _stemsModelConsent ? "" : " disabled"}>${ICONS.cloudDownload} ${esc(t("stems.model_load"))}</button>
+      ${dl.error ? `<div class="sethelp warn">${esc(dl.error)}</div>` : ""}`;
+  }
+  box.innerHTML = `<label>${esc(t("stems.model_label"))}</label>${body}`;
+  applyRequires();
+  const on = (id, fn) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+  const consent = document.getElementById("stemsModelConsent");
+  if (consent) consent.onchange = () => {
+    _stemsModelConsent = consent.checked;
+    document.getElementById("stemsModelLoad").disabled = !consent.checked;
+  };
+  on("stemsModelLoad", async () => renderStemsModelBox(await stemsModelCall("/api/stems/model-download")));
+  on("stemsModelCancel", () => stemsModelCall("/api/stems/model-cancel"));
+  on("stemsModelRemove", async () => {
+    if (!confirm(t("stems.model_remove_confirm"))) return;
+    renderStemsModelBox(await stemsModelCall("/api/stems/model-remove"));
+  });
+  clearTimeout(_stemsModelTimer);
+  if (dl.running) _stemsModelTimer = setTimeout(pollStemsModel, 1000);
+}
+
+async function pollStemsModel() {
+  try {
+    const res = await fetch("/api/stems/model");
+    renderStemsModelBox(await res.json());
+  } catch (e) { /* naechster Versuch beim erneuten Oeffnen */ }
+}
+
+function initStemsModelBox() {
+  if (!apiMode || !document.getElementById("stemsModelBox")) return;
+  pollStemsModel();
 }
 
 async function postSettings(url, body) {
@@ -14202,13 +14931,60 @@ function statsBarChartSVG(values, opts) {
     `<div class="statschart-axis">${axis}</div>`;
 }
 
+// Gruppierung der Aktionen nach Bereich; Reihenfolge = Anzeigereihenfolge.
+// Unbekannte Aktionen landen in "other" und zeigen den rohen Namen.
+const STATS_ACTION_GROUPS = [
+  ["analyse", ["scan-analyse", "bpmkey", "genremood"]],
+  ["file", ["reencode", "convert", "umbenannt", "papierkorb", "stems", "verschoben", "automatisch verschoben"]],
+  ["tags", ["tags", "cover", "cover-loeschen", "genre-rename", "artist-rename", "album-rename", "auffaelligkeiten-fix"]],
+  ["music", ["import", "music-cover", "music-cover-loeschen", "music-entfernt", "papierkorb-durch-music"]],
+  ["rekordbox", ["rekordbox", "rekordbox-korrigiert", "rekordbox-pfad-korrigiert", "rekordbox-genre",
+                 "rekordbox-artist", "rekordbox-album", "rekordbox-tags", "rekordbox-stem"]],
+];
+
+function statsActionLabel(action) {
+  const key = statsActionKey(action);
+  const label = t(key);
+  return label === key ? String(action) : label;
+}
+
 function statsActionsListHTML(actions) {
-  const entries = Object.entries(actions).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return `<div class="stats-empty">${esc(t("stats.no_data"))}</div>`;
-  return `<table class="stats-actiontable"><tbody>` + entries.map(([action, count]) => `
-      <tr><td>${esc(t(statsActionKey(action)))}</td>` +
-      `<td class="stats-actioncount">${count.toLocaleString("de-DE")}</td></tr>`
-  ).join("") + `</tbody></table>`;
+  const norm = a => String(a).replace(/_/g, "-");
+  const groups = STATS_ACTION_GROUPS.map(([id, names]) => ({id, items: []}));
+  const other = {id: "other", items: []};
+  for (const [action, count] of Object.entries(actions)) {
+    const gi = STATS_ACTION_GROUPS.findIndex(([, names]) => names.includes(norm(action)));
+    (gi >= 0 ? groups[gi] : other).items.push([action, count]);
+  }
+  groups.push(other);
+  const shown = groups.filter(g => g.items.length);
+  if (!shown.length) return `<div class="stats-empty">${esc(t("stats.no_data"))}</div>`;
+  return `<table class="stats-actiontable"><tbody>` + shown.map(g => {
+    const sum = g.items.reduce((a, [, c]) => a + c, 0);
+    const rows = g.items.sort((a, b) => b[1] - a[1]).map(([action, count]) =>
+      `<tr><td>${esc(statsActionLabel(action))}</td>` +
+      `<td class="stats-actioncount">${count.toLocaleString("de-DE")}</td></tr>`).join("");
+    return `<tr class="stats-actiongroup"><td>${esc(t("stats.group." + g.id))}</td>` +
+      `<td class="stats-actioncount">${sum.toLocaleString("de-DE")}</td></tr>` + rows;
+  }).join("") + `</tbody></table>`;
+}
+
+// Rangliste "vollstaendig gehoert": Anzahl Wiedergaben ab 90 % der Tracklaenge.
+function statsCompleteTracksGrid(tracks) {
+  if (!tracks.length) return `<div class="stats-empty">${esc(t("stats.no_data"))}</div>`;
+  return `<div class="stats-toptracks">` + tracks.slice(0, 10).map((tr, i) => `
+      <div class="stats-trackcard">
+        <div class="stats-trackrank">${i + 1}</div>
+        ${tr.has_cover
+          ? `<img class="stats-trackcover" loading="lazy" src="${coverUrl(tr.path)}" alt="">`
+          : `<div class="stats-trackcover stats-trackcover-empty">${ICONS.player}</div>`}
+        <div class="stats-trackmeta">
+          <div class="stats-tracktitle" title="${esc(tr.title)}">${esc(tr.title)}</div>
+          <div class="stats-trackartist" title="${esc(tr.artist)}">${esc(tr.artist || "")}</div>
+          <div class="stats-tracktime">${esc(t("stats.complete_plays", {count: tr.complete}))} · ${esc(t("stats.avg_ratio", {pct: Math.round(tr.avg_ratio * 100)}))}</div>
+        </div>
+      </div>`
+  ).join("") + `</div>`;
 }
 
 function statsTopTracksGrid(tracks) {
@@ -14439,6 +15215,14 @@ function renderStatsUsage() {
       </div>
       ${statsTopTracksGrid(year.top_tracks)}
     </div>
+    <div class="stats-section">
+      <div class="stats-sectionhead">
+        <h4>${esc(t("stats.top_complete_title"))}</h4>
+        <button class="act small" id="btnStatsPlaylistComplete"${(year.top_tracks_relative || []).length ? "" : " disabled"}>${esc(t("stats.playlist_complete_button"))}</button>
+      </div>
+      <div class="stats-note">${esc(t("stats.top_complete_hint"))}</div>
+      ${statsCompleteTracksGrid(year.top_tracks_relative || [])}
+    </div>
     <div class="stats-columns">
       <div class="stats-section">
         <h4>${esc(t("stats.top_artists_title"))}</h4>
@@ -14464,7 +15248,8 @@ function renderStatsUsage() {
         ${statsRankedList(year.rekordbox_top_genres || [], "genre", {valueField: "plays", fmt: statsFmtPlays})}
       </div>
     </div>` : ""}`;
-  document.getElementById("btnStatsPlaylist").onclick = createTopTracksPlaylist;
+  document.getElementById("btnStatsPlaylist").onclick = () => createTopTracksPlaylist("top_tracks");
+  document.getElementById("btnStatsPlaylistComplete").onclick = () => createTopTracksPlaylist("top_tracks_relative");
 }
 
 async function loadStats() {
@@ -14533,12 +15318,15 @@ async function rebuildStats() {
 // nutzt die bestehende Playlist-API (siehe createPlaylistNode() oben fuer
 // dasselbe Muster: askPlaylistProps() -> /api/playlist create -> Items
 // setzen -> reloadPlaylists() -> Spaltenansicht -> selectView()).
-async function createTopTracksPlaylist() {
+async function createTopTracksPlaylist(source = "top_tracks") {
   const year = STATS.years[statsYear];
-  const tracks = (year && year.top_tracks) || [];
+  const tracks = (year && year[source]) || [];
   if (!tracks.length) { note(t("stats.no_plays_for_playlist"), true); return; }
-  const props = await askPlaylistProps(t("stats.playlist_dialog_title"),
-    {name: t("stats.playlist_default_name", {year: statsYear})}, true, null);
+  const complete = source === "top_tracks_relative";
+  const props = await askPlaylistProps(
+    t(complete ? "stats.playlist_complete_dialog_title" : "stats.playlist_dialog_title"),
+    {name: t(complete ? "stats.playlist_complete_default_name" : "stats.playlist_default_name", {year: statsYear})},
+    true, null);
   if (!props) return;
   try {
     const data = await playlistApi("/api/playlist", {
@@ -15269,7 +16057,8 @@ async function runRekordboxPendingApply() {
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
     RB_PENDING = data.pending || 0;
     renderRekordboxSyncButton();
-    pt.done(t("sync.rekordbox_pending.done", {count: (data.updated || []).length}));
+    pt.done(t("sync.rekordbox_pending.done",
+      {count: (data.updated || []).length + (data.stems_added || []).length}));
   } catch (err) {
     pt.fail(t("sync.rekordbox_pending.failed", {error: err.message}));
   }
@@ -15565,3 +16354,13 @@ applyColumnLayout();
 initColumnResize();
 renderColsMenu();
 initStorage().then(() => { initDropzone(); pollScan(); updateCards(); render(); renderDrops(); warmScopeCache(); checkUpdateOnStart(); });
+
+
+// Lizenzen & Drittanbieter (Link unter den Listen, siehe .appfoot).
+document.addEventListener("DOMContentLoaded", () => {
+  const ov = document.getElementById("licOverlay");
+  const open = document.getElementById("btnLicenses");
+  if (!ov || !open) return;
+  open.onclick = e => { e.preventDefault(); ov.style.display = "flex"; };
+  document.getElementById("licClose").onclick = () => { ov.style.display = "none"; };
+});

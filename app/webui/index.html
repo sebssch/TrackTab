@@ -44,20 +44,28 @@
 </div>
 
 <div id="settingsOverlay" class="overlay">
-  <div class="confirmbox settingsbox">
-    <h3 class="nametitlerow"><span class="nametitleicon"><svg viewBox="0 0 24 24" width="15" height="15"
-        fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
-        aria-hidden="true"><path d="M11 10.27 7 3.34"/><path d="m11 13.73-4 6.93"/><path d="M12 22v-2"/><path d="M12 2v2"/><path d="M14 12h8"/><path d="m17 20.66-1-1.73"/><path d="m17 3.34-1 1.73"/><path d="M2 12h2"/><path d="m20.66 17-1.73-1"/><path d="m20.66 7-1.73 1"/><path d="m3.34 17 1.73-1"/><path d="m3.34 7 1.73 1"/><circle cx="12" cy="12" r="2"/><circle cx="12" cy="12" r="8"/></svg></span><span data-i18n="header.settings">Einstellungen</span></h3>
-    <div class="path" id="settingsFile"></div>
-    <div id="settingsBody"></div>
-    <div id="settingsStatus"></div>
-    <div class="confirmbtns">
-      <button class="act" id="btnCloseSettings" data-i18n="action.cancel">Abbrechen</button>
-      <button class="act" id="btnSave" data-i18n="action.save">Speichern</button>
-    </div>
-    <div class="settingsfoot">
-      <div>TrackTab <!--__VERSION__--> — Music Library Toolkit · by sgt.works</div>
-      <div><a href="#" id="btnCheckUpdate" data-i18n="settings.check_update">Auf Updates prüfen</a></div>
+  <div class="confirmbox settingsbox setwide">
+    <div class="setlayout">
+      <div class="setside">
+        <nav id="settingsNav" class="setnav"></nav>
+        <div class="settingsfoot setfootbox" id="settingsFoot">
+          <div>TrackTab <!--__VERSION__-->
+            <small>Music Library Toolkit · by sgt.works</small></div>
+          <div><a href="#" id="btnCheckUpdate" data-i18n="settings.check_update">Auf Updates prüfen</a></div>
+        </div>
+      </div>
+      <div class="setmain">
+        <input type="search" id="settingsSearch" class="setsearch" autocomplete="off"
+               data-i18n-placeholder="settings.search_placeholder" placeholder="Einstellungen durchsuchen">
+        <div id="settingsBody"></div>
+        <div class="setbar">
+          <div id="settingsStatus"></div>
+          <div class="confirmbtns">
+            <button class="act" id="btnCloseSettings" data-i18n="action.cancel">Abbrechen</button>
+            <button class="act" id="btnSave" data-i18n="action.save">Speichern</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -211,7 +219,7 @@
 </div>
 </div>
 <div class="sub" id="sub"></div>
-<div class="appfoot">TrackTab <!--__VERSION__--> — Music Library Toolkit · by sgt.works</div>
+<div class="appfoot">TrackTab <!--__VERSION__--> — Music Library Toolkit · by sgt.works · <a href="#" id="btnLicenses" data-i18n="lic.link">Lizenzen &amp; Drittanbieter</a></div>
 <div id="toasts"></div>
 <div id="rowMoreMenu" class="rowmore-menu"></div>
 
@@ -521,6 +529,35 @@
               fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"
               aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/></svg></span> <span data-i18n="scanopts.start_button">Scannen</span></button>
     </div>
+  </div>
+</div>
+
+<div id="licOverlay" class="overlay">
+  <div class="confirmbox licbox">
+    <h3 data-i18n="lic.title">Lizenzen &amp; Drittanbieter</h3>
+    <p class="confirmnote" data-i18n="lic.intro">TrackTab steht unter der GPL-3.0 oder später. Es nutzt die folgenden Programme und Modelle unter deren eigenen Lizenzen.</p>
+    <p class="confirmnote"><span data-i18n="lic.full">Vollständige Angaben:</span> <a href="https://github.com/sebssch/TrackTab/blob/main/LICENSE" target="_blank" rel="noopener">LICENSE</a> · <a href="https://github.com/sebssch/TrackTab/blob/main/NOTICE.md" target="_blank" rel="noopener">NOTICE.md</a> · <a href="https://github.com/sebssch/TrackTab/blob/main/THIRD_PARTY_LICENSES.md" target="_blank" rel="noopener">THIRD_PARTY_LICENSES.md</a></p>
+    <div class="liclist">
+      <div><b>Demucs v4 (htdemucs)</b> — Meta · Stem-Trennung · Code MIT · ONNX-Export <a href="https://huggingface.co/HRSadeghi/demucs-onnx" target="_blank" rel="noopener">HRSadeghi/demucs-onnx</a> · Gewichte laut Quelle <a href="https://creativecommons.org/licenses/by-nc/4.0/deed.de" target="_blank" rel="noopener">CC BY-NC 4.0</a> (nicht-kommerziell)</div>
+      <div><b>Essentia-Modelle</b> — Music Technology Group, UPF · Genre, Stimmung, Energie · <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/deed.de" target="_blank" rel="noopener">CC BY-NC-SA 4.0</a> (nicht-kommerziell) · <a href="https://essentia.upf.edu/models.html" target="_blank" rel="noopener">essentia.upf.edu</a></div>
+      <div><b>onnxruntime</b> — Microsoft · MIT</div>
+      <div><b>libsonare</b> — BPM &amp; Tonart · Apache-2.0 · <a href="https://pypi.org/project/libsonare/" target="_blank" rel="noopener">PyPI</a></div>
+      <div><b>FFmpeg / ffprobe</b> — Dekodieren, Encodieren · GPL-3.0-oder-später (mitgelieferter Build mit x264/x265; Quellcode siehe THIRD_PARTY_LICENSES.md) · <a href="https://ffmpeg.org/legal.html" target="_blank" rel="noopener">ffmpeg.org</a></div>
+      <div><b>pyrekordbox</b> — Rekordbox-Datenbank · MIT</div>
+      <div><b>mutagen</b> — Tags · GPL-2.0-oder-später</div>
+      <div><b>NumPy</b> — BSD-3 · <b>Pillow</b> — MIT-CMU · <b>PyYAML</b>, <b>rich</b>, <b>PyObjC</b> — MIT</div>
+      <div><b>Lucide</b> — Icons · ISC · <a href="https://lucide.dev" target="_blank" rel="noopener">lucide.dev</a></div>
+    </div>
+    <p class="confirmnote" data-i18n="lic.nc_note">Die mit „nicht-kommerziell“ gekennzeichneten Modelle dürfen nicht verkauft oder kommerziell genutzt werden; das gilt damit auch für TrackTab mit diesen Modellen.</p>
+    <div class="confirmbtns"><button class="act" id="licClose" data-i18n="action.close">Schließen</button></div>
+  </div>
+</div>
+
+<div id="stemsOverlay" class="overlay">
+  <div class="confirmbox stemsbox">
+    <h3 id="stemsTitle" data-i18n="stems.title">Stems erzeugen</h3>
+    <div id="stemsBody"></div>
+    <div class="confirmbtns" id="stemsBtns"></div>
   </div>
 </div>
 

@@ -55,6 +55,28 @@ cliff_span_hz: 1000.0          # Vergleichsbreite ober- und unterhalb der Kante
 cliff_min_db: 15.0             # Darunter gilt: kein Tiefpass vorhanden
 steep_brickwall_db: 25.0       # Ab hier ist die Kante eindeutig ein Encoder-Tiefpass
 
+# Plateau-Pruefung: Ueber einem Encoder-Tiefpass bleibt das Spektrum bis ganz
+# oben leise. Eine Kante zaehlt nur, wenn das 90. Perzentil des GESAMTEN Bandes
+# darueber (bis plateau_ceiling_hz) um mindestens plateau_min_ratio x Kanten-
+# hoehe unter dem Pegel darunter liegt. Sonst ist es eine Luecke im Spektrum
+# mit Inhalt darueber -- an echtem Material: 320er ohne LAME-Kopf mit Loch bei
+# 19,2-20,2 kHz und vollem Inhalt bis 22 kHz, vorher faelschlich FAKE.
+# Echte Encoder-Kanten liegen bei ~0,9-1,1, die Luecken bei ~0-0,6.
+plateau_min_ratio: 0.8
+plateau_ceiling_hz: 22000.0
+
+# Kantensuche je Zeitabschnitt. Ein Encoder-Tiefpass steht in jedem Abschnitt;
+# der Anteil der Abschnitte mit eigener Kante fliesst in die Konfidenz ein.
+# Liegen die Kanten in Gruppen an verschiedenen Stellen, die verschiedenen
+# Bitrate-Klassen entsprechen, ist das Stueck meist aus mehreren Quellen
+# zusammengesetzt (Edit/Mashup/Bootleg) -- das wird als Hinweis genannt.
+edge_segment_s: 20.0           # Laenge eines Abschnitts
+edge_min_segments: 4           # Weniger Abschnitte -> keine Aussage
+edge_presence_high: 0.8        # Kante in mindestens diesem Anteil -> Konfidenz hoch
+edge_presence_low: 0.5         # Kante in weniger als diesem Anteil -> Konfidenz runter
+edge_cluster_hz: 300.0         # Kanten naeher beieinander gelten als eine Gruppe
+edge_mixed_min_hz: 1000.0      # Mindestabstand der Gruppen fuer den Hinweis "mehrere Quellen"
+
 # --- Klassifikation: gemessener Cutoff (kHz) -> Bitrate-Klasse ---
 # Gelesen als "ab diesem Cutoff gilt die Klasse". Eine Leiter je Codec, weil
 # jeder Encoder bei gleicher Bitrate einen anderen Tiefpass setzt.
@@ -107,6 +129,13 @@ lossless_fake_khz: 17.5        # Kante darunter (mit ausreichender Flankenhoehe)
 # dekodierten MP3 verflacht. An echtem Material (128kbps-MP3 nach FLAC/WAV
 # verpackt) gemessen: ~13-16 dB statt >50 dB bei MP3 selbst.
 lossless_min_steepness_db: 10.0
+
+# Steht eine Kante zwar ueber lossless_suspect_khz (also kein Verdikt), aber
+# unter diesem Wert und in fast allen Abschnitten, ist sie ein Encoder-Tiefpass
+# und kein Anti-Aliasing-Filter des Masters: Hinweis "vermutlich aus einer
+# ~320 kbps Quelle exportiert". An echtem Material: AIFF-Mashups mit Kanten bei
+# 19,7-20,5 kHz (LAME 320 = 20,2 kHz). Aendert das Verdikt nicht.
+lossless_source_max_khz: 21.0
 
 # Encoder fuer AAC-Neukodierung (calibrate, Bitrate-Korrektur). "aac" ist
 # ffmpegs eingebauter Encoder und ueberall verfuegbar. "libfdk_aac" klingt
@@ -165,6 +194,12 @@ key_notation: "camelot"
 # Die Tonart wird in Feld und Kommentar in der Schreibweise von key_notation
 # geschrieben. Neue Einzelpruefungs-Dateien automatisch analysieren:
 bpmkey_auto_drops: true
+# Welche Teilanalysen laufen (Knoepfe, Scan, Einzelpruefungen):
+# BPM, Tonart, Genre-Vorschlaege, Stimmung & Energie.
+measure_bpm: true
+measure_key: true
+measure_genre: true
+measure_mood: true
 # Dateien laenger als diese Minuten werden nicht analysiert (DJ-Mixe) -- gilt
 # auch fuer die Genre-/Stimmungs-Analyse.
 bpmkey_max_minutes: 10
@@ -191,6 +226,21 @@ genremood_auto_drops: false
 genremood_min_percent: 5
 # Stimmungen als Mood-Tag schreiben (TXXX:MOOD bzw. MOOD): no | tag.
 genremood_write_mood: "no"
+
+# Stem-Trennung (Acapella / Instrumental, app/stems.py). Der Titel der neuen
+# Datei bekommt den Zusatz angehaengt, das Genre wird ersetzt; alle anderen
+# Tags und das Cover bleiben die des Haupttracks. Den Dateinamen bestimmt
+# rename_pattern. Dateien ueber stems_max_minutes werden nicht getrennt.
+stems_title_acapella: "(Acapella)"
+stems_title_instrumental: "(Instrumental)"
+stems_genre_acapella: "Acapella"
+stems_genre_instrumental: "Instrumental"
+stems_max_minutes: 15
+# Stem in Rekordbox anlegen: off | no_cues | cues. Nur wenn der Haupttrack dort
+# steht und beide dasselbe Format haben (MP3 -> MP3, verlustfrei -> AIFF); ein
+# AAC-Haupttrack ergibt einen MP3-Stem, dessen Beatgrid nicht passen wuerde.
+# Beatgrid immer vom Haupttrack, Hot/Memory Cues nur bei "cues".
+stems_rekordbox: "cues"
 
 # Akzentfarbe der Oberflaeche (aktive Knoepfe, Player-Fortschritt, ...).
 # Eine von: blue, cyan, teal, indigo, violet, purple, fuchsia, pink.
@@ -227,4 +277,4 @@ backup_path: "backup"
 backup_keep: 10
 
 # --- Performance ---
-workers: 0                     # 0 = alle CPU-Kerne minus 1
+workers: 0                     # parallel gemessene Dateien beim Scan; 0 = alle CPU-Kerne minus 1

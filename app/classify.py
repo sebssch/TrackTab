@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 VERDICT_OK = "OK"
 VERDICT_SUSPECT = "VERDAECHTIG"
 VERDICT_FAKE = "FAKE"
@@ -62,6 +64,64 @@ def declared_class(declared_kbps: int, cfg: dict, ladder: str = "mp3") -> int:
         if declared_kbps >= kbps:
             return kbps
     return steps[-1]
+
+
+# Eine Kantengruppe zaehlt erst ab diesem Anteil der Abschnitte (und mind. 2)
+# -- einzelne Ausreisser-Abschnitte sollen keinen Quellenwechsel vortaeuschen.
+_MIN_GROUP_SHARE = 0.15
+
+
+def segment_view(spec_res, cfg: dict, threshold_db: float) -> tuple[float | None, list[float]]:
+    """Kantensuche je Zeitabschnitt (spectral._segment_edges) zusammenfassen.
+
+    Rueckgabe: (Anteil der Abschnitte mit eigener Kante >= threshold_db,
+    Mittelpunkte der Kantengruppen in Hz, aufsteigend). (None, []) bei zu
+    wenigen Abschnitten -- auch fuer Zeilen, die vor diesem Feature gescannt
+    wurden.
+    """
+    segs = getattr(spec_res, "edge_segments", None) or []
+    if len(segs) < int(cfg["edge_min_segments"]):
+        return None, []
+    edged = sorted(float(hz) for hz, db in segs if float(db) >= threshold_db)
+    presence = len(edged) / len(segs)
+
+    gap = float(cfg["edge_cluster_hz"])
+    groups: list[list[float]] = []
+    for hz in edged:
+        if groups and hz - groups[-1][-1] <= gap:
+            groups[-1].append(hz)
+        else:
+            groups.append([hz])
+    min_size = max(2, _MIN_GROUP_SHARE * len(segs))
+    centers = [float(np.median(g)) for g in groups if len(g) >= min_size]
+    return presence, centers
+
+
+def _segment_reasons(v: Verdict, presence: float | None, centers: list[float],
+                     has_edge: bool, cfg: dict, ladder: str, n_segments: int) -> None:
+    """Hinweise aus der Abschnittsmessung -- aendern das Verdikt nie."""
+    if presence is None:
+        return
+    if has_edge and presence < float(cfg["edge_presence_low"]):
+        v.reasons.append(
+            f"Kante nur in {round(presence * n_segments)} von {n_segments} Abschnitten "
+            "— kann auch vom Inhalt kommen"
+        )
+    # Nur Gruppen, die verschiedenen Bitrate-Klassen entsprechen: 20,2 und
+    # 21,0 kHz sind beide "320" und kein Quellenwechsel.
+    # Dazu mindestens edge_mixed_min_hz Abstand: 19,1 und 19,5 kHz liegen nur
+    # beiderseits einer Klassengrenze und sind Streuung, kein Quellenwechsel.
+    classes = {}
+    for hz in centers:
+        classes.setdefault(measured_class(hz, cfg, ladder), hz)
+    if (len(classes) >= 2
+            and centers[-1] - centers[0] >= float(cfg["edge_mixed_min_hz"])):
+        lo_kbps, hi_kbps = min(classes), max(classes)
+        v.reasons.append(
+            f"Kante wechselt zwischen {classes[lo_kbps]/1000:.1f} und "
+            f"{classes[hi_kbps]/1000:.1f} kHz (~{lo_kbps} bzw. ~{hi_kbps} kbps) — "
+            "vermutlich aus mehreren Quellen zusammengesetzt (Edit/Mashup)"
+        )
 
 
 def classify(probe_res, spec_res, cfg: dict) -> Verdict:
@@ -128,7 +188,11 @@ def classify(probe_res, spec_res, cfg: dict) -> Verdict:
     if enc.startswith(("lavc", "lavf")):
         v.reasons.append(f"Mit ffmpeg umkodiert ({probe_res.encoder})")
 
-    v.confidence = _confidence(spec_res, v, lame_mismatch, cfg)
+    presence, centers = segment_view(spec_res, cfg, float(cfg["cliff_min_db"]))
+    _segment_reasons(v, presence, centers, spec_res.is_brickwall, cfg, ladder_name,
+                     len(getattr(spec_res, "edge_segments", None) or []))
+
+    v.confidence = _confidence(spec_res, v, lame_mismatch, cfg, presence=presence)
     return v
 
 
@@ -150,13 +214,16 @@ def _classify_lossless(probe_res, spec_res, cfg: dict) -> Verdict:
     # des Cutoffs grob, was die gemessene Flanke gegenueber einer direkt
     # dekodierten MP3 deutlich verflacht.
     has_edge = spec_res.steepness_db >= float(cfg["lossless_min_steepness_db"])
+    n_segments = len(getattr(spec_res, "edge_segments", None) or [])
+    presence, centers = segment_view(spec_res, cfg, float(cfg["lossless_min_steepness_db"]))
     if not has_edge:
         v.verdict = VERDICT_OK
         v.reasons.append(
             f"Keine harte Kante gefunden (Cutoff {spec_res.cutoff_hz/1000:.1f} kHz) — "
             "spricht für echtes verlustfreies Material"
         )
-        v.confidence = _confidence(spec_res, v, False, cfg, has_edge)
+        _segment_reasons(v, presence, centers, has_edge, cfg, "mp3", n_segments)
+        v.confidence = _confidence(spec_res, v, False, cfg, has_edge, presence)
         return v
 
     cutoff_khz = raw_cutoff_khz
@@ -183,20 +250,34 @@ def _classify_lossless(probe_res, spec_res, cfg: dict) -> Verdict:
         v.reasons.append(
             f"Kante bei {cutoff_khz:.1f} kHz liegt nah an der Bandgrenze"
         )
+        # Eine Kante knapp unter der Bandgrenze, die in fast jedem Abschnitt
+        # steht, ist kein Anti-Aliasing-Filter des Masters, sondern ein
+        # Encoder-Tiefpass (an echtem Material: AIFF-Mashups mit 30-50 dB
+        # Kante bei 20,1 kHz = LAME bei 320 kbps). Kein Qualitaetsproblem,
+        # aber die Datei ist dann nicht verlustfrei entstanden.
+        if (presence is not None and presence >= float(cfg["edge_presence_high"])
+                and raw_cutoff_khz < float(cfg["lossless_source_max_khz"])):
+            v.reasons.append(
+                f"Kante in fast allen Abschnitten — vermutlich aus einer "
+                f"~{approx_kbps} kbps Quelle exportiert"
+            )
 
     v.reasons.append(f"Harte Kante ({spec_res.steepness_db:.0f} dB Abfall)")
-    v.confidence = _confidence(spec_res, v, False, cfg, has_edge)
+    _segment_reasons(v, presence, centers, has_edge, cfg, "mp3", n_segments)
+    v.confidence = _confidence(spec_res, v, False, cfg, has_edge, presence)
     return v
 
 
 def _confidence(spec_res, v: Verdict, lame_mismatch: bool, cfg: dict,
-                 has_edge: bool | None = None) -> float:
+                 has_edge: bool | None = None, presence: float | None = None) -> float:
     """Wie belastbar ist das Urteil? 0.0 = Rateschaetzung, 1.0 = eindeutig.
 
     has_edge: welcher Schwellwert "harte Kante" bedeutet. Default
     spec_res.is_brickwall (MP3-Schwelle); der Lossless-Zweig uebergibt
     seine eigene, niedrigere Schwelle, sonst wuerde jedes Lossless-Verdikt
     unfair abgewertet (MP3-Brickwalls sind deutlich steiler).
+    presence: Anteil der Zeitabschnitte mit eigener Kante (segment_view()),
+    None = nicht gemessen.
     """
     if has_edge is None:
         has_edge = spec_res.is_brickwall
@@ -219,6 +300,14 @@ def _confidence(spec_res, v: Verdict, lame_mismatch: bool, cfg: dict,
     if lame_mismatch:
         score += 0.15
 
+    # Ein Encoder-Tiefpass steht in jedem Abschnitt. Gemessen: Brickwall-
+    # Kanten fast immer 100 %, echte verlustfreie Dateien 0 %.
+    if has_edge and presence is not None:
+        if presence >= float(cfg["edge_presence_high"]):
+            score += 0.10
+        elif presence < float(cfg["edge_presence_low"]):
+            score -= 0.10
+
     # Je weiter die Klassen auseinanderliegen, desto eindeutiger
     if v.class_steps >= 2:
         score += 0.10
@@ -237,6 +326,7 @@ def _confidence(spec_res, v: Verdict, lame_mismatch: bool, cfg: dict,
 
 def from_row(row, cfg: dict):
     """Eine gespeicherte Zeile in die Objekte uebersetzen, die classify() erwartet."""
+    import json as _json
     from types import SimpleNamespace
 
     steepness = float(row["steepness_db"] or 0.0)
@@ -249,6 +339,10 @@ def from_row(row, cfg: dict):
         codec_family=row["codec_family"] or "lossy_mp3",
     )
     cutoff_hz = float(row["cutoff_hz"] or 0.0)
+    try:
+        edge_segments = _json.loads(row["edge_segments"] or "[]")
+    except (ValueError, TypeError):
+        edge_segments = []
     spec = SimpleNamespace(
         ok=(row["status"] == "ok" and (row["cutoff_hz"] or 0) > 0),
         error=row["error"] or "",
@@ -261,6 +355,10 @@ def from_row(row, cfg: dict):
         is_brickwall=steepness >= float(cfg["steep_brickwall_db"]),
         at_nyquist=bool(row["at_nyquist"]),
         gated_blocks=int(row["gated_blocks"] or 0),
+        # Vor der Abschnittsmessung gescannte Zeilen: leer -> segment_view()
+        # liefert None, Verdikt und Konfidenz bleiben wie bisher.
+        plateau_db=float(row["plateau_db"] or 0.0),
+        edge_segments=edge_segments,
     )
     return probe, spec
 

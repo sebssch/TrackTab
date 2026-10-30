@@ -34,6 +34,8 @@ from . import rekordbox as rekordbox_mod
 # Verwendungen, keine zweite Abfrage.
 _TOP_TRACKS_LIMIT = 50
 _TOP_GROUP_LIMIT = 10
+# Ab diesem Anteil der Tracklaenge zaehlt eine Wiedergabe als "vollstaendig gehoert".
+_COMPLETE_RATIO = 0.9
 
 
 def stats_path(cfg: dict | None = None) -> Path:
@@ -151,7 +153,7 @@ def _files_meta(conn: sqlite3.Connection, paths: list[str]) -> dict[str, dict]:
         return {}
     marks = ",".join("?" * len(paths))
     rows = conn.execute(
-        f"SELECT path, artist, title, album, genre, has_cover FROM files "
+        f"SELECT path, artist, title, album, genre, has_cover, duration_s FROM files "
         f"WHERE path IN ({marks})", paths)
     return {r["path"]: dict(r) for r in rows}
 
@@ -163,7 +165,9 @@ def _top_tracks(meta: dict[str, dict], raw_plays: list[tuple[str, float]],
         entry = totals.setdefault(path, [0.0, 0])
         entry[0] += duration_s
         entry[1] += 1
-    ranked = sorted(totals.items(), key=lambda kv: kv[1][0], reverse=True)[:limit]
+    # Zuerst Zahl der Wiedergaben, Hoerzeit nur als Gleichstand-Kriterium --
+    # sonst schlaegt ein lange laufender Einzeltrack einen oft gehoerten.
+    ranked = sorted(totals.items(), key=lambda kv: (kv[1][1], kv[1][0]), reverse=True)[:limit]
     out = []
     for path, (seconds, plays) in ranked:
         m = meta.get(path, {})
@@ -175,6 +179,42 @@ def _top_tracks(meta: dict[str, dict], raw_plays: list[tuple[str, float]],
             "has_cover": int(m.get("has_cover") or 0),
             "seconds": round(seconds),
             "plays": plays,
+        })
+    return out
+
+
+def _top_tracks_relative(meta: dict[str, dict], raw_plays: list[tuple[str, float]],
+                         limit: int = _TOP_TRACKS_LIMIT) -> list[dict]:
+    """Rangliste nach Anteil der Tracklaenge statt nach absoluter Hoerzeit:
+    ein 60-Minuten-Mix, der einmal lief, schlaegt so keinen 5-Minuten-Track,
+    der fuenfmal lief. Primaer die Zahl der (fast) vollstaendigen Wiedergaben
+    (>= _COMPLETE_RATIO der Laenge), danach die summierte Hoerzeit in Vielfachen
+    der Tracklaenge. Nur Tracks mit mindestens einer vollstaendigen Wiedergabe. Tracks ohne bekannte Laenge (nicht in 'files') fehlen."""
+    totals: dict[str, list] = {}
+    for path, duration_s in raw_plays:
+        length = float(meta.get(path, {}).get("duration_s") or 0)
+        if length <= 0:
+            continue
+        entry = totals.setdefault(path, [0, 0.0, 0])
+        entry[0] += 1
+        entry[1] += duration_s / length
+        if duration_s >= length * _COMPLETE_RATIO:
+            entry[2] += 1
+    ranked = sorted(totals.items(), key=lambda kv: (kv[1][2], kv[1][1]), reverse=True)
+    out = []
+    for path, (plays, ratio_sum, complete) in ranked:
+        if complete == 0 or len(out) >= limit:
+            break
+        m = meta.get(path, {})
+        out.append({
+            "path": path,
+            "artist": m.get("artist") or "",
+            "title": m.get("title") or Path(path).stem,
+            "album": m.get("album") or "",
+            "has_cover": int(m.get("has_cover") or 0),
+            "plays": plays,
+            "complete": complete,
+            "avg_ratio": round(ratio_sum / plays, 3),
         })
     return out
 
@@ -306,6 +346,7 @@ def build(cfg: dict, conn: sqlite3.Connection) -> dict:
                 for m in y["months"]
             ],
             "top_tracks": _top_tracks(meta, plays),
+            "top_tracks_relative": _top_tracks_relative(meta, plays),
             "top_artists": _top_grouped(plays, meta, "artist"),
             "top_genres": _top_grouped(plays, meta, "genre"),
             "rekordbox_top_tracks": _rb_top_tracks(rb_year_plays, rb_meta),

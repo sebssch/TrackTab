@@ -1577,6 +1577,405 @@ def remove_from_collection(content_ids: list[str]) -> dict:
     return _with_malformed_retry(pyrekordbox_mod, _run)
 
 
+# ── Stems (Acapella / Instrumental) ─────────────────────────────────────────
+# Spalten, die ein Stem vom Haupttrack uebernimmt: sie gehoeren zum Raster und
+# zur Analyse, nicht zur Datei (BitRate/BitDepth/FileSize bleiben die der
+# Stem-Datei; SampleRate/BitRate setzt add_stems() aus unserer DB-Zeile --
+# ein Stem hat immer 44,1 kHz, auch bei einer 48-kHz-Quelle). ImagePath setzt
+# _clone_artwork() auf eine eigene Kopie.
+_STEM_COPY_COLUMNS = ("BPM", "Length", "Analysed", "KeyID",
+                      "AnalysisUpdated", "CueUpdated")
+# Beatgrid (PQTZ/PQT2), Cues (PCOB/PCO2) und Wellenformen werden 1:1
+# uebernommen -- stems.write_audio() legt den Stem so an, dass Rekordbox ihn
+# sample-genau wie das Original abspielt (siehe playback_lead()). Der
+# Datei-Index PVBR gehoert dagegen zur Datei und wird neu gesetzt
+# (_stem_pvbr()); die 3EX-Datei (Audio-Embedding fuer die Aehnlichkeitssuche)
+# gehoert zum Klang und wird nicht kopiert.
+_STEM_ANLZ_FILES = ("ANLZ0000.DAT", "ANLZ0000.EXT", "ANLZ0000.2EX")
+# Rekordbox' Wellenformen haben 150 Spalten je Sekunde.
+_WAVE_COLS_PER_S = 150
+
+
+def playback_lead(path: str, mix, sr: int = 44100) -> int:
+    """Um wie viele Samples (bei `sr`) Rekordbox den Track `path` SPAETER
+    abspielt, als ffmpeg ihn dekodiert (`mix`: (2, n) bzw. (n,) wie
+    stems._decode()). 0, wenn der Track nicht analysiert in Rekordbox liegt
+    oder die Messung nicht eindeutig ist.
+
+    An echtem Material gemessen (Wellenform PWV3 gegen eigene Dekodierung):
+    AIFF/WAV und MP3 ohne Xing/Info-Kopf 0 ms; MP3 mit LAME-Kopf 26 oder
+    53 ms (Rekordbox wertet die Encoder-Verzoegerung darin anders aus als
+    ffmpeg, die beiden Gruppen liessen sich keinem Merkmal zuordnen); AAC
+    (.m4a) 47 ms (Encoder-Vorlauf, den ffmpeg abschneidet). Deshalb wird je
+    Track gemessen statt nach einer Regel gerechnet: die Anstiege der eigenen
+    Huellkurve (Spitzenwert je Wellenform-Spalte) gegen die von PWV3,
+    Kreuzkorrelation ueber -100..+200 ms, parabolisch verfeinert."""
+    try:
+        import numpy as np
+        from pyrekordbox.anlz import AnlzFile
+
+        def _heights(db):
+            content = _live_content(db, path)
+            if content is None or not content.Analysed:
+                return None
+            ext = db.get_anlz_dir(content) / "ANLZ0000.EXT"
+            if not ext.is_file():
+                return None
+            anlz = AnlzFile.parse_file(ext)
+            if "PWV3" not in anlz:
+                return None
+            return bytes(anlz.get_tag("PWV3").content.entries)
+
+        raw = _query_cached(_import_pyrekordbox(), _heights)
+        if not raw:
+            return 0
+        rb = (np.frombuffer(raw, dtype=np.uint8) & 0x1F).astype(np.float64)
+        x = np.asarray(mix, dtype=np.float32)
+        if x.ndim == 2:
+            x = x.mean(axis=0)
+        hop = sr / _WAVE_COLS_PER_S
+        n = min(int(len(x) / hop), len(rb))
+        if n < _WAVE_COLS_PER_S * 10:
+            return 0
+        edges = np.round(np.arange(n + 1) * hop).astype(np.int64)
+        env = np.maximum.reduceat(np.abs(x[:edges[-1]]), edges[:-1]).astype(np.float64)
+        a = np.diff(env, prepend=0.0).clip(0)
+        b = np.diff(rb[:n], prepend=0.0).clip(0)
+        lags = range(-15, 31)
+        score = {k: float(np.dot(a[max(0, -k):n - max(0, k)],
+                                 b[max(0, k):n - max(0, -k)])) for k in lags}
+        best = max(score, key=score.get)
+        if best in (lags[0], lags[-1]) or score[best] <= 0:
+            return 0
+        # Eindeutig: der beste Versatz muss alle nicht benachbarten klar
+        # schlagen (an echtem Material >= Faktor 1,5, unklar bei Stille,
+        # Rauschen oder einer anderen Fassung unter demselben Pfad).
+        rest = max(v for k, v in score.items() if abs(k - best) > 1)
+        if score[best] < 1.25 * rest:
+            return 0
+        y0, y1, y2 = score[best - 1], score[best], score[best + 1]
+        den = y0 - 2 * y1 + y2
+        frac = 0.5 * (y0 - y2) / den if den else 0.0
+        return int(round((best + frac) * hop))
+    except Exception:                                   # noqa: BLE001
+        return 0
+
+
+def _mp3_sample_count(path: str) -> int:
+    """Zahl der Audio-Samples einer MP3-Datei aus den Frame-Koepfen (ein
+    Xing/Info-Frame zaehlt nicht mit) -- so fuellt Rekordbox PVBR.u2
+    (an echtem Material: Frames x 1152). 0, wenn nichts lesbar ist."""
+    from .probe import _XING_MAGIC
+    rates = {3: (44100, 48000, 32000), 2: (22050, 24000, 16000), 0: (11025, 12000, 8000)}
+    kbps = {3: (0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320),
+            2: (0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)}
+    data = Path(path).read_bytes()
+    i = 0
+    if data[:3] == b"ID3" and len(data) >= 10:
+        size = 0
+        for byte in data[6:10]:
+            size = (size << 7) | (byte & 0x7F)
+        i = 10 + size
+    samples = 0
+    first = True
+    while i + 4 <= len(data):
+        h = data[i:i + 4]
+        if h[0] != 0xFF or (h[1] & 0xE0) != 0xE0:
+            if samples:
+                break                                   # ID3v1/APE am Ende
+            i += 1
+            continue
+        version, layer = (h[1] >> 3) & 3, (h[1] >> 1) & 3
+        br_idx, sr_idx, pad = h[2] >> 4, (h[2] >> 2) & 3, (h[2] >> 1) & 1
+        if version == 1 or layer != 1 or br_idx in (0, 15) or sr_idx == 3:
+            if samples:
+                break
+            i += 1
+            continue
+        rate = rates[version][sr_idx]
+        per_frame = 1152 if version == 3 else 576
+        length = (per_frame // 8) * kbps[3 if version == 3 else 2][br_idx] * 1000 // rate + pad
+        if first and any(m in data[i + 4:i + 40] for m in _XING_MAGIC):
+            pass                                        # Info-Frame, kein Audio
+        else:
+            samples += per_frame
+        first = False
+        i += length
+    return samples
+
+
+def _stem_pvbr(anlz, stem_path: str) -> None:
+    """Setzt PVBR (Datei-Index) in einer kopierten DAT-Datei auf die Stem-Datei:
+    Rekordbox schreibt den Block fuer JEDES Format (AIFF: alles 0; MP3/AAC:
+    Index 0 bei CBR, u2 = Zahl der Samples). Fehlt er, verwirft Rekordbox die
+    DAT-Datei samt Beatgrid (an echtem Material: Cues aus der Datenbank da,
+    Grid erst nach einer neuen Analyse). Die Stems sind immer CBR-MP3 oder
+    AIFF, ein Index ist nie noetig."""
+    import struct
+    from pyrekordbox.anlz.tags import PVBRAnlzTag
+
+    n = _mp3_sample_count(stem_path) if stem_path.lower().endswith(".mp3") else 0
+    tag = PVBRAnlzTag(struct.pack(">4sII", b"PVBR", 16, 1620)
+                      + struct.pack(">402I", 0, *([0] * 400), n))
+    tags = [t for t in anlz.tags if t.type != "PVBR"]
+    at = next((k + 1 for k, t in enumerate(tags) if t.type == "PPTH"), 0)
+    anlz.tags = tags[:at] + [tag] + tags[at:]
+
+
+def _uuid_dir(uid: str) -> str:
+    """Ordner, den Rekordbox fuer Analyse und Cover eines Tracks verwendet:
+    die Content-UUID, nach den ersten drei Zeichen geteilt
+    ('dd47f5cf-f73a-…' -> 'dd4/7f5cf-f73a-…', an echtem Material abgelesen).
+    Liegt die Analyse woanders, verwirft Rekordbox 7 sie beim naechsten Start
+    und analysiert den Track neu -- ohne die kopierten Cues und ohne Vorschau,
+    bis die Analyse durch ist."""
+    return f"{uid[:3]}/{uid[3:]}"
+
+
+def _clone_analysis(db, source, content, stem_path: str,
+                    cues: bool = True) -> list[tuple[str, Path]]:
+    """Kopiert die ANLZ-Dateien (DAT/EXT/2EX) des Haupttracks in den Ordner
+    des Stems (`_uuid_dir()` seiner Content-UUID) und biegt den Pfad (PPTH)
+    auf den Stem um; setzt AnalysisDataPath. Liefert (Rekordbox-Pfad,
+    lokaler Pfad) je geschriebener Datei fuer `_add_content_files()`. Das
+    Original bleibt unberuehrt. Wirft bei Fehlern und raeumt den halb
+    angelegten Ordner ab."""
+    from pathlib import PurePosixPath
+    from pyrekordbox.anlz import AnlzFile
+
+    orig = (source.AnalysisDataPath or "").strip()
+    if not orig:
+        raise RuntimeError("Haupttrack hat in Rekordbox keine Analyse")
+    src_dir = db.get_anlz_dir(source)
+    files = [src_dir / n for n in _STEM_ANLZ_FILES if (src_dir / n).is_file()]
+    if not files:
+        raise RuntimeError("ANLZ-Dateien des Haupttracks nicht gefunden")
+
+    orig_posix = PurePosixPath(orig.replace("\\", "/"))
+    # '/PIONEER/USBANLZ' + 'abc/defg-…'
+    rel_dir = orig_posix.parent.parent.parent / _uuid_dir(content.UUID)
+    dest_dir = src_dir.parent.parent / _uuid_dir(content.UUID)
+    dest_dir.mkdir(parents=True, exist_ok=False)
+    written: list[tuple[str, Path]] = []
+    try:
+        for src_file in files:
+            anlz = AnlzFile.parse_file(src_file)
+            old = anlz.get("path") if "PPTH" in anlz else ""
+            anlz.set_path("?/" + Path(stem_path).name if str(old).startswith("?/")
+                          else stem_path)
+            if src_file.suffix == ".DAT":
+                _stem_pvbr(anlz, stem_path)
+            if not cues:
+                _empty_cue_tags(anlz)
+            anlz.save(dest_dir / src_file.name)
+            written.append((str(rel_dir / src_file.name), dest_dir / src_file.name))
+    except Exception:
+        shutil.rmtree(dest_dir, ignore_errors=True)
+        raise
+    content.AnalysisDataPath = str(rel_dir / orig_posix.name)
+    return written
+
+
+def _empty_cue_tags(anlz) -> None:
+    """Leert die Cue-Listen (PCOB/PCO2) einer ANLZ-Datei, statt sie zu
+    entfernen: Rekordbox schreibt sie auch fuer Tracks ohne Cues, dann mit
+    count 0 (PCOB memory_count -1) und len_tag = len_header -- an echtem
+    Material abgelesen. Ein fehlender Pflicht-Block kostete beim PVBR das
+    Beatgrid (siehe _stem_pvbr())."""
+    for tag in anlz.tags:
+        if tag.type not in ("PCOB", "PCO2"):
+            continue
+        tag.struct.content.entries = []
+        tag.struct.content.count = 0
+        if tag.type == "PCOB":
+            tag.struct.content.memory_count = -1
+        tag.struct.len_tag = tag.struct.len_header
+
+
+def _clone_artwork(db, source, content) -> list[tuple[str, Path]]:
+    """Kopiert Rekordbox' Cover-Dateien (artwork.jpg, _m, _s) des Haupttracks
+    in den Artwork-Ordner des Stems und setzt ImagePath. Ohne Cover beim
+    Haupttrack: nichts. Ergebnis wie `_clone_analysis()`."""
+    from pathlib import PurePosixPath
+
+    image = (source.ImagePath or "").strip()
+    if not image:
+        return []
+    img_posix = PurePosixPath(image.replace("\\", "/"))
+    src_dir = db._share_dir / str(img_posix.parent).strip("/")
+    if not src_dir.is_dir():
+        return []
+    rel_dir = img_posix.parent.parent.parent / _uuid_dir(content.UUID)
+    dest_dir = src_dir.parent.parent / _uuid_dir(content.UUID)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    written: list[tuple[str, Path]] = []
+    for src_file in sorted(src_dir.iterdir()):
+        if src_file.is_file() and not src_file.name.startswith("."):
+            shutil.copyfile(src_file, dest_dir / src_file.name)
+            written.append((str(rel_dir / src_file.name), dest_dir / src_file.name))
+    content.ImagePath = str(rel_dir / img_posix.name)
+    return written
+
+
+def _add_content_files(db, source, content, written: list[tuple[str, Path]]) -> None:
+    """Traegt die kopierten Analyse-/Cover-Dateien in `contentFile` ein (Pfad,
+    MD5, Groesse) -- ueber diese Tabelle fuehrt Rekordbox ab 6.6 Buch ueber
+    die Dateien eines Tracks. Eingetragen wird nur, was der Haupttrack dort
+    selbst stehen hat (gleicher Dateiname), Spalten wie bei ihm. Aeltere
+    Datenbanken ohne die Tabelle: nichts."""
+    import hashlib
+    from urllib.parse import quote
+    from uuid import uuid4
+    from pyrekordbox.masterdb import models as tables
+
+    model = getattr(tables, "ContentFile", None)
+    if model is None or not written:
+        return
+    try:
+        src_rows = {Path(str(r.Path)).name: r for r in
+                    db.query(model).filter(model.ContentID == source.ID) if _live(r)}
+    except Exception:                                   # noqa: BLE001
+        return
+    for rel, local in written:
+        tmpl = src_rows.get(local.name)
+        if tmpl is None:
+            continue
+        data = local.read_bytes()
+        db.add(model(
+            ID=f"{content.UUID}_{quote(rel, safe='')}", ContentID=content.ID,
+            Path=rel, Hash=hashlib.md5(data).hexdigest(), Size=len(data),
+            rb_local_path=str(local), rb_file_hash_dirty=0,
+            rb_local_file_status=0, rb_in_progress=0,
+            rb_process_type=tmpl.rb_process_type, rb_priority=tmpl.rb_priority,
+            rb_file_size_dirty=0, UUID=str(uuid4()), rb_data_status=0,
+            rb_local_data_status=0, rb_local_deleted=0, rb_local_synced=0))
+
+
+_STEM_CUE_COLUMNS = ("InMsec", "InFrame", "InMpegFrame", "InMpegAbs", "OutMsec",
+                     "OutFrame", "OutMpegFrame", "OutMpegAbs", "Kind", "Color",
+                     "ColorTableIndex", "ActiveLoop", "Comment", "BeatLoopSize",
+                     "CueMicrosec", "InPointSeekInfo", "OutPointSeekInfo")
+
+
+def _clone_cues(db, source, content) -> int:
+    """Kopiert die lebenden Hot Cues, Memory Cues und Loops (`DjmdCue`) des
+    Haupttracks auf den Stem. Rekordbox liest Cues aus dieser Tabelle, die
+    PCOB/PCO2-Tags der ANLZ-Dateien sind nur die Kopie fuer die Player."""
+    from uuid import uuid4
+    from pyrekordbox.masterdb import models as tables
+
+    n = 0
+    for cue in db.query(tables.DjmdCue).filter(tables.DjmdCue.ContentID == source.ID):
+        if not _live(cue):
+            continue
+        db.add(tables.DjmdCue(
+            ID=str(db.generate_unused_id(tables.DjmdCue, is_28_bit=False)),
+            ContentID=content.ID, ContentUUID=content.UUID, UUID=str(uuid4()),
+            rb_data_status=0, rb_local_data_status=0, rb_local_deleted=0,
+            rb_local_synced=0,
+            **{col: getattr(cue, col) for col in _STEM_CUE_COLUMNS}))
+        n += 1
+    return n
+
+
+def add_stems(items: list[dict], metadata: dict, cues: bool = True) -> dict:
+    """
+    Nimmt freigegebene Stem-Dateien in die Rekordbox-Sammlung auf: neue
+    DjmdContent-Zeile (Tags aus unserer DB-Zeile, BPM/Tonart/Dauer vom
+    Haupttrack), Beatgrid/Wellenform/Cues durch Kopie der ANLZ-Dateien, Cover,
+    contentFile-Eintraege und DjmdCue-Zeilen des Haupttracks, und der Stem
+    landet in denselben Playlists wie der Haupttrack.
+
+    'items': [{"path": Stem-Datei, "source": Haupttrack}, ...]. 'metadata':
+    Stem-Pfad -> unsere DB-Zeile (wie bei add_tracks_to_playlist()).
+    'cues': Hot/Memory Cues und Loops mit uebernehmen (Einstellung
+    stems_rekordbox); ohne bleiben die Cue-Listen der ANLZ-Dateien leer.
+
+    Liefert {"added": [...], "skipped": [...], "errors": {pfad: meldung},
+    "grid": {pfad: True/False}}. Ein Stem, dessen Haupttrack Rekordbox nicht
+    kennt, wird trotzdem aufgenommen, nur ohne Raster (grid False).
+    """
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+
+    def _run(db):
+        import datetime
+        now = datetime.datetime.now()
+        added: list[str] = []
+        skipped: list[str] = []
+        errors: dict[str, str] = {}
+        grid: dict[str, bool] = {}
+        touched: dict[str, object] = {}
+        for item in items:
+            path, src_path = item["path"], item.get("source") or ""
+            try:
+                if _live_content(db, path) is not None:
+                    skipped.append(path)
+                    continue
+                source = _live_content(db, src_path) if src_path else None
+                row = metadata.get(path)
+                content = _add_content_fresh(db, path, **_content_tag_kwargs(db, row))
+                if row is not None:
+                    if row["sample_rate"]:
+                        content.SampleRate = row["sample_rate"]
+                    if row["declared_kbps"]:
+                        content.BitRate = row["declared_kbps"]
+                analysis: list = []
+                if source is not None:
+                    for col in _STEM_COPY_COLUMNS:
+                        value = getattr(source, col, None)
+                        if value not in (None, ""):
+                            setattr(content, col, value)
+                    problems: list[str] = []
+                    try:
+                        analysis = _clone_analysis(db, source, content, path, cues)
+                    except Exception as exc:               # noqa: BLE001
+                        problems.append(f"Raster nicht übernommen: {exc}")
+                        # Ohne eigene Analyse wuerde Rekordbox die Spalten
+                        # des Haupttracks fuer bare Muenze nehmen.
+                        content.Analysed = 0
+                        content.AnalysisUpdated = None
+                    files = list(analysis)
+                    try:
+                        files += _clone_artwork(db, source, content)
+                    except Exception as exc:               # noqa: BLE001
+                        problems.append(f"Cover nicht übernommen: {exc}")
+                    _add_content_files(db, source, content, files)
+                    if cues:
+                        _clone_cues(db, source, content)
+                    else:
+                        content.CueUpdated = None
+                    if problems:
+                        errors[path] = "; ".join(problems)
+                grid[path] = bool(analysis)
+                added.append(path)
+                if source is not None:
+                    for song in db.get_playlist_songs(ContentID=source.ID):
+                        if not _live(song):
+                            continue
+                        playlist = db.get_playlist(ID=str(song.PlaylistID))
+                        if hasattr(playlist, "first"):
+                            playlist = playlist.first()
+                        if (playlist is None or not _live(playlist)
+                                or playlist.Attribute != _RB_PLAYLIST):
+                            continue
+                        if any(_live(x) for x in db.get_playlist_songs(
+                                PlaylistID=playlist.ID, ContentID=content.ID)):
+                            continue
+                        db.add_to_playlist(playlist, content)
+                        touched[str(playlist.ID)] = playlist
+            except Exception as exc:                       # noqa: BLE001
+                errors[path] = str(exc)
+        if touched:
+            db.flush()
+            for pid in touched:
+                _renumber(db, _live_songs(db, pid), now)
+        db.commit()
+        return {"added": added, "skipped": skipped, "errors": errors, "grid": grid}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
 def update_relocated_tracks(moves: list[dict], metadata: dict) -> dict:
     """
     Schreibt Pfad- und Tag-Korrekturen auf bereits vorhandene DjmdContent-

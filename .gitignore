@@ -31,3 +31,4 @@ desktop_main.spec
 # Claude Code (lokale Einstellungen, z.B. Dev-Server-Konfig fuer Browser-Preview)
 .claude/
 CLAUDE.md
+models/

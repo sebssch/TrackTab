@@ -192,7 +192,17 @@ def _print_detail(row: dict) -> None:
         t.add_row("Gemessen", f"Cutoff {row['cutoff_hz']/1000:.2f} kHz "
                               f"→ Klasse {row['measured_kbps']} kbps")
     t.add_row("Flanke", f"{row['steepness_db']:.1f} dB"
-                        + ("  [bold]Brickwall[/bold]" if row["is_brickwall"] else ""))
+                        + ("  [bold]Brickwall[/bold]" if row["is_brickwall"] else "")
+                        + (f"  · Abstand zum Band darüber {row['plateau_db']:.1f} dB"
+                           if row.get("plateau_db") else ""))
+    segs = row.get("edge_segments") or []
+    if segs:
+        # Dieselbe Schwelle wie classify.segment_view() im jeweiligen Modus
+        cfg = cfgmod.load()
+        min_db = float(cfg["lossless_min_steepness_db" if is_lossless else "cliff_min_db"])
+        t.add_row("Abschnitte", " ".join(
+            f"{hz/1000:.1f}" if db >= min_db else "—" for hz, db in segs
+        ) + " [dim](kHz je Abschnitt, — = keine Kante)[/dim]")
     if row["lame_lowpass_hz"]:
         t.add_row("LAME-Header", f"{row['encoder']} · Lowpass "
                                  f"{row['lame_lowpass_hz']/1000:.1f} kHz")
