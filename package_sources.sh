@@ -5,8 +5,10 @@
 # Die mitgelieferten Programme/Bibliotheken in vendor/ (FFmpeg, x264, x265,
 # LAME, mpg123) stehen unter GPL bzw. LGPL. Wer sie weitergibt, muss den
 # Quellcode GENAU dieser Versionen bereitstellen (siehe THIRD_PARTY_LICENSES.md).
-# Dieses Skript laedt die Quell-Archive nach dist/sources/ -- sie gehoeren als
-# zusaetzliche Dateien an dasselbe GitHub-Release wie die .dmg.
+# Das gilt auch fuer mutagen (GPL), das als Python-Paket in der App steckt.
+# Dieses Skript laedt die Quell-Archive nach dist/sources/ und packt sie samt
+# Lizenztexten in dist/TrackTab-<Version>-third-party-sources.zip -- diese eine
+# Datei gehoert an dasselbe GitHub-Release wie die .dmg.
 #
 # Die Versionen unten muessen zu vendor/ passen. Vor jedem Release pruefen:
 #   vendor/ffmpeg -version | head -1      (FFmpeg-Version)
@@ -24,6 +26,9 @@ X264_COMMIT="b35605ace3ddf7c1a5d67a2eb553f034aef41d55"   # Homebrew-Formel x264 
 X265_VERSION="4.3"
 LAME_VERSION="4.0"
 MPG123_VERSION="1.33.7"
+# Aus dem .venv, damit es immer die gebuendelte Version ist.
+MUTAGEN_VERSION=$(./.venv/bin/python -c "import importlib.metadata as m; print(m.version('mutagen'))")
+TRACKTAB_VERSION=$(./.venv/bin/python -c "from app import __version__; print(__version__)")
 
 DEST="dist/sources"
 mkdir -p "$DEST"
@@ -35,6 +40,7 @@ SOURCES=(
   "x265_${X265_VERSION}.tar.gz|https://github.com/Multicorewareinc/x265/releases/download/${X265_VERSION}/x265_${X265_VERSION}.tar.gz"
   "lame-${LAME_VERSION}.tar.gz|https://downloads.sourceforge.net/project/lame/lame/${LAME_VERSION}/lame-${LAME_VERSION}.tar.gz"
   "mpg123-${MPG123_VERSION}.tar.bz2|https://www.mpg123.de/download/mpg123-${MPG123_VERSION}.tar.bz2"
+  "mutagen-${MUTAGEN_VERSION}.tar.gz|https://files.pythonhosted.org/packages/source/m/mutagen/mutagen-${MUTAGEN_VERSION}.tar.gz"
 )
 
 for entry in "${SOURCES[@]}"; do
@@ -69,4 +75,8 @@ done
 cp LICENSE NOTICE.md THIRD_PARTY_LICENSES.md "$DEST/"
 ( cd "$DEST" && shasum -a 256 *.tar.* > SHA256SUMS )
 
-echo "Fertig: $DEST ($(du -sh "$DEST" | cut -f1)). Diese Dateien an das GitHub-Release hängen."
+ZIP="TrackTab-${TRACKTAB_VERSION}-third-party-sources.zip"
+rm -f "dist/$ZIP"
+( cd dist && zip -qrX "$ZIP" sources -x '*/.DS_Store' )
+
+echo "Fertig: dist/$ZIP ($(du -sh "dist/$ZIP" | cut -f1)). Diese Datei an das GitHub-Release hängen."

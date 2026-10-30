@@ -49,13 +49,13 @@ Mitgelieferte Bibliotheken in `vendor/libs/` (Lizenzen laut Projektangaben):
 | OpenSSL (libssl, libcrypto) 4.x | Apache-2.0 | <https://www.openssl.org> |
 | liblzma (xz) | 0BSD / gemeinfrei | <https://tukaani.org/xz/> |
 
-**Quellcode-Zugang (GPL/LGPL):** Zu jeder `.dmg` gehört der Quellcode der darin enthaltenen GPL-/LGPL-Komponenten genau dieser Versionen. Er liegt als Download am **selben GitHub-Release** wie die `.dmg` (Dateien `ffmpeg-<Version>.tar.xz`, `x264-<Commit>.tar.bz2`, `x265_<Version>.tar.gz`, `lame-<Version>.tar.gz`, `mpg123-<Version>.tar.bz2`, dazu `BUILD-INFO.txt` mit der FFmpeg-Konfiguration und `SHA256SUMS`). Die Archive stellt `package_sources.sh` zusammen. Die Adressen der Originalprojekte in der Tabelle sind nur zusätzliche Information. Die übrigen Bibliotheken stehen unter freizügigen Lizenzen ohne Pflicht zur Quellcode-Herausgabe.
+**Quellcode-Zugang (GPL/LGPL):** Zu jeder `.dmg` gehört der Quellcode der darin enthaltenen GPL-/LGPL-Komponenten genau dieser Versionen. Er liegt als Download am **selben GitHub-Release** wie die `.dmg`, zusammengefasst in `TrackTab-<Version>-third-party-sources.zip` (darin `ffmpeg-<Version>.tar.xz`, `x264-<Commit>.tar.bz2`, `x265_<Version>.tar.gz`, `lame-<Version>.tar.gz`, `mpg123-<Version>.tar.bz2`, `mutagen-<Version>.tar.gz`, dazu `BUILD-INFO.txt` mit der FFmpeg-Konfiguration, `SHA256SUMS` und die Lizenztexte). Die Datei erstellt `package_sources.sh`. Der Quellcode von TrackTab selbst liegt im Repository. Die Adressen der Originalprojekte in der Tabelle sind nur zusätzliche Information. Die übrigen Bibliotheken stehen unter freizügigen Lizenzen ohne Pflicht zur Quellcode-Herausgabe.
 
 ## 3. Python-Pakete (in der App gebündelt)
 
 | Paket | Version | Lizenz | Verwendung |
 |---|---|---|---|
-| mutagen | 1.48.1 | **GPL-2.0-oder-später** | Tags und Cover lesen/schreiben, MP3-Details — Quellcode: <https://github.com/quodlibet/mutagen> · <https://pypi.org/project/mutagen/1.48.1/> |
+| mutagen | 1.48.1 | **GPL-2.0-oder-später** | Tags und Cover lesen/schreiben, MP3-Details — Quellcode: am Release (siehe oben), Original <https://github.com/quodlibet/mutagen> · <https://pypi.org/project/mutagen/1.48.1/> |
 | numpy | 2.5.4 | BSD-3-Clause (u. a. 0BSD, MIT, Zlib, CC0 für Teile) | FFT, Stem-Trennung |
 | onnxruntime | 1.31.1 | MIT | Ausführung der Modelle |
 | libsonare | 1.10.0 | Apache-2.0 | BPM- und Tonart-Messung |
