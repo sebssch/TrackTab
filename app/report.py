@@ -289,7 +289,7 @@ def build_all(conn, cfg: dict) -> dict:
 
 
 # Aus diesen Dateien backt _template() den Report zusammen.
-_UI_FILES = ("index.html", "app.css", "app.js", "generator.js", "i18n/de.js", "i18n/en.js",
+_UI_FILES = ("index.html", "app.css", "app.js", "generator.js", "dj.js", "i18n/de.js", "i18n/en.js",
              "lucide-icons.js")
 
 
@@ -347,8 +347,10 @@ def _template() -> str:
     # playlistApi(), ...), und app.js ruft seine Funktionen erst bei Bedarf
     # auf (Funktionsdeklarationen sind im ganzen Skript bekannt).
     gen_js = (ui / "generator.js").read_text(encoding="utf-8")
+    # Gleiches Prinzip fuer den Editor der DJ-Ansicht.
+    dj_js = (ui / "dj.js").read_text(encoding="utf-8")
     html = html.replace("<!--__JS__-->", i18n_de + "\n" + i18n_en + "\n" + lucide_js + "\n"
-                        + app_js + "\n" + gen_js)
+                        + app_js + "\n" + gen_js + "\n" + dj_js)
     html = html.replace("<!--__VERSION__-->", f"v{__version__}")
     # Versionsmarke direkt hinter <head> -- is_stale() liest nur den Anfang
     # der Datei und erkennt daran einen Report aus einer anderen Version.

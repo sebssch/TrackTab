@@ -159,9 +159,15 @@ loudness_clip_dbtp: -1.0       # True Peak darueber -> Clip-Warnung
 # --- Rekordbox-Import ---
 rekordbox_quality_check: true  # Cutoff-Pruefung beim Hinzufuegen zu einer Rekordbox-Playlist
 rekordbox_min_cutoff_khz: 19.0 # Tracks darunter (oder ohne Messwert) loesen eine Warnung aus
-# Waveform-Stil aus Rekordbox-Analysedaten fuer den Player: rgb oder 3band.
-# Nur wirksam, wenn der Track in Rekordbox analysiert ist -- sonst grauer Fallback.
-rekordbox_waveform_style: "rgb"
+# Waveform-Farbe in Bearbeiten und Player: standard (grau), rgb oder 3band. Die
+# Darstellung erzeugt dort immer TrackTab selbst.
+waveform_style: "rgb"
+# Wellenform der DJ-Ansicht: fallback (Rekordbox, sonst TrackTab) oder tracktab.
+dj_waveform_source: "fallback"
+# Farbe dort, unabhaengig von Bearbeiten und Player: standard, rgb oder 3band.
+dj_waveform_style: "rgb"
+# Flaeche dort: dark, light oder ui (folgt dem Design).
+dj_waveform_surface: "dark"
 # Stimmungen + eigene Tags beim Playlist-Push als Rekordbox-"My Tag" setzen.
 # Die Spalte muss in Rekordbox existieren (vier feste Spalten, eine davon
 # umbenennen) -- sie gehoert dann TrackTab: nicht mehr zutreffende Tags darin
@@ -224,6 +230,11 @@ bpmkey_comment_existing: "overwrite"
 genremood_auto_drops: false
 # Genre-Vorschlaege unter dieser Wahrscheinlichkeit (Prozent) ausblenden.
 genremood_min_percent: 5
+# Beatgrid der Phrasen-Analyse: auto (Flex nur bei Tempowechsel) | normal | flex.
+phrase_grid_mode: auto
+# Woher Beatgrid und Phrasen kommen: fallback (Rekordbox, sonst TrackTab) |
+# rekordbox | tracktab.
+beatgrid_source: fallback
 # Stimmungen als Mood-Tag schreiben (TXXX:MOOD bzw. MOOD): no | tag.
 genremood_write_mood: "no"
 

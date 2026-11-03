@@ -301,6 +301,10 @@ const merkPlaylists = () => MERK_PLAYLISTS_CACHE;
 // Playlist ohne Farbe). playlistBadgeHtml() faellt in diesem Fall auf
 // "var(--dim)" zurueck, das hat aber keine "-bg"-Variante fuer den Chip-Hintergrund.
 const flColorTok = n => n.color || "fl1";
+// Listenfarbe als CSS-Wert: Token aus der Palette oder eigene Farbe (#rrggbb).
+const isCustomColor = c => /^#[0-9a-f]{6}$/i.test(c || "");
+const plColor = c => isCustomColor(c) ? c : `var(--${esc(c)})`;
+const plColorBg = c => isCustomColor(c) ? `${c}2e` : `var(--${esc(c)}-bg)`;
 
 function rebuildPlaylistIndex() {
   PLAYLIST_SETS = {};
@@ -436,6 +440,7 @@ let state = {
   // Code (siehe app/taganomaly.py), nicht persistiert wie valueFilter, gilt
   // nur solange die Liste aktiv ist (selectView() setzt ihn zurueck).
   tagIssueFilter: null,
+  rbStage: 1,
   // Gewaehlte Tag-Bubbles der Liste "Tags" (ids aus rowTags()), nicht
   // persistiert wie tagIssueFilter.
   tagFilter: [],
@@ -469,6 +474,23 @@ let state = {
 state.columnsByLayout = {
   edit: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: [], widths: {}},
   player: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: [], widths: {}},
+};
+
+// Die DJ-Ansicht hat eine feste Liste: Cover, "Titel - Interpret", Energie, Tags.
+// Nicht einstellbar und nicht gespeichert, das Spalten-Menue ist dort ausgeblendet
+// und saveColumns() tut nichts.
+const DJ_COLUMNS = ["cv", "t", "du", "ky", "bp", "eg", "mm", "rb"];
+// Name der eingestellten Rekordbox-App, leer = keine. Steht hier oben, weil die feste
+// DJ-Liste schon beim ersten Zeichnen danach fragt.
+let REKORDBOX_NAME = "";
+const DJ_COLUMN_STORE = {
+  order: [...DJ_COLUMNS, ...OPTIONAL_COLUMNS.map(c => c.key).filter(k => !DJ_COLUMNS.includes(k))],
+  // Die Spalte Rekordbox gibt es nur, wenn Rekordbox eingestellt ist.
+  get hidden() {
+    return OPTIONAL_COLUMNS.map(c => c.key).filter(k => !DJ_COLUMNS.includes(k) || (k === "rb" && !REKORDBOX_NAME));
+  },
+  // "du" so breit, dass bei laufendem Track auch die zweite Zeit Platz hat.
+  widths: {cv: 76, du: 150, ky: 60, bp: 90, eg: 90, mm: 240, rb: 90},
 };
 
 // Eigener, flacher Spalten-Topf fuer die Einzelprueflungen (Drops) --
@@ -519,7 +541,8 @@ const activeColumnView = () =>
   columnViewFor(state.view) ||
   (extSourceOfView(state.view) === "music" ? columnViewById(COLUMN_VIEW_MUSIC_DEFAULT) : null) ||
   columnViewById(COLUMN_VIEW_DEFAULT);
-const activeColumnStore = () => activeColumnView() || state.columnsByLayout[state.layout];
+const activeColumnStore = () => state.layout === "dj" ? DJ_COLUMN_STORE
+  : (activeColumnView() || state.columnsByLayout[state.layout]);
 
 // Gespeicherte Spalten-Toepfe (Server, localStorage, alte Ansichten) auf den
 // heutigen Spaltenbestand bringen: unbekannte Keys raus, seither
@@ -572,7 +595,7 @@ function saveFilters() {
       view: state.view,
       groupAlbums: state.groupAlbums,
       advOpen: !!state.advOpen,
-      sort: state.sort, dir: state.dir,
+      sort: state.sort, dir: state.dir, rbStage: state.rbStage,
       layout: state.layout,
       editFilterSnapshot: state.editFilterSnapshot || null,
       sidebarW: state.sidebarW, treeClosed: state.treeClosed,
@@ -673,6 +696,12 @@ function applyTheme(v) {
   invalidateWaveTheme();
 }
 
+// Flaeche der DJ-Waveform: "dark", "light" oder "ui" (folgt dem Design), siehe app.css.
+function applyDjSurface(v) {
+  document.documentElement.setAttribute("data-dj-surface", v === "light" || v === "ui" ? v : "dark");
+  invalidateWaveTheme();
+}
+
 // Setzt data-accent auf <html> -- app.css referenziert das (Regeln
 // [data-accent="..."] { --accent: var(--dc-...); ... }) und legt darüber
 // --accent/--accent-bg auf die gewaehlte der 8 Vorgabefarben um. "blue"
@@ -688,6 +717,20 @@ function applyAccentColor(v) {
   // --accent faerbt den gespielten Teil der Wellenform (siehe
   // paintWaveEntry()) -- Themen-Cache und Ebenen entwerten.
   invalidateWaveTheme();
+}
+
+// Phrasenfarben stehen fest in app.css (--phrase-<art>, --phrase-<art>-<nummer>). Nummern
+// ausserhalb der Tabelle nehmen die Grundfarbe der Art.
+const PHRASE_VARIANTS = {intro: 2, up: 3, down: 2, chorus: 3, verse: 6, bridge: 2, outro: 2};
+function phraseToken(kind, num) {
+  return num >= 1 && num <= (PHRASE_VARIANTS[kind] || 0) ? `${kind}-${num}` : kind;
+}
+// Schrift auf einer Farbe: dunkel oder weiss, je nachdem, was den hoeheren Kontrast
+// hat (relative Leuchtdichte nach WCAG, ab 0,18 liest sich dunkle Schrift besser).
+function contrastLabel(hex) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255)
+    .map(v => v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.18 ? "#16181c" : "#fff";
 }
 
 // ── Ansicht: Bearbeiten / Player ─────────────────────────────────────────
@@ -706,14 +749,14 @@ function applyAccentColor(v) {
 function syncLayoutSwitch() {
   document.querySelectorAll("#layoutSwitch [data-layout]").forEach(b => {
     b.classList.toggle("on", b.dataset.layout === state.layout);
-    if (b.dataset.layout === "player") b.disabled = !!scanRunning;
+    if (b.dataset.layout !== "edit") b.disabled = !!scanRunning;
   });
 }
 
 function applyLayout(next) {
   if (next === state.layout) return;
-  if (next === "player" && scanRunning) {
-    note(t("layout.blocked_scan_running"), "soft");
+  if (next !== "edit" && scanRunning) {
+    note(t(next === "dj" ? "layout.blocked_scan_running_dj" : "layout.blocked_scan_running"), "soft");
     return;
   }
   // In der Player-Ansicht klappt kein Zeilenklick mehr eine Wellenform auf
@@ -739,6 +782,9 @@ function applyLayout(next) {
   state.selected.clear();
   state.layout = next;
   document.body.setAttribute("data-layout", state.layout);
+  // Die DJ-Ansicht zeigt nur TrackTabs eigene Listen. Eine offene fremde Liste
+  // (Music.app/Rekordbox) gibt es dort nicht, also zurueck auf die Bibliothek.
+  if (next === "dj" && extSourceOfView(state.view)) state.view = "all";
   state.shown = PAGE;
   syncLayoutSwitch();
   syncControls();
@@ -945,12 +991,13 @@ function loadFilters() {
     // Ansicht zuerst restaurieren -- state.colOrder/hiddenCols/colWidths
     // loesen ueber die Getter/Setter auf state.layout auf, alles danach muss
     // also schon den richtigen Wert vorfinden.
-    if (s.layout === "edit" || s.layout === "player") state.layout = s.layout;
+    if (s.layout === "edit" || s.layout === "player" || s.layout === "dj") state.layout = s.layout;
     if (VIEWS.some(v => v.id === s.view)) state.view = s.view;
     for (const k of ["sort"]) if (s[k] !== undefined) state[k] = s[k];
     if (typeof s.groupAlbums === "boolean") state.groupAlbums = s.groupAlbums;
     if (typeof s.advOpen === "boolean") state.advOpen = s.advOpen;
     if (s.dir === 1 || s.dir === -1) state.dir = s.dir;
+    if ([1, 2, 3, 4].includes(s.rbStage)) state.rbStage = s.rbStage;
     if (typeof s.shuffle === "boolean") queueState.shuffle = s.shuffle;
     if (typeof s.repeatTrack === "boolean") queueState.repeatTrack = s.repeatTrack;
     if (typeof s.repeatList === "boolean") queueState.repeatList = s.repeatList;
@@ -1112,6 +1159,9 @@ const ICONS = {
   // geschieht so nur hier, nicht an jeder Verwendungsstelle.
   analyseBpmKey: SVG(LUCIDE_ICONS["clef-treble"]),
   analyseGenreMood: SVG(LUCIDE_ICONS["party-popper"]),
+  analysePhrases: SVG(LUCIDE_ICONS["rows-3"]),
+  waveZoomIn: SVG(LUCIDE_ICONS["zoom-in"]),
+  waveZoomOut: SVG(LUCIDE_ICONS["zoom-out"]),
   splitStems: SVG(LUCIDE_ICONS["split"]),
   stemSave: SVG(LUCIDE_ICONS["save"]),
   // Wie der Export-Knopf der Sammelleiste (exportZip), ein Symbol fuer "Datei herunterladen".
@@ -1137,6 +1187,7 @@ const ICONS = {
                 '<circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/>'),
   // Fuer den Layout-Umschalter (Ansicht "Player").
   player: SVG(LUCIDE_ICONS["music"]),
+  layoutDj: SVG(LUCIDE_ICONS["disc-3"]),
   // Fixer Player-Balken (Ansicht "Player", siehe queueState weiter unten).
   next: SVG(LUCIDE_ICONS["skip-forward"]),
   prev: SVG(LUCIDE_ICONS["skip-back"]),
@@ -1212,8 +1263,10 @@ const ICONS = {
                1.3-6.05-4.63-4.15 6.15-.62z"/></svg>`,
 };
 
+// v hochzaehlen, wenn sich die Symbole des Servers aendern: der Browser behaelt sie einen Tag.
+const appIconSrc = which => `/api/appicon?which=${which}&v=2`;
 const appIcon = (which, alt) =>
-  `<img class="appicon" src="/api/appicon?which=${which}" alt="${alt}" title="${alt}">`;
+  `<img class="appicon" src="${appIconSrc(which)}" alt="${alt}" title="${alt}">`;
 
 // /api/appicon findet Mixed In Key/Rekordbox auch ohne manuell eingetragenen
 // Pfad automatisch (mik_path()/rekordbox_path() in media.py) -- das echte
@@ -1300,6 +1353,25 @@ const itunesURL = q =>
   "itmss://itunes.apple.com/search?term=" + encodeURIComponent(q) +
   "&media=music&entity=song";
 
+// Shop-Links im Standardbrowser des Systems, nicht im Browser der Oberflaeche. Ohne Server
+// bleibt es beim normalen Link.
+document.addEventListener("click", ev => {
+  const link = ev.target.closest && ev.target.closest("a[data-shoplink]");
+  if (!link || !apiMode) return;
+  ev.preventDefault();
+  fetch("/api/open-browser", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({url: link.href})})
+    .then(res => { if (!res.ok) throw new Error(String(res.status)); })
+    .catch(() => window.open(link.href, "_blank", "noopener"));
+});
+
+// Kein Seitenzoom per Touchpad: Chrome meldet die Geste als wheel mit ctrlKey, Safari als
+// gesture*. Wer sie nutzen will (Wellenform im DJ-Editor), wertet sie selbst aus.
+document.addEventListener("wheel", ev => { if (ev.ctrlKey) ev.preventDefault(); }, {passive: false});
+for (const name of ["gesturestart", "gesturechange", "gestureend"]) {
+  document.addEventListener(name, ev => ev.preventDefault(), {passive: false});
+}
+
 function shopLinks(r) {
   const q = searchQuery(r);
   const shops = (apiMode ? ALL_SHOPS : DEFAULT_SHOPS).filter(s => s.enabled && s.url);
@@ -1316,7 +1388,7 @@ function shopLinks(r) {
     const url = s.id === "itunes" && !apiMode
       ? itunesURL(q)
       : s.url.split("{q}").join(encodeURIComponent(q));
-    return `<a class="iconbtn plain" href="${esc(url)}" target="_blank" rel="noopener"
+    return `<a class="iconbtn plain" data-shoplink href="${esc(url)}" target="_blank" rel="noopener"
         title="${esc(t("shop.search_title", {shop: s.name, q}))}">${shopIcon(s)}</a>`;
   }).join("");
 }
@@ -1369,11 +1441,36 @@ const isFixable = r => (r.v === "FAKE" || r.v === "VERDAECHTIG") && r.mk > 0 &&
 const AUTO_FIXABLE_TAG_ISSUE_CODES = new Set([
   "control_chars", "leading_trailing_ws", "id3_v1_only", "id3_v22",
   "unresolved_genre_code", "duplicate_frames", "nfc_nfd_mismatch",
-  "oversized_cover",
+  "oversized_cover", "tempo_change_title",
 ]);
-const hasAnyTagIssues = r => Array.isArray(r.ti) && r.ti.length > 0;
-const hasAutoFixableTagIssues = r =>
-  Array.isArray(r.ti) && r.ti.some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code));
+// Tempowechsel im Beatgrid, der nicht im Titel steht. Kommt nicht aus der Datei wie die
+// uebrigen Auffaelligkeiten, sondern aus der gemerkten Tempo-Folge (r.gridSeq), die der
+// DJ-Editor beim Oeffnen eines Tracks festhaelt; aeltere Eintraege kennen nur die Spanne.
+// Mehr als TEMPO_ISSUE_MAX_CHANGES Stufen sind ein schwankendes Grid, kein Titel-Thema.
+const TEMPO_ISSUE_MIN_BPM = 1, TEMPO_ISSUE_MAX_CHANGES = 8;
+const TITLE_TEMPO_RE = /\s*[(\[]?\s*\d+(?:[.,]\d+)?(?:\s*BPM)?(?:\s*(?:→|->|-|–|—|>)\s*\d+(?:[.,]\d+)?(?:\s*BPM)?)*\s*(?:→|->|-|–|—|>)\s*\d+(?:[.,]\d+)?\s*BPM\s*[)\]]?/i;
+function tempoSequence(r) {
+  const seq = r.gridSeq || (r.gridTempo && r.gridTempo[1] - r.gridTempo[0] >= TEMPO_ISSUE_MIN_BPM ? r.gridTempo : null);
+  return seq && seq.length >= 2 && seq.length <= TEMPO_ISSUE_MAX_CHANGES ? seq : null;
+}
+function tempoIssueOf(r) {
+  const seq = tempoSequence(r);
+  if (!seq) return null;
+  const m = TITLE_TEMPO_RE.exec(r.t || "");
+  const inTitle = m ? m[0].match(/\d+(?:[.,]\d+)?/g).map(v => parseFloat(v.replace(",", "."))) : [];
+  if (inTitle.length === seq.length && inTitle.every((v, i) => Math.abs(v - seq[i]) <= 1)) return null;
+  return {code: "tempo_change_title", field: "title"};
+}
+const titleWithTempo = r => {
+  const base = (r.t || baseName(r.p).replace(/\.[^.]+$/, "")).replace(TITLE_TEMPO_RE, "").trim();
+  return `${base} (${tempoSequence(r).map(v => Math.round(v)).join(" → ")} BPM)`;
+};
+const rowIssues = r => {
+  const tempo = tempoIssueOf(r), own = Array.isArray(r.ti) ? r.ti : [];
+  return tempo ? [...own, tempo] : own;
+};
+const hasAnyTagIssues = r => rowIssues(r).length > 0;
+const hasAutoFixableTagIssues = r => rowIssues(r).some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code));
 // Feldnamen von /api/fix-tag-issues (wie tags.write_tags()) auf die kompakten
 // Zeilen-Kurzschluessel -- nur fuer den Drop-Zweig ohne DB-Zeile gebraucht,
 // eine DB-Zeile kommt bereits kompakt vom Server (report.rows_to_payload()).
@@ -1505,7 +1602,7 @@ function playlistIconValue(node) {
 // rund, wenn die Playlist als Merkliste markiert ist (node.fav_slot), sonst
 // rund wie jede andere eigene Liste.
 function playlistBadgeHtml(node) {
-  const color = node.color ? `var(--${esc(node.color)})` : "var(--dim)";
+  const color = node.color ? plColor(node.color) : "var(--dim)";
   const shape = node.fav_slot ? "tsquare" : "tcircle";
   return `<span class="tbadge ${shape}" style="background:${color}">` +
     `${iconGlyphHtml(playlistIconValue(node))}</span>`;
@@ -1666,7 +1763,8 @@ function treeRoots() {
   // state.treeOrder verschiebbar (dieselben ids wie ihre root:-Knoten,
   // siehe dropTreeNode()); TrackTab bleibt fix an erster Stelle, taucht in
   // dieser Liste deshalb gar nicht erst auf.
-  const extRoots = sortByTreeOrder([
+  // Die DJ-Ansicht arbeitet nur auf TrackTabs eigenen Listen.
+  const extRoots = state.layout === "dj" ? [] : sortByTreeOrder([
     ...(MUSIC_NAME ? [extRootNode("music", "tree.root_music")] : []),
     ...(REKORDBOX_NAME ? [extRootNode("rekordbox", "tree.root_rekordbox")] : []),
   ]);
@@ -1695,13 +1793,13 @@ function renderTree() {
     // Textdarstellung.
     const isOwnList = n.node && n.node.kind !== "folder";
     const badge = isOwnList
-      ? `<span class="tbadge ${n.node.fav_slot ? "tsquare" : "tcircle"}" style="background:${n.color ? `var(--${esc(n.color)})` : "var(--dim)"}">` +
+      ? `<span class="tbadge ${n.node.fav_slot ? "tsquare" : "tcircle"}" style="background:${n.color ? plColor(n.color) : "var(--dim)"}">` +
         // Feste Verdikt-Playlisten (system=1) tragen ihr Icon fest ueber
         // _SYSTEM_PLAYLISTS (db.py) -- nicht editierbar (nodeMenuItems()
         // blendet fuer sie "Bearbeiten" aus), aber genau wie bei eigenen
         // Listen gerendert.
         `${iconGlyphHtml(n.icon)}</span>`
-      : `<span class="ticon"${n.color ? ` style="color:var(--${esc(n.color)})"` : ""}>` +
+      : `<span class="ticon"${n.color ? ` style="color:${plColor(n.color)}"` : ""}>` +
         // n.icon ist hier entweder fertiges Markup (TREE_ICONS/appIcon()) oder
         // ein "sym:"-codierter Lucide-Name (PLAYLIST_ICONS fuer Ordner/fremde
         // Playlisten/Smart Playlists) -- anders als bei eigenen Listen (oben,
@@ -3112,7 +3210,7 @@ function askPlaylistProps(title, current, withStyle = true, columnsView = undefi
     const emojiInput = document.getElementById("nameEmojiInput");
     const drawPreview = () => {
       document.getElementById("nameIconPreview").innerHTML =
-        `<span class="tbadge tcircle" style="background:${color ? `var(--${esc(color)})` : "var(--dim)"}">` +
+        `<span class="tbadge tcircle" style="background:${color ? plColor(color) : "var(--dim)"}">` +
         `${iconGlyphHtml(icon)}</span>`;
     };
     const symInput = document.getElementById("nameSymInput");
@@ -3167,16 +3265,40 @@ function askPlaylistProps(title, current, withStyle = true, columnsView = undefi
       drawPreview();
     };
     document.querySelectorAll("#nameIconTabs [data-mode]").forEach(b => b.onclick = () => setMode(b.dataset.mode));
+    // Eigene Farbe an letzter Stelle. Das Farbfeld liegt unsichtbar ueber dem Kreis und
+    // oeffnet den Waehler selbst; beim Ziehen im Waehler nichts neu zeichnen, sonst
+    // verschwindet das Feld unter dem offenen Waehler.
+    let customColor = isCustomColor(color) ? color : null;
     const drawColors = () => {
-      document.getElementById("nameColors").innerHTML =
+      const host = document.getElementById("nameColors");
+      host.innerHTML =
         [null, ...PLAYLIST_COLOR_CHOICES].map(tok =>
           `<button type="button" class="styleopt swatch${tok ? "" : " none"}` +
           `${tok === color ? " on" : ""}" data-color="${tok || ""}"` +
           `${tok ? ` style="background:var(--${tok})"` : ""}>${tok ? "" : "&ndash;"}</button>`
-        ).join("");
-      document.querySelectorAll("#nameColors [data-color]").forEach(b => b.onclick = () => {
+        ).join("") +
+        `<label class="styleopt swatch custom${customColor && customColor === color ? " on" : ""}"` +
+        ` title="${esc(t("tree.custom_color"))}"${customColor ? ` style="background:${customColor};color:${contrastLabel(customColor)}"` : ""}>` +
+        `${SVG(LUCIDE_ICONS.plus)}<input type="color" value="${customColor || "#888888"}"></label>`;
+      host.querySelectorAll("[data-color]").forEach(b => b.onclick = () => {
         color = b.dataset.color || null; drawColors(); drawPreview();
       });
+      const custom = host.querySelector(".custom"), picker = custom.querySelector("input");
+      picker.onclick = () => {
+        if (!customColor) return;
+        color = customColor;
+        host.querySelectorAll(".on").forEach(el => el.classList.remove("on"));
+        custom.classList.add("on");
+        drawPreview();
+      };
+      picker.oninput = () => {
+        customColor = color = picker.value;
+        host.querySelectorAll(".on").forEach(el => el.classList.remove("on"));
+        custom.classList.add("on");
+        custom.style.background = customColor;
+        custom.style.color = contrastLabel(customColor);
+        drawPreview();
+      };
     };
     if (withStyle) { setMode(iconMode); drawIcons(); drawColors(); drawPreview(); }
 
@@ -3523,11 +3645,12 @@ function reloadExtTree(source) {
 // stehen fest im HTML ("In den Papierkorb", data-i18n="confirm.trash_note")
 // und werden von askTrash() unveraendert uebernommen -- wer sie hier
 // ueberschreibt, veraendert stillschweigend den naechsten Papierkorb-Dialog.
-function askConfirmSimple(title, note) {
+function askConfirmSimple(title, note, yesLabel) {
   return new Promise(resolve => {
     const ov = document.getElementById("askOverlay");
     document.getElementById("askTitle").textContent = title;
     document.getElementById("askNote").textContent = note || "";
+    document.getElementById("askYes").textContent = yesLabel || t("action.delete");
     ov.style.display = "flex";
     const done = answer => {
       ov.style.display = "none";
@@ -3873,7 +3996,7 @@ function mergePairKey(a, b) { return [a, b].sort().join("\u0000"); }
 async function syncMarks() {
   refreshRekordboxPending();
   try {
-    const [ign, cor, ddm, rbx, mad, pls, mgd] = await Promise.all([
+    const [ign, cor, ddm, rbx, mad, pls, mgd, djb] = await Promise.all([
       fetch("/api/ignored", {cache: "no-store"}).then(r => r.json()),
       fetch("/api/corrected", {cache: "no-store"}).then(r => r.json()),
       fetch("/api/dup-dismissed", {cache: "no-store"}).then(r => r.json()),
@@ -3883,6 +4006,7 @@ async function syncMarks() {
       // den Stand des letzten Report-Neubaus, geaendert wird ohne Rebuild.
       fetch("/api/playlists", {cache: "no-store"}).then(r => r.json()),
       fetch("/api/merge-dismissed", {cache: "no-store"}).then(r => r.json()),
+      fetch("/api/dj-bpms", {cache: "no-store"}).then(r => r.json()),
     ]);
     for (const field of ["genre", "artist", "album"]) {
       MERGE_DISMISSED[field] = new Set(
@@ -3903,6 +4027,8 @@ async function syncMarks() {
     const dupDismissed = new Set(ddm.dup_dismissed || []);
     const rekordbox = new Set(rbx.paths || []);
     const musicAdded = mad.added || {};
+    const rbDiff = djb.rb_diff || {};
+    RB_COMPARE = djb.rb_compare !== false;
     for (const r of DATA) {
       r.ig = ignored.has(r.p)   ? 1 : 0;    // auch zurücknehmen, nicht nur setzen
       r.mc = corrected.has(r.p) ? 1 : 0;
@@ -3910,6 +4036,10 @@ async function syncMarks() {
       r.rb = rekordbox.has(r.p) ? 1 : 0;
       r.im = Object.prototype.hasOwnProperty.call(musicAdded, r.p) ? 1 : 0;
       r.da = musicAdded[r.p] || 0;
+      r.djBp = djEditedBpm(djb.bpms[r.p], r.bp);
+      r.gridTempo = djb.tempo[r.p] || null;
+      r.gridSeq = (djb.tempo_seq && djb.tempo_seq[r.p]) || null;
+      r.rbDiff = rbDiff[r.p] || null;
     }
   } catch (err) {
     note(t("toast.marks_load_failed", {error: err.message}), true);
@@ -3969,6 +4099,8 @@ async function initStorage() {
         BPMKEY_AUTO = !!s.values.bpmkey_auto_drops;
         // Genre-/Stimmungs-Analyse (onnxruntime + Modelle), gleiche Logik.
         GENREMOOD_AVAILABLE = !!s.genremood_available;
+        // Beatgrid & Phrasen (onnxruntime + Phrasenmodell), gleiche Logik.
+        PHRASES_AVAILABLE = !!s.phrases_available;
         // Stem-Trennung (onnxruntime + Demucs-Modell), gleiche Logik.
         STEMS_AVAILABLE = !!s.stems_available;
         BPMKEY_INSTALLED = !!s.bpmkey_installed;
@@ -4011,6 +4143,7 @@ async function initStorage() {
         applyFontSize(s.values.font_size);
         applyTheme(s.values.theme);
         applyAccentColor(s.values.accent_color);
+        applyDjSurface(s.values.dj_waveform_surface);
         setKeyNotation(s.values.key_notation);
         state.infiniteScroll = !!s.values.infinite_scroll;
         state.searchTolerance = typeof s.values.search_typo_tolerance === "number"
@@ -4481,10 +4614,16 @@ function syncSortHeaders() {
   document.querySelectorAll("th[data-k]").forEach(th => {
     const old = th.querySelector(".sortarrow");
     if (old) old.remove();
+    if (th.dataset.k === "rb") th.removeAttribute("title");
     if (th.dataset.k === state.sort) {
       const span = document.createElement("span");
       span.className = "sortarrow";
-      span.textContent = state.dir === 1 ? "▲" : "▼";
+      if (state.sort === "rb") {
+        // Die Stufe zeigt, was gerade zuerst kommt.
+        span.textContent = "●";
+        span.style.color = ["", "var(--ok)", "var(--fake)", "var(--dim)"][state.rbStage - 1];
+        th.title = t(`col.rb_sort_${state.rbStage}`);
+      } else span.textContent = state.dir === 1 ? "▲" : "▼";
       th.appendChild(span);
     }
   });
@@ -4574,7 +4713,9 @@ function setWrapWidth(wrap) {
 // Wiedereinhaengen nach render(), die Zeile ist dann frisch gebaut.
 function spanLinksIntoDetail(tr, expanded) {
   const links = tr.querySelector(":scope > td.links");
-  if (links) links.rowSpan = expanded ? 2 : 1;
+  // Die Haupttabelle der DJ-Ansicht hat keine Aktionsspalte (app.css), rowspan waere dort
+  // falsch. Die Einzelpruefungen haben sie in jeder Ansicht.
+  if (links) links.rowSpan = expanded && (state.layout !== "dj" || tr.closest("#dropList")) ? 2 : 1;
 }
 function syncDetailWidth() {
   document.querySelectorAll(".tablewrap").forEach(wrap => {
@@ -4757,6 +4898,7 @@ function renderDropColsMenu() {
 // Standard-Spalten der aktuellen Ansicht (Bearbeiten/Player).
 function saveColumns() {
   saveFilters();
+  if (state.layout === "dj") return;
   if (activeColumnView()) postColumnViews(); else postStandardColumns();
 }
 
@@ -4796,6 +4938,7 @@ function saveDropColumns() {
 // Kopfzeile neu gebaut werden -- daran haengt syncColumnsForView() beim
 // Listenwechsel.
 const columnStoreKey = () => {
+  if (state.layout === "dj") return "dj";
   const v = activeColumnView();
   return v ? `cv:${v.id}` : `std:${state.layout}`;
 };
@@ -4909,8 +5052,8 @@ function renderHead() {
     .map(k => {
       const c = OPTIONAL_COLUMNS.find(c => c.key === k);
       const w = state.colWidths[k] || DEFAULT_COL_WIDTHS[k];
-      const draggable = apiMode ? ' draggable="true"' : "";
-      return `<th data-k="${k}" data-reorder${c.numeric ? ' class="num"' : ""}${draggable} style="width:${w}px">${esc(c.label)}</th>`;
+      const draggable = apiMode && state.layout !== "dj" ? ' draggable="true"' : "";
+      return `<th data-k="${k}" data-reorder${c.numeric ? ' class="num"' : ""}${draggable} style="width:${w}px">${esc(state.layout === "dj" && k === "t" ? t("dj.col_track") : c.label)}</th>`;
     }).join("");
   anchor.insertAdjacentHTML("afterend", html);
   const newThs = document.querySelectorAll("table thead th[data-reorder]");
@@ -4944,11 +5087,18 @@ function attachColumnDrag(ths) {
 }
 
 // 3-Klick-Zyklus je Spalte: aufsteigend -> absteigend -> zuruecksetzen
-// (state.sort = null, Liste faellt auf die Grundreihenfolge zurueck).
+// (state.sort = null, Liste faellt auf die Grundreihenfolge zurueck). Spalte Rekordbox: fuenf.
 function bindHeaderSort() {
   document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
     const k = th.dataset.k;
-    if (state.sort !== k) { state.sort = k; state.dir = 1; }
+    if (k === "rb") {
+      // Vier Stufen statt auf/ab: was zuerst kommt, siehe RB_SORT_RANK.
+      const stage = state.sort === "rb" ? state.rbStage + 1 : 1;
+      state.dir = 1;
+      state.rbStage = stage > 4 ? 1 : stage;
+      state.sort = stage > 4 ? null : "rb";
+    }
+    else if (state.sort !== k) { state.sort = k; state.dir = 1; }
     else if (state.dir === 1) { state.dir = -1; }
     else { state.sort = null; state.dir = 1; }
     // Spaltensortierung und Album-Gruppierung schliessen sich aus -- sonst
@@ -6010,7 +6160,7 @@ function filtered() {
     // Bubble-Filter der "Auffaelligkeiten"-Liste (state.tagIssueFilter) --
     // wie state.valueFilter nur wirksam, solange diese Liste aktiv ist.
     (!state.tagIssueFilter || view.id !== "tag_issues" ||
-     (r.ti || []).some(i => i.code === state.tagIssueFilter)) &&
+     rowIssues(r).some(i => i.code === state.tagIssueFilter)) &&
     // Bubble-Filter der Tag-Liste: ALLE gewaehlten Tags muessen passen.
     (!state.tagFilter.length || view.id !== "tags" ||
      (ids => state.tagFilter.every(id => ids.has(id)))(new Set(rowTags(r).map(tg => tg.id))))
@@ -6126,6 +6276,8 @@ function filtered() {
     const val = k === "n" ? (r => displayName(r).toLowerCase())
       : k === "ky" ? (r => keyRank(r.ky, state.dir))
       : k === "eg" ? (r => r.eg || 0)
+      : k === "rb" ? (r => RB_SORT_RANK[state.rbStage - 1][rbMarkState(r)])
+      : k === "bp" && state.layout === "dj" ? (r => r.djBp || r.bp)
       : k === "mm" ? (r => rowTags(r).map(tg => tg.label).join(", ")) : (r => r[k]);
     // Auch hier den Schluessel je Zeile einmal bilden: bei k === "n" steckt
     // darin displayName() + toLowerCase(), das sonst in jedem Vergleich neu
@@ -6197,7 +6349,32 @@ let POS_MAP = null;
 // Ohne Server gibt es /api/appicon nicht -- dann bleibt es beim Haken.
 function presenceMark(which, title) {
   return `<span class="rbyes" title="${esc(title)}">${apiMode
-    ? `<img class="appicon appicon-sm" src="/api/appicon?which=${which}" alt="">` : "✓"}</span>`;
+    ? `<img class="appicon appicon-sm" src="${appIconSrc(which)}" alt="">` : "✓"}</span>`;
+}
+// DJ-Liste: aktiv = in Rekordbox, grau = nicht dort. Umrandung gruen = gleiche Daten,
+// rot = TrackTab weicht ab. Ohne Umrandung, wenn TrackTab nur die eigene Analyse zeigt.
+let RB_COMPARE = true;
+const rbMarkState = r => !r.rb ? "off" : r.rbDiff && r.rbDiff.length ? "diff" : RB_COMPARE ? "same" : "on";
+// Sortierstufen der Spalte: in Rekordbox, gruen, rot, nicht in Rekordbox jeweils zuerst.
+const RB_SORT_RANK = [
+  {same: 0, on: 0, diff: 0, off: 1},
+  {same: 0, on: 0, diff: 1, off: 2},
+  {diff: 0, same: 1, on: 1, off: 2},
+  {off: 0, same: 1, on: 1, diff: 2},
+];
+function rbSyncMark(r) {
+  const diff = r.rbDiff && r.rbDiff.length ? r.rbDiff.map(f => t("dj.field_" + f)).join(", ") : "";
+  const state_ = rbMarkState(r);
+  if (state_ === "diff") return `<span class="rbmark diff" title="${esc(t("dj.rb_mark_diff", {fields: diff}))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span><small class="rbdiff">${esc(diff)}</small>`;
+  return `<span class="rbmark ${state_}" title="${esc(t("dj.rb_mark_" + state_))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span>`;
+}
+// Die Einzelpruefungen sehen in jeder Ansicht gleich aus: ihre Zellen rechnen wie
+// Bearbeiten, auch wenn gerade die DJ-Ansicht offen ist.
+let renderingDropCells = false;
+const cellLayout = () => renderingDropCells ? "edit" : state.layout;
+function dropCellHtml(k, r) {
+  renderingDropCells = true;
+  try { return CELL_RENDERERS[k](r); } finally { renderingDropCells = false; }
 }
 const CELL_RENDERERS = {
   po: r => {
@@ -6215,9 +6392,12 @@ const CELL_RENDERERS = {
   st: r => `<td class="num">${r.st.toFixed(0)}${r.bw ? " ▮" : ""}</td>`,
   lu: r => `<td class="num">${loudnessCell(r)}</td>`,
   tp: r => `<td class="num">${clipCell(r)}</td>`,
-  du: r => `<td class="num">${fmtTime(r.du)}</td>`,
-  rb: r => `<td class="num">${r.rb ? presenceMark("rekordbox", t("badge.in_rekordbox")) : ""}</td>`,
-  im: r => `<td class="num">${r.im ? presenceMark("music", t("badge.in_music_app")) : ""}</td>`,
+  du: r => `<td class="num ducell">${fmtTime(r.du)}</td>`,
+  rb: r => apiMode ? `<td class="rbcell">${rbSyncMark(r)}</td>`
+    : `<td class="num">${r.rb ? presenceMark("rekordbox", t("badge.in_rekordbox")) : ""}</td>`,
+  // Wie die Spalte Rekordbox, nur ohne Abgleich: farbig in Music.app, sonst grau.
+  im: r => apiMode ? `<td class="rbcell"><span class="rbmark ${r.im ? "on" : "off"}" title="${esc(t(r.im ? "badge.in_music_app" : "badge.not_in_music_app"))}"><img class="appicon" src="${appIconSrc("music")}" alt=""></span></td>`
+    : `<td class="num">${r.im ? presenceMark("music", t("badge.in_music_app")) : ""}</td>`,
   da: r => `<td class="num">${esc(fmtDate(r.da))}</td>`,
   // r.gone ausschliessen: die Datei fehlt am gespeicherten Pfad, /api/cover
   // liefert dann 410 -- ohne diese Pruefung haengt ein kaputtes Bild-Icon in
@@ -6242,9 +6422,7 @@ const CELL_RENDERERS = {
   cp: r => `<td>${esc(r.cp || "")}</td>`,
   ge: r => `<td>${esc(r.ge || "")}</td>`,
   yr: r => `<td class="num">${r.yr || ""}</td>`,
-  // Ganze Werte ohne ",0" ("130"), echte Nachkommastellen bleiben ("127,5").
-  bp: r => `<td class="num bpmcell">${r.bp ? `<span class="bpmval">${
-      String(Math.round(r.bp * 10) / 10).replace(".", ",")}<small>${esc(t("field.bpm"))}</small></span>` : ""}</td>`,
+  bp: r => `<td class="num bpmcell">${cellLayout() === "dj" ? bpmCellHtml(r.bp, r.djBp, r.gridTempo) : bpmCellHtml(r.bp, 0)}</td>`,
   ky: r => `<td>${keyBubble(r.ky, r.kr)}</td>`,
   eg: r => `<td>${energyCell(r.eg)}</td>`,
   mm: r => `<td>${rowTags(r).map(tg =>
@@ -6257,18 +6435,23 @@ const CELL_RENDERERS = {
   // automatisch behebbar ist (AUTO_FIXABLE_TAG_ISSUE_CODES); "Manuell
   // beheben" springt direkt in den bestehenden Tags-Dialog.
   ti: r => {
-    const issues = r.ti || [];
+    const issues = rowIssues(r);
     if (!issues.length) return `<td></td>`;
     const lines = issues.map(i => `<div class="tiline">${esc(t("tagissue." + i.code))}${
       i.field ? ` <span class="dim">(${esc(t("field." + i.field) || i.field)})</span>` : ""}</div>`).join("");
     const autoOk = issues.some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code));
+    // Bearbeiten gibt es nur in der gleichnamigen Ansicht.
+    if (cellLayout() !== "edit") return `<td><div class="ticell">${lines}</div></td>`;
     return `<td><div class="ticell">${lines}<div class="tiactions">
       <button class="act small" data-tagfixmanual="${esc(r.p)}">${ICONS.pencil} ${esc(t("fixtag.manual_edit_link"))}</button>
       ${autoOk ? `<button class="act small" data-tagfixauto="${esc(r.p)}">${ICONS.sparkles} ${esc(t("fixtag.auto_fix_button"))}</button>` : ""}
     </div></div></td>`;
   },
   a: r => `<td>${esc(r.a || "")}</td>`,
-  t: r => `<td class="titlecell">${esc(r.t || "")}</td>`,
+  // In der DJ-Ansicht eine Spalte fuer beides, siehe DJ_COLUMNS.
+  t: r => cellLayout() === "dj"
+    ? `<td class="titlecell djtrack"><b>${esc(r.t || baseName(r.p))}</b>${r.a ? `<span> – ${esc(r.a)}</span>` : ""}</td>`
+    : `<td class="titlecell">${esc(r.t || "")}</td>`,
   // Zweites Argument: nur die Haupttabelle bindet den Klick-Handler fuer
   // data-copy, in renderDrops bleibt der Pfad deshalb ein schlichter Text.
   // Die Statushinweise schliessen sich je Tabelle gegenseitig aus (gone/mc
@@ -6277,18 +6460,31 @@ const CELL_RENDERERS = {
         r.ext ? ` <span class="extbadge">${esc(t(r.p ? "badge.not_scanned" : "badge.no_local_file"))}</span>`
               : r.gone ? ` <span class="missing">${esc(t("badge.file_deleted"))}</span>` : ""}${
         merkPlaylists().map(n => (PLAYLIST_SETS[n.id] && PLAYLIST_SETS[n.id].has(r.p))
-          ? ` <span class="fltag" style="background:var(--${flColorTok(n)}-bg);color:var(--${flColorTok(n)})">` +
+          ? ` <span class="fltag" style="background:${plColorBg(flColorTok(n))};color:${plColor(flColorTok(n))}">` +
             `${iconGlyphHtml(playlistIconValue(n))}${esc(n.name)}</span>`
           : "").join("")}${
         r.mc ? ` <span class="correctedtag">${esc(t("badge.corrected"))}</span>` : ""}${
         r.mikPick ? ` <span class="miktag">${esc(t("badge.mik_pick"))}</span>` : ""}${
         r.libAdded ? ` <span class="miktag">${esc(t("badge.lib_added"))}</span>` : ""}${
         hasAnyTagIssues(r) ? ` <span class="probtag" data-tagissues="${esc(r.p)}" title="${esc(t("views.tag_issues"))}">${
-          TREE_ICONS.tag_issues}${r.ti.length}</span>` : ""}</div>
+          TREE_ICONS.tag_issues}${rowIssues(r).length}</span>` : ""}</div>
       ${copyable
         ? `<div class="path copyable" data-copy="${esc(r.p)}" title="${esc(t("action.copy_path"))}">${esc(r.p)}</div>`
         : `<div class="path">${esc(r.p)}</div>`}</td>`,
 };
+
+// Ganze Werte ohne ",0" ("130"), echte Nachkommastellen bleiben ("127,5"). Ein im
+// DJ-Editor geaendertes Tempo steht mit zwei Stellen da ("125,50"). Rot, wenn das Tempo
+// in der Datei nicht zum Beatgrid passt: tempo = [kleinstes, groesstes] im Grid.
+function bpmCellHtml(bp, edited, tempo) {
+  if (!bp && !edited) return "";
+  const text = edited ? edited.toFixed(2) : String(Math.round(bp * 10) / 10);
+  const off = bp && tempo && (Math.abs(tempo[0] - bp) >= 0.05 || Math.abs(tempo[1] - bp) >= 0.05);
+  const fmt = v => v.toFixed(2).replace(".", ",");
+  const grid = off && (Math.abs(tempo[1] - tempo[0]) < 0.005 ? fmt(tempo[0]) : `${fmt(tempo[0])} – ${fmt(tempo[1])}`);
+  return `<span class="bpmval${off ? " off" : ""}"${off ? ` title="${esc(t("dj.bpm_off_title", {file: String(bp).replace(".", ","), grid}))}"` : ""}>${
+    text.replace(".", ",")}<small>${esc(t("field.bpm"))}</small></span>`;
+}
 
 // Angezeigter Name einer Zeile -- "Interpret — Titel", ersatzweise der
 // Dateiname. Auch die Sortierung der Spalte "Datei" haengt daran (die Zeilen
@@ -6404,6 +6600,12 @@ function rowMoreMenuItems(r) {
     items.push({
       icon: ICONS.analyseGenreMood, cls: "", title: t("action.genremood_title"),
       label: t("rowmenu.genremood"), action: () => analyseGenreMood([r]),
+    });
+  }
+  if (!r.gone && apiMode && PHRASES_AVAILABLE) {
+    items.push({
+      icon: ICONS.analysePhrases, cls: "", title: t("action.phrases_title"),
+      label: t("rowmenu.phrases"), action: () => analysePhrases([r]),
     });
   }
   if (!r.gone && apiMode && STEMS_AVAILABLE) {
@@ -6736,7 +6938,7 @@ function render() {
           <div class="groupicons flgroup">
             ${merkPlaylists().map(n => {
               const on = !!(PLAYLIST_SETS[n.id] && PLAYLIST_SETS[n.id].has(r.p));
-              return `<button class="iconbtn flbtn${on ? " on" : ""}" data-fl="${n.id}:${r.i}" style="background:var(--${flColorTok(n)})"
+              return `<button class="iconbtn flbtn${on ? " on" : ""}" data-fl="${n.id}:${r.i}" style="background:${plColor(flColorTok(n))}"
                         title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`;
             }).join("")}
           </div>
@@ -6910,6 +7112,15 @@ function render() {
     if (next && next.classList.contains("detail")) {
       next.remove(); tr.classList.remove("expanded"); spanLinksIntoDetail(tr, false); return;
     }
+    // DJ-Ansicht: immer nur EIN Editor offen -- er haelt die Tastatur, den
+    // Abspielkopf und seine eigene Wiedergabe.
+    const isDj = state.layout === "dj";
+    if (isDj) {
+      tb.querySelectorAll("tr.detail.expanded").forEach(open => {
+        if (open.previousElementSibling) open.previousElementSibling.classList.remove("expanded");
+        open.remove();
+      });
+    }
     const det = document.createElement("tr");
     det.className = "detail expanded";
     // 3 feste Spalten (Checkbox, Fuellzelle, Öffnen) + aktuell sichtbare
@@ -6919,11 +7130,11 @@ function render() {
     // die Spaltenzahl aendert. Minus 1: "Öffnen" reicht per rowspan in die
     // Detailzeile hinein (spanLinksIntoDetail()).
     const visibleCols = 3 + OPTIONAL_COLUMNS.length - state.hiddenCols.length;
-    det.innerHTML = `<td colspan="${visibleCols - 1}">${detailHTML(r)}</td>`;
+    det.innerHTML = `<td colspan="${visibleCols - 1}">${isDj ? djDetailHTML(r) : detailHTML(r)}</td>`;
     spanLinksIntoDetail(tr, true);
     tr.after(det);
     tr.classList.add("expanded");
-    mountLibraryPlayer(det, r);
+    if (isDj) djMount(det, r); else mountLibraryPlayer(det, r);
   });
 
   tb.querySelectorAll("[data-relink]").forEach(b => b.onclick = ev => {
@@ -7123,18 +7334,37 @@ function flStateOfSelection(rows, listId) {
 // hinzufuegen" (passend zur Player-Ansicht) und die Merklisten bleiben.
 function renderPlayerBulkBar(bar) {
   const rows = [...state.selected].map(i => DATA[i]).filter(Boolean);
+  const isDj = state.layout === "dj" && apiMode, withRb = isDj && !!REKORDBOX_NAME, withAna = isDj && PHRASES_AVAILABLE;
   bar.innerHTML = `
     <span>${esc(t("bulk.selected_count", {count: state.selected.size.toLocaleString("de-DE")}))}</span>
     <button class="iconbtn plain" id="bulkQueueAdd" title="${esc(t("bulk.queue_add_title"))}">${ICONS.listEnd}</button>
     ${merkPlaylists().length ? `<span class="sep"></span>
     ${merkPlaylists().map(n => {
         const flState = flStateOfSelection(rows, n.id);
-        return `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:var(--${flColorTok(n)})"
+        return `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:${plColor(flColorTok(n))}"
         title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`;
       }).join("")}` : ""}
-    <button class="act small" id="bulkClear">${esc(t("bulk.clear_selection"))}</button>`;
+    ${withRb ? `<span class="sep"></span>
+    <button class="act small djbulk" id="bulkDjRbAdd" title="${esc(t("dj.bulk_rb_add_title"))}">${djIcon("plus")} ${esc(t("dj.rb_add"))}</button>
+    <button class="act small djbulk" id="bulkDjRbLoad" title="${esc(t("dj.rb_load_title"))}">${djIcon("download")} ${esc(t("dj.rb_load"))}</button>
+    <button class="act small djbulk" id="bulkDjRbUpdate" title="${esc(t("dj.rb_update_title"))}">${djIcon("upload")} ${esc(t("dj.rb_update"))}</button>` : ""}
+    ${withAna ? `<span class="sep"></span>
+    <button class="act small djbulk" id="bulkDjGrid" title="${esc(t("bulk.dj_analyse_title"))}">${djIcon("grid-3x3")} ${esc(t("bulk.dj_grid"))}</button>
+    <button class="act small djbulk" id="bulkDjPhrases" title="${esc(t("bulk.dj_analyse_title"))}">${ICONS.analysePhrases} ${esc(t("bulk.dj_phrases"))}</button>
+    <button class="act small djbulk" id="bulkDjBoth" title="${esc(t("bulk.dj_analyse_title"))}">${djIcon("grid-3x3")}${ICONS.analysePhrases} ${esc(t("bulk.dj_both"))}</button>` : ""}
+    <button class="act small djbulkclear" id="bulkClear">${ICONS.close} ${esc(t("bulk.clear_selection"))}</button>`;
   document.getElementById("bulkQueueAdd").onclick = () => bulkApply("queue-add-all");
   bar.querySelectorAll("[data-bulkfl]").forEach(b => b.onclick = () => bulkApply(`fl:${b.dataset.bulkfl}`));
+  if (withRb) {
+    document.getElementById("bulkDjRbAdd").onclick = () => djBulkRekordbox(rows, "add");
+    document.getElementById("bulkDjRbLoad").onclick = () => djBulkRekordbox(rows, "load");
+    document.getElementById("bulkDjRbUpdate").onclick = () => djBulkRekordbox(rows, "update");
+  }
+  if (withAna) {
+    document.getElementById("bulkDjGrid").onclick = () => analysePhrases(rows, false, "grid");
+    document.getElementById("bulkDjPhrases").onclick = () => analysePhrases(rows, false, "phrases");
+    document.getElementById("bulkDjBoth").onclick = () => analysePhrases(rows, false, "both");
+  }
   document.getElementById("bulkClear").onclick = () => { state.selected.clear(); render(); };
 }
 
@@ -7142,7 +7372,7 @@ function renderBulkBar() {
   const bar = document.getElementById("bulkbar");
   if (!state.selected.size) { bar.style.display = "none"; bar.innerHTML = ""; return; }
   bar.style.display = "";
-  if (state.layout === "player") { renderPlayerBulkBar(bar); return; }
+  if (state.layout !== "edit") { renderPlayerBulkBar(bar); return; }
   // Vorzustand je Merkliste ueber die Auswahl: "all" (Haken), "none" (leer,
   // wie bisher) oder "mixed" (Fragezeichen) -- treibt sowohl das Icon als
   // auch die Zielrichtung des Klicks in bulkApply().
@@ -7168,7 +7398,7 @@ function renderBulkBar() {
         : disabledAppIcon("rekordbox", "Rekordbox", REKORDBOX_MISSING_HINT, "bulkRbAdd")),
       merkPlaylists().map(n => {
         const flState = flStateOf(n.id);
-        return `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:var(--${flColorTok(n)})"
+        return `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:${plColor(flColorTok(n))}"
         title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`;
       }).join(""),
     ],
@@ -7176,6 +7406,7 @@ function renderBulkBar() {
       apiMode ? `<button class="iconbtn plain" id="bulkTags" title="${esc(t("bulk.edit_tags_title"))}">${ICONS.edit}</button>` : "",
       bulkBpmKeyShown(selRows, false) ? `<button class="iconbtn plain" id="bulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.analyseBpmKey}</button>` : "",
       bulkGenreMoodShown(selRows, false) ? `<button class="iconbtn plain" id="bulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}</button>` : "",
+      bulkPhrasesShown(selRows, false) ? `<button class="iconbtn plain" id="bulkPhrases" title="${esc(t("action.phrases_title"))}">${ICONS.analysePhrases}</button>` : "",
       `<button class="iconbtn plain" id="bulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>`,
     ],
     [
@@ -7206,7 +7437,7 @@ function renderBulkBar() {
   bar.innerHTML = `
     <span>${esc(t("bulk.selected_count", {count: state.selected.size.toLocaleString("de-DE")}))}</span>
     ${groups.join('\n    <span class="sep"></span>\n    ')}
-    <button class="act small" id="bulkClear">${esc(t("bulk.clear_selection"))}</button>`;
+    <button class="act small djbulkclear" id="bulkClear">${ICONS.close} ${esc(t("bulk.clear_selection"))}</button>`;
   const bulkListAddBtn = document.getElementById("bulkListAdd");
   if (bulkListAddBtn) bulkListAddBtn.onclick = () => {
     const paths = [...state.selected].map(i => DATA[i]).filter(Boolean).map(x => x.p);
@@ -7255,6 +7486,8 @@ function renderBulkBar() {
   if (bulkBpmKeyBtn) bulkBpmKeyBtn.onclick = () => analyseBpmKey(bulkRows(), false);
   const bulkGenreMoodBtn = document.getElementById("bulkGenreMood");
   if (bulkGenreMoodBtn) bulkGenreMoodBtn.onclick = () => analyseGenreMood(bulkRows(), false);
+  const bulkPhrasesBtn = document.getElementById("bulkPhrases");
+  if (bulkPhrasesBtn) bulkPhrasesBtn.onclick = () => analysePhrases(bulkRows(), false);
   const bulkConvertBtn = document.getElementById("bulkConvert");
   if (bulkConvertBtn) bulkConvertBtn.onclick = () => bulkApply("convert");
   document.getElementById("bulkRescan").onclick = () => bulkApply("rescan");
@@ -7490,7 +7723,7 @@ async function analyseBpmKey(rows, isDrop, opts) {
   if (!todo.length) return;
   const pt = quiet ? null : progressToast(t("toast.bpmkey_running", {count: todo.length}));
   const queue = todo.slice();
-  let written = 0, unchanged = 0, skipped = 0, skipMinutes = 0, failed = 0, lastError = "", missing = false;
+  let written = 0, unchanged = 0, skipped = 0, skipMinutes = 0, locked = 0, failed = 0, lastError = "", missing = false;
   const worker = async () => {
     while (queue.length && !missing) {
       const r = queue.shift();
@@ -7505,6 +7738,7 @@ async function analyseBpmKey(rows, isDrop, opts) {
         // Zu lange Datei (bpmkey_max_minutes, gilt fuer beide Analysen):
         // bewusst uebersprungen, kein Fehler.
         if (data.status === "skipped") { skipped++; skipMinutes = data.minutes; continue; }
+        if (data.status === "locked") { locked++; continue; }
         if (data.status === "written") {
           if (isDrop) Object.assign(r, fieldsToDropRow(data.fields));
           else if (data.row) applyRowUpdate(r.i, data.row);
@@ -7522,9 +7756,10 @@ async function analyseBpmKey(rows, isDrop, opts) {
   if (missing) {
     if (pt) pt.fail(t("toast.bpmkey_missing")); else note(t("toast.bpmkey_missing"), "soft");
   } else if (pt) {
-    const skipText = skipped ? " " + t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}) : "";
+    const skipText = (skipped ? " " + t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}) : "")
+      + (locked ? " " + t("toast.analysis_locked", {locked}) : "");
     if (failed) pt.fail(t("toast.bpmkey_failed", {failed, error: lastError}) + skipText);
-    else if (!written && !unchanged && skipped) pt.done(skipText.trim(), true);
+    else if (!written && !unchanged && (skipped || locked)) pt.done(skipText.trim(), true);
     else pt.done((written ? t("toast.bpmkey_done", {written, unchanged}) : t("toast.bpmkey_nothing")) + skipText);
   } else if (failed) note(t("toast.bpmkey_failed", {failed, error: lastError}), "soft");
   else if (skipped) note(t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}), "soft");
@@ -7924,6 +8159,60 @@ async function analyseGenreMood(rows, isDrop, opts) {
   if (!isDrop) render();
 }
 
+function bulkPhrasesShown(rows, isDrop) {
+  return apiMode && PHRASES_AVAILABLE && rows.some(r => !r.gone && (!isDrop || r.nativePath));
+}
+
+// Beatgrid und Phrasen messen (/api/phrases, je Datei ein Aufruf). Ergebnis
+// liegt nur in der Tabelle 'phrases', nie in der Datei -- deshalb kein
+// stopPlayerFor() und keine neue Tabellenzeile. Offene Player zeigen es sofort.
+// what: "both", "grid" oder "phrases". Gesperrtes laesst der Server aus.
+async function analysePhrases(rows, isDrop, what = "both") {
+  const todo = rows.filter(r => !r.gone && (!isDrop || r.nativePath));
+  if (!todo.length) return;
+  // Offene Bearbeitung zuerst speichern: sie sperrt und soll zaehlen.
+  if (DJ) await djSave(DJ);
+  // In der DJ-Ansicht gilt das Ergebnis sofort, siehe _post_phrases().
+  const apply = !isDrop && state.layout === "dj";
+  const pt = progressToast(t({both: "toast.phrases_running", grid: "toast.grid_running", phrases: "toast.phrases_only_running"}[what], {count: todo.length}));
+  const queue = todo.slice();
+  let done = 0, uncertain = 0, none = 0, skipped = 0, skipMinutes = 0, locked = 0, failed = 0, lastError = "", missing = false;
+  const worker = async () => {
+    while (queue.length && !missing) {
+      const r = queue.shift();
+      try {
+        const res = await fetch("/api/phrases", {method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({path: r.p, what, apply})});
+        const data = await res.json();
+        if (!data.ok) throw new Error(data.error || t("error.unknown"));
+        if (data.status === "unavailable") { missing = true; continue; }
+        if (data.status === "skipped") { skipped++; skipMinutes = data.minutes; }
+        else if (data.status === "locked") locked++;
+        else if (data.status === "none") none++;
+        else {
+          done++;
+          if (data.uncertain) uncertain++;
+        }
+      } catch (err) {
+        failed++; lastError = `${baseName(r.p)}: ${err.message}`;
+      }
+      pt.update(100 * (done + none + skipped + locked + failed) / todo.length,
+        t("toast.bpmkey_progress", {done: done + none + skipped + locked + failed, total: todo.length}));
+    }
+  };
+  await Promise.all(Array.from({length: 2}, worker));
+  if (apply) { await syncMarks(); render(); }
+  if (DJ && !DJ.closed && todo.some(r => r.p === DJ.path)) djLoad(DJ);
+  const extra = (skipped ? " " + t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}) : "")
+    + (none ? " " + t("toast.phrases_none", {none}) : "")
+    + (locked ? " " + t("toast.analysis_locked", {locked}) : "");
+  if (missing) pt.fail(t("toast.phrases_missing"));
+  else if (failed) pt.fail(t("toast.phrases_failed", {failed, error: lastError}) + extra);
+  else if (!done) pt.done(extra.trim(), true);
+  else pt.done(t("toast.phrases_done", {done, uncertain}) + extra);
+}
+
 async function bulkApply(kind) {
   let rows = [...state.selected].map(i => DATA[i]).filter(Boolean);
   if (!rows.length) return;
@@ -8242,6 +8531,19 @@ function openFixPopup(r, isDrop) {
 // der Server fuer beide dasselbe kompakte Format liefert (report.py und
 // fromServerRow() teilen sich dieselben Kurzschluessel a/t/al/...).
 async function fixTagIssuesOne(r, isDrop) {
+  const fixed = (r.ti || []).some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code)) ? await fixFileTagIssues(r, isDrop) : [];
+  if (isDrop || !tempoIssueOf(r)) return fixed;
+  // Der Titel laeuft ueber den normalen Tags-Weg (Datei + DB).
+  stopPlayerFor(r.p);
+  const res = await fetch("/api/tags", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({path: r.p, title: titleWithTempo(r)})});
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  applyRowUpdate(r.i, data.row);
+  return [...fixed, "tempo_change_title"];
+}
+
+async function fixFileTagIssues(r, isDrop) {
   const res = await fetch("/api/fix-tag-issues", {method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({path: r.p})});
@@ -8283,7 +8585,7 @@ function openTagIssuesPopup(r, isDrop) {
   document.getElementById("tagIssuesFixAllIcon").innerHTML = ICONS.sparkles;
 
   const renderList = () => {
-    const issues = r.ti || [];
+    const issues = rowIssues(r);
     list.innerHTML = issues.length ? issues.map(i => {
       const auto = AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code);
       const fieldLabel = i.field ? t("field." + i.field) : "";
@@ -8292,8 +8594,9 @@ function openTagIssuesPopup(r, isDrop) {
       return `<div>${auto ? "🔧" : "✋"} ${esc(t("tagissue." + i.code))}` +
         `${fieldLabel ? ` <span class="dim">(${esc(fieldLabel)})</span>` : ""}${suggestion}</div>`;
     }).join("") : `<div>${esc(t("fixtag.no_issues"))}</div>`;
-    fixAllBtn.style.display = hasAutoFixableTagIssues(r) ? "" : "none";
-    manualBtn.style.display = issues.length ? "" : "none";
+    const canEdit = isDrop || state.layout === "edit";
+    fixAllBtn.style.display = canEdit && hasAutoFixableTagIssues(r) ? "" : "none";
+    manualBtn.style.display = canEdit && issues.length ? "" : "none";
   };
   renderList();
   status.textContent = ""; status.className = "";
@@ -8411,7 +8714,14 @@ function openExportZipPopup(rows) {
       params.set("rename", "1");
       params.set("pattern", patternInput.value || RENAME_PATTERN);
     }
-    window.location.href = `/api/download-zip?${params.toString()}`;
+    // Ueber einen download-Link statt location.href: eine Navigation wuerde
+    // waehrend der Wiedergabe den beforeunload-Hinweis ausloesen.
+    const a = document.createElement("a");
+    a.href = `/api/download-zip?${params.toString()}`;
+    a.download = "";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
     close();
   };
 }
@@ -9734,10 +10044,10 @@ let STEMS_AVAILABLE = false;
 // Bibliothek/Modelle installiert -- unabhaengig von den Mess-Schaltern, nur fuer
 // das Sperren von Einstellungen (SETTING_REQUIREMENTS).
 let BPMKEY_INSTALLED = false, GENREMOOD_INSTALLED = false;
+let PHRASES_AVAILABLE = false;
 let GENREMOOD_AVAILABLE = false, GENREMOOD_AUTO = false, GENREMOOD_MIN_PERCENT = 5,
   GENREMOOD_WRITES = false;
 let MUSIC_NAME = "";
-let REKORDBOX_NAME = "";
 let REKORDBOX_PLAYLIST = "";
 let REKORDBOX_QUALITY_CHECK = true;
 let REKORDBOX_MIN_CUTOFF_KHZ = 19;
@@ -10633,7 +10943,7 @@ function keySyncHintHtml() {
 // Bearbeiten-Dialog markiert (askPlaylistProps()).
 const SETTINGS_LAYOUT = [
   "library", "search", "display", "bpmkey", "stems", "columnviews",
-  "music", "rekordbox", "tools", "shops", "rename", "analysis", "loudness",
+  "music", "rekordbox", "tools", "shops", "rename", "djview", "analysis", "loudness",
   "backup", "logs",
 ];
 
@@ -10682,7 +10992,7 @@ function renderSettings() {
     applyShowIf();
     applyRequires();
   });
-  document.getElementById("settingsBody").oninput = () => { applyShowIf(); applyRequires(); };
+  document.getElementById("settingsBody").oninput = () => { applyShowIf(); applyRequires(); updateSettingsNavDots(); };
   applyShowIf();
   applyRequires();
 
@@ -10721,6 +11031,7 @@ const SETTINGS_PAGES = [
    groups: ["library", "display", "search"]},
   {id: "views", icon: "columns-3", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviews"]},
   {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename"]},
+  {id: "djview", icon: "disc-3", nav: "settings.nav_general", label: "settings.page_djview", groups: ["djview"]},
   {id: "bpmkey", icon: "audio-waveform", nav: "settings.nav_analysis", label: "settings.page_bpmkey", groups: ["bpmkey"]},
   {id: "stems", icon: "layers", nav: "settings.nav_analysis", label: "settings.page_stems", groups: ["stems"]},
   {id: "music", icon: "music", nav: "settings.nav_connections", label: "settings.page_music", groups: ["music"]},
@@ -10730,19 +11041,45 @@ const SETTINGS_PAGES = [
   {id: "advanced", icon: "sliders-horizontal", nav: "settings.nav_advanced", label: "settings.page_advanced", groups: ["analysis", "loudness"]},
 ];
 let settingsPage = "general";
+// Stand jeder Seite beim Aufbau des Dialogs (renderSettings(), auch nach dem
+// Speichern). Der Punkt in der Navigation heisst "hier ist etwas ungespeichert",
+// nicht "weicht von der Vorgabe ab" -- das zeigt schon "geaendert" am Feld, und
+// als Punkt stand es bei eingerichteter Bibliothek auf fast jeder Seite.
+let settingsBaseline = {};
+
+function settingsPageSnapshot(page) {
+  const body = document.getElementById("settingsBody");
+  return JSON.stringify(page.groups.flatMap(id =>
+    [...body.querySelectorAll(`[data-sg="${id}"] [data-key]`)].map(el =>
+      [el.dataset.key, el.type === "checkbox" ? el.checked : el.value])));
+}
+
+function updateSettingsNavDots() {
+  document.querySelectorAll("#settingsNav [data-page]").forEach(b => {
+    const page = SETTINGS_PAGES.find(p => p.id === b.dataset.page);
+    const dirty = settingsPageSnapshot(page) !== settingsBaseline[page.id];
+    const dot = b.querySelector(".setnavdot");
+    if (dirty && !dot) b.insertAdjacentHTML("beforeend", '<span class="setnavdot"></span>');
+    else if (!dirty && dot) dot.remove();
+  });
+}
 
 function initSettingsNav() {
   const nav = document.getElementById("settingsNav");
   const body = document.getElementById("settingsBody");
   let lastNav = null, html = "";
+  settingsBaseline = {};
   SETTINGS_PAGES.forEach(p => {
     if (p.nav !== lastNav) { html += `<div class="setnavgroup">${esc(t(p.nav))}</div>`; lastNav = p.nav; }
-    const changed = p.groups.some(id => body.querySelector(`[data-sg="${id}"] .chg`));
+    settingsBaseline[p.id] = settingsPageSnapshot(p);
     html += `<button type="button" class="setnavitem" data-page="${p.id}"><span class="setnavicon">${
-      SVG(LUCIDE_ICONS[p.icon])}</span><span>${esc(t(p.label))}</span>${
-      changed ? '<span class="setnavdot"></span>' : ""}</button>`;
+      SVG(LUCIDE_ICONS[p.icon])}</span><span>${esc(t(p.label))}</span></button>`;
   });
   nav.innerHTML = html;
+  // Manche Felder setzt ein Klick (Farbfeld, Ordner entfernen) oder eine Auswahl
+  // ohne input-Ereignis; nach dem Klick ist der Wert schon gesetzt.
+  body.onchange = updateSettingsNavDots;
+  body.onclick = () => setTimeout(updateSettingsNavDots);
   nav.onclick = e => {
     const b = e.target.closest("[data-page]");
     if (!b) return;
@@ -11193,7 +11530,7 @@ function wireBackupBlock() {
       if (!data.ok) throw new Error(data.error || t("error.unknown"));
       if (data.cancelled) { st.textContent = t("settings.backup_cancelled"); return; }
       st.innerHTML = t("settings.backup_restored");
-      document.getElementById("backupReload").onclick = e => { e.preventDefault(); location.reload(); };
+      document.getElementById("backupReload").onclick = e => { e.preventDefault(); requestReload(); };
       loadBackupList();
     } catch (err) {
       st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
@@ -11369,6 +11706,7 @@ const SETTING_REQUIREMENTS = {
               page: "rekordbox"},
   bpmkey: {ok: () => BPMKEY_INSTALLED},
   genremood: {ok: () => GENREMOOD_INSTALLED},
+  phrases: {ok: () => PHRASES_AVAILABLE},
   analysis: {ok: () => BPMKEY_INSTALLED || GENREMOOD_INSTALLED},
 };
 
@@ -11476,6 +11814,7 @@ function setFolderList(key, items) {
   document.getElementById("set_" + key).value = items.join("\n");
   document.getElementById("folderlist_" + key).innerHTML = folderListRows(key, items);
   wireFolderRows(key);
+  updateSettingsNavDots();
 }
 
 function wireFolderRows(key) {
@@ -11508,6 +11847,7 @@ async function pickFile(key, url) {
     if (data.path) {
       input.value = data.path;
       applyShowIf();
+      updateSettingsNavDots();
     }
   } catch (err) {
     note(t("error.generic", {error: err.message}), true);
@@ -11606,6 +11946,7 @@ async function openRekordboxPlaylistPicker(key) {
       }
       if (n.kind === "smart") return;
       document.getElementById("set_" + key).value = pathOf(n);
+      updateSettingsNavDots();
       close();
     });
   };
@@ -11714,13 +12055,13 @@ async function postSettings(url, body) {
     // faengt zwar die meisten Modul-Konstanten (labels, FIELD_LABELS, ...)
     // ab, aber nicht jede Stelle im Code laesst sich so nachziehen -- ein
     // echtes Neuladen ist hier zuverlaessiger als noch mehr Sonderfaelle.
-    if (resolveLang(data.values.ui_language) !== LANG) { location.reload(); return; }
+    if (resolveLang(data.values.ui_language) !== LANG) { reloadPage(); return; }
     // Ein Neuladen ist nur noetig, wenn sich durch die Aenderung tatsaechlich
     // Verdikte verschoben haben (data.changed > 0) -- die im Client
     // eingebettete DATA kennt sonst weiter die alten Werte. Frueher musste
     // der Nutzer dafuer selbst auf einen Link klicken; das laeuft jetzt
     // automatisch beim Speichern, ohne einen zusaetzlichen Klick.
-    if (data.changed > 0) { location.reload(); return; }
+    if (data.changed > 0) { reloadPage(); return; }
     // Ein paar Felder (externe Programme, Rekordbox-Playlist) schalten
     // Knoepfe/Baumaeste ein oder aus, die nur beim Laden der Seite aus
     // schema.values gebaut werden (MIK_NAME/MUSIC_NAME/REKORDBOX_NAME/...,
@@ -11731,7 +12072,7 @@ async function postSettings(url, body) {
     const reloadKeys = schema.groups.flatMap(g => g.fields
       .filter(f => f.reload).map(f => f.key));
     if (reloadKeys.some(k => JSON.stringify(schema.values[k]) !== JSON.stringify(data.values[k]))) {
-      location.reload(); return;
+      reloadPage(); return;
     }
     schema.values = data.values;
     BPMKEY_AUTO = !!data.values.bpmkey_auto_drops;
@@ -11754,6 +12095,9 @@ async function postSettings(url, body) {
     applyFontSize(data.values.font_size);
     applyTheme(data.values.theme);
     applyAccentColor(data.values.accent_color);
+    applyDjSurface(data.values.dj_waveform_surface);
+    refreshWaveColors();
+    if (DJ) djLoadDetail(DJ);
     setKeyNotation(data.values.key_notation);
     state.infiniteScroll = !!data.values.infinite_scroll;
     state.searchTolerance = typeof data.values.search_typo_tolerance === "number"
@@ -11856,7 +12200,7 @@ async function pollScan() {
       (f.bpmkey_done ? esc(t("scan.bpmkey_suffix", {count: f.bpmkey_done})) : "") +
       ` — <a href="#" id="reloadScan">${esc(t("scan.reload_page"))}</a>`);
     const rl = document.getElementById("reloadScan");
-    if (rl) rl.onclick = e => { e.preventDefault(); location.reload(); };
+    if (rl) rl.onclick = e => { e.preventDefault(); requestReload(); };
     clearUndoStacks();
   }
 }
@@ -11935,6 +12279,27 @@ function readThemeTokens() {
     bandMid: v("--wave-band-mid"),
     bandHigh: v("--wave-band-high"),
     cueMemory: v("--cue-memory") || "#8b95a6",
+    phrase: {
+      ...Object.fromEntries(Object.entries(PHRASE_VARIANTS).flatMap(([k, max]) =>
+        [k, ...Array.from({length: max}, (_, i) => `${k}-${i + 1}`)].flatMap(token => {
+          const hex = v(`--phrase-${token}`);
+          return [[token, hex], [`${token}Label`, contrastLabel(hex)]];
+        }))),
+    },
+    dj: {
+      // Auf heller Flaeche gingen Weiss und das helle Grau unter.
+      light: v("--dj-light") === "1",
+      bandLow: [32, 83, 217],
+      bandMid: v("--dj-light") === "1" ? [226, 136, 18] : [242, 170, 60],
+      bandHigh: v("--dj-light") === "1" ? [26, 32, 44] : [255, 255, 255],
+      plain: v("--dj-light") === "1" ? [112, 120, 134] : [170, 178, 191],
+      screen: v("--dj-screen"), beat: v("--dj-beat"), beatEdit: v("--dj-beat-edit"),
+      bar: v("--dj-bar"), barEdit: v("--dj-bar-edit"), text: v("--dj-text"), head: v("--dj-head"),
+      shade: v("--dj-shade"), labelBg: v("--dj-label-bg"), labelFg: v("--dj-label-fg"), tempo: v("--dj-tempo"),
+      tempoBg: v("--dj-tempo-bg"), tempoFg: v("--dj-tempo-fg"),
+      loop: v("--dj-loop"), loopFaint: v("--dj-loop-faint"), loopLine: v("--dj-loop-line"),
+      window: v("--dj-window"), selected: v("--dj-selected"),
+    },
   };
   THEME_REV++;
   return _theme;
@@ -12016,6 +12381,7 @@ function disposeWaveEntry(entry) {
   if (entry.layerCanvas) { entry.layerCanvas.width = 0; entry.layerCanvas.height = 0; }
   entry.layerCanvas = null; entry.layerCtx = null; entry.layer = null; entry.ctx = null;
   entry.peaks = null; entry.waveform = null; entry.cues = null;
+  entry.fadeFrom = null;
   if (entry.onDispose) entry.onDispose();
 }
 
@@ -12133,10 +12499,9 @@ function playerHTML(r) {
 
 // entry = Player-Eintrag aus players/waveViews (siehe mountDropPlayer/
 // mountLibraryPlayer) -- traegt neben den grauen peaks optional cues (Hot/
-// Memory Cues aus Rekordbox) und optional waveform (farbige Rekordbox-
-// Analysedaten, Stil per Einstellung rekordbox_waveform_style server-seitig
-// gewaehlt, siehe rekordbox._read_waveform()). Ohne Rekordbox-Bezug oder ohne
-// passende Analysedatei bleibt es bei der grauen Standardanzeige.
+// Memory Cues aus Rekordbox) und optional waveform (TrackTabs eigene farbige
+// Gesamtansicht, Stil per Einstellung waveform_style, siehe /api/wave-color).
+// Bei Standard und bis die Farbe da ist, bleibt es bei der grauen Anzeige.
 // Schluessel der statischen Ebene: aendert sich einer der Bestandteile
 // (Groesse, Thema, Daten, Dauer -> Cue-Positionen), wird neu gerechnet --
 // sonst nie.
@@ -12174,7 +12539,7 @@ function buildWaveLayer(entry, dpr) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
-  // Unbrauchbare Rekordbox-Daten (leer / nur schwarz) -> Standard-Wellenform.
+  // Unbrauchbare Daten (leer / nur schwarz) -> Standard-Wellenform.
   const wf = waveUsable(entry.waveform) ? entry.waveform : null;
   // recolorable = die graue Standardwellenform, deren gespielter Teil beim
   // Kopieren eingefaerbt werden darf. Die bunten Rekordbox-Stile behalten
@@ -12185,10 +12550,8 @@ function buildWaveLayer(entry, dpr) {
     if (!(entry.peaks && entry.peaks.length)) return null;
     drawHalfWave(ctx, w, h, entry.peaks);
     recolorable = true;
-  } else if (wf && wf.style === "rgb") {
-    drawRgbWave(ctx, w, h, wf);
-  } else if (wf && wf.style === "3band") {
-    drawBandWave(ctx, w, h, wf);
+  } else if (wf && entry.peaks && entry.peaks.length) {
+    drawColorWave(ctx, w, h, entry.peaks, wf);
   } else if (entry.peaks && entry.peaks.length) {
     drawPlainWave(ctx, w, h, entry.peaks);
     recolorable = true;
@@ -12216,6 +12579,10 @@ function paintWaveEntry(entry) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
+  // Eigener Zeichner (DJ-Editor): nutzt Registry, Bildschleife und Groessen-
+  // beobachter mit, zeichnet aber selbst.
+  if (entry.paint) { entry.paint(ctx, w, h, entry, dpr); return; }
+
   if (!entry.layer || entry.layerKey !== waveLayerKey(entry, dpr)) {
     // Eigener try/catch wie zuvor: ein Fehler beim Rechnen darf Play-Knopf
     // und Zeitanzeige (entry.syncLabels) nicht mit sich reissen.
@@ -12227,23 +12594,35 @@ function paintWaveEntry(entry) {
     return;
   }
 
-  ctx.drawImage(entry.layer, 0, 0, w, h);
-
   const d = entry.duration;
   const frac = (isFinite(d) && d > 0) ? Math.min(1, Math.max(0, entry.currentTime / d)) : 0;
-
-  if (entry.layerRecolorable && frac > 0) {
-    // Gespielten Teil einfaerben, ohne die Balken erneut zu zeichnen:
-    // "source-atop" faerbt nur die bereits deckenden Pixel der Ebene.
-    // MUSS vor den Cue-Markern laufen -- sonst faerbt es auch die mit ein
-    // (siehe buildWaveLayer(), warum die Cues nicht in der Ebene stecken).
+  // Gespielten Teil einfaerben, ohne die Balken erneut zu zeichnen:
+  // "source-atop" faerbt nur die bereits deckenden Pixel der Ebene.
+  // MUSS vor den Cue-Markern laufen -- sonst faerbt es auch die mit ein
+  // (siehe buildWaveLayer(), warum die Cues nicht in der Ebene stecken).
+  const tintPlayed = () => {
     ctx.save();
     ctx.beginPath(); ctx.rect(0, 0, frac*w, h); ctx.clip();
     ctx.globalCompositeOperation = "source-atop";
     ctx.fillStyle = theme().accent;
     ctx.fillRect(0, 0, frac*w, h);
     ctx.restore();
+  };
+
+  const fade = entry.fadeFrom ? (performance.now() - entry.fadeStart) / WAVE_FADE_MS : 1;
+  if (fade < 1) {
+    ctx.drawImage(entry.fadeFrom, 0, 0, w, h);
+    if (entry.fadeRecolor && frac > 0) tintPlayed();
+    ctx.globalAlpha = Math.max(0, fade);
+    ctx.drawImage(entry.layer, 0, 0, w, h);
+    ctx.globalAlpha = 1;
+    requestWavePaint();
+  } else {
+    entry.fadeFrom = null;
+    ctx.drawImage(entry.layer, 0, 0, w, h);
+    if (entry.layerRecolorable && frac > 0) tintPlayed();
   }
+
 
   // Cue-Marker in ihren echten Rekordbox-Farben, ueber der fertig
   // eingefaerbten Wellenform. Gleiche Reihenfolge wie vor dem Umbau.
@@ -12297,12 +12676,50 @@ function smoothedColumns(peaks, cols, sigma = WAVE_SMOOTH_SIGMA) {
   return out;
 }
 function drawPlainWave(ctx, w, h, peaks) {
-  const mid = h/2, amp = (h - 6) / 2;
   const cols = Math.max(2, Math.round(w));   // eine Stuetzstelle je Pixel, sonst verwischen Transienten
-  const v = smoothedColumns(peaks, cols);
+  ctx.fillStyle = theme().wave;
+  traceWaveShape(ctx, w, h, smoothedColumns(peaks, cols), cols);
+  ctx.fill();
+}
+
+// Farbig in exakt derselben Form wie drawPlainWave(): die Flaeche wird zum Ausschnitt,
+// die Farben fuellen ihn je Pixelspalte. RGB aus der Spaltenfarbe, 3-Band mit den
+// Baendern im Verhaeltnis zueinander, das staerkste reicht bis zur Kontur.
+function drawColorWave(ctx, w, h, peaks, wf) {
+  const cols = Math.max(2, Math.round(w)), v = smoothedColumns(peaks, cols);
+  const mid = h/2, amp = (h - 6) / 2, bw = w / cols;
+  ctx.save();
+  traceWaveShape(ctx, w, h, v, cols);
+  ctx.clip();
+  if (wf.style === "rgb") {
+    const n = Math.min(cols, wf.color.length);
+    const colors = _movingAverageColor(_resampleColorSeries(wf.color, n), WAVE_SMOOTH_RADIUS);
+    for (let x = 0; x < cols; x++) {
+      const i = Math.min(n - 1, Math.floor(x * n / cols));
+      const [r, g, b] = _vividize(colors[i*3], colors[i*3+1], colors[i*3+2]);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x * bw, 0, bw + 0.5, h);
+    }
+  } else {
+    const n = Math.min(cols, wf.low.length), th = theme();
+    const series = [wf.low, wf.mid, wf.high].map(s => _movingAverage(_resampleSeries(s, n), WAVE_SMOOTH_RADIUS));
+    [th.bandLow, th.bandMid, th.bandHigh].forEach((color, k) => {
+      ctx.fillStyle = color;
+      for (let x = 0; x < cols; x++) {
+        const i = Math.min(n - 1, Math.floor(x * n / cols));
+        const top = Math.max(series[0][i], series[1][i], series[2][i]) || 1;
+        const bh = series[k][i] / top * v[x] * amp;
+        ctx.fillRect(x * bw, mid - bh, bw + 0.5, bh * 2);
+      }
+    });
+  }
+  ctx.restore();
+}
+
+function traceWaveShape(ctx, w, h, v, cols) {
+  const mid = h/2, amp = (h - 6) / 2;
   const xAt = i => i * w / (cols - 1);
   const yAt = i => Math.max(0.5, v[i] * amp);
-  ctx.fillStyle = theme().wave;
   ctx.beginPath();
   ctx.moveTo(0, mid - yAt(0));
   for (let i = 1; i < cols; i++) {
@@ -12317,7 +12734,6 @@ function drawPlainWave(ctx, w, h, peaks) {
   }
   ctx.lineTo(0, mid + yAt(0));
   ctx.closePath();
-  ctx.fill();
 }
 
 // Obere Haelfte der Huellkurve, Grundlinie unten (Player-Balken, siehe
@@ -12467,64 +12883,38 @@ function _movingAverageColor(arr, radius) {
 // Vorschau zu klein/jittrig, deshalb der Mix aus back-Hoehe + front-Farbe.
 // Vor dem Zeichnen auf die tatsaechliche Canvas-Breite downgesamplet (siehe
 // _resampleSeries) plus leichte Nachglaettung (siehe WAVE_SMOOTH_RADIUS).
-function drawRgbWave(ctx, w, h, wf) {
-  // Nie mehr Buckets als Rohspalten anfordern -- _resampleSeries/
-  // _resampleColorSeries kappen intern selbst auf wf.height.length, ohne
-  // dieses Min hier liefe die Zeichenschleife unten ueber das Ende der
-  // zurueckgegebenen Puffer hinaus (bei Canvas-Breiten >1200px, also ueber
-  // der Rohaufloesung). Der try/catch in paintWaveEntry() faengt einen
-  // Fehler hier zwar ab, ohne Knopf und Zeitanzeige mitzureissen -- die
-  // Wellenform bliebe aber leer.
-  const buckets = Math.max(1, Math.min(Math.round(w), wf.height.length));
-  const heights = _movingAverage(_resampleSeries(wf.height, buckets), WAVE_SMOOTH_RADIUS);
-  const colors = _movingAverageColor(_resampleColorSeries(wf.color, buckets), WAVE_SMOOTH_RADIUS);
-  const mid = h/2, bw = w/buckets;
-  const barW = bw >= 3 ? Math.max(bw - 0.5, 0.6) : bw + 0.5;
-  for (let i = 0; i < buckets; i++) {
-    const [r, g, b] = _vividize(colors[i*3], colors[i*3+1], colors[i*3+2]);
-    const bh = Math.max(1, heights[i] * (h - 6));
-    ctx.fillStyle = `rgb(${r},${g},${b})`;
-    ctx.fillRect(i*bw, mid - bh/2, barW, bh);
-  }
-}
-
-// 3-Band (.2EX, PWV6): gestapelt (nicht ueberlagert/transparent), von der
-// Mittellinie nach aussen, Reihenfolge innen->aussen Tief->Mitten->Hoch
-// (Quelle: Deep Symmetry ANLZ-Referenz, von pyrekordbox selbst zitiert).
-// Gleiches Downsampling + Nachglaettung wie drawRgbWave.
-function drawBandWave(ctx, w, h, wf) {
-  // Gleiche Kappung wie in drawRgbWave, gleicher Grund -- ohne sie liefe die
-  // Zeichenschleife bei Canvas-Breiten >1200px ueber das Ende der
-  // resampleten Arrays hinaus (dort dann NaN-Rechtecke statt einer
-  // Exception, aber ebenso eine leere Luecke am rechten Rand).
-  const buckets = Math.max(1, Math.min(Math.round(w), wf.low.length));
-  const low = _movingAverage(_resampleSeries(wf.low, buckets), WAVE_SMOOTH_RADIUS);
-  const midS = _movingAverage(_resampleSeries(wf.mid, buckets), WAVE_SMOOTH_RADIUS);
-  const high = _movingAverage(_resampleSeries(wf.high, buckets), WAVE_SMOOTH_RADIUS);
-  const mid = h/2, bw = w/buckets;
-  const barW = bw >= 3 ? Math.max(bw - 0.5, 0.6) : bw + 0.5;
-  const th = theme();
-  const avail = (h - 6) / 2;
-  // Bandweise statt spaltenweise: drei fillStyle-Wechsel statt 3 x buckets.
-  // Der Stapel waechst dabei ueber cursor[] von innen nach aussen weiter,
-  // die Reihenfolge Tief -> Mitten -> Hoch bleibt also unveraendert.
-  const cursor = new Float32Array(buckets);
-  const bands = [[low, th.bandLow], [midS, th.bandMid], [high, th.bandHigh]];
-  for (const [series, color] of bands) {
-    ctx.fillStyle = color;
-    for (let i = 0; i < buckets; i++) {
-      const bh = series[i] * avail, x = i*bw, c = cursor[i];
-      ctx.fillRect(x, mid - c - bh, barW, bh);
-      ctx.fillRect(x, mid + c, barW, bh);
-      cursor[i] = c + bh;
-    }
-  }
-}
-
 // Hot Cues als farbige Fähnchen mit Buchstabe (A-H). Memory Cues (inkl.
 // Loop-Markierungen, siehe rekordbox.get_track_extras) als duenne, volle
 // Linie in ihrer in Rekordbox eingestellten Farbe -- ohne gesetzte Farbe
 // neutral in --cue-memory.
+// ── Farbige Wellenform ───────────────────────────────────
+// Die Form bleibt die der grauen Wellenform, nur die Farbe kommt dazu. Deshalb wird
+// sie weich eingeblendet, statt umzuspringen.
+const WAVE_FADE_MS = 500;
+
+async function loadWaveColor(entry, path) {
+  entry.colorPath = path;
+  try {
+    const res = await fetch("/api/wave-color?path=" + encodeURIComponent(path));
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!waveEntries.has(entry)) return;
+    // Stand der Ebene merken, solange sie noch da ist: von ihm aus wird uebergeblendet.
+    if (entry.layer && entry.w && entry.h) {
+      const from = document.createElement("canvas");
+      from.width = entry.layerCanvas.width; from.height = entry.layerCanvas.height;
+      from.getContext("2d").drawImage(entry.layerCanvas, 0, 0);
+      entry.fadeFrom = from; entry.fadeRecolor = entry.layerRecolorable; entry.fadeStart = performance.now();
+    }
+    setWaveData(entry, {waveform: data.waveform});
+  } catch (err) { /* ohne Farbe bleibt die graue Wellenform stehen */ }
+}
+
+// Nach dem Speichern der Einstellungen: offene Wellenformen auf den neuen Stil bringen.
+function refreshWaveColors() {
+  for (const entry of waveEntries) if (entry.colorPath) loadWaveColor(entry, entry.colorPath);
+}
+
 function drawCueMarkers(ctx, w, h, cues, duration) {
   ctx.font = "11px -apple-system, sans-serif";
   ctx.textAlign = "center";
@@ -12567,6 +12957,11 @@ function cueHitAt(entry, canvas, clientX, duration) {
     if (Math.abs(clickX - x) <= tolerancePx) return cue;
   }
   return null;
+}
+
+// Zeit unter einem Klick (Anteil 0..1 der Breite).
+function waveTimeAt(entry, frac, duration) {
+  return Math.min(duration, Math.max(0, frac * duration));
 }
 
 // Ersetzt durch den Themen-Cache (theme()/readThemeTokens() weiter oben) --
@@ -12717,10 +13112,11 @@ function mountDropPlayer(root, r) {
   // Per Drag & Drop geprüfte Dateien ohne Bibliothekspfad koennen nicht in
   // Rekordbox nachgeschlagen werden.
   if (!r.file) {
+    loadWaveColor(entry, r.p);
     rekordboxExtrasFor(r.p)
       .then(extras => {
         if (extras && extras.available) {
-          setWaveData(entry, {cues: extras.cues || [], waveform: extras.waveform || null});
+          setWaveData(entry, {cues: extras.cues || []});
         }
       })
       .catch(() => {});
@@ -12781,7 +13177,7 @@ function mountDropPlayer(root, r) {
     }
     const rect = canvas.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
-    if (isFinite(audio.duration)) { audio.currentTime = frac * audio.duration; requestWavePaint(); }
+    if (isFinite(audio.duration)) { audio.currentTime = waveTimeAt(entry, frac, audio.duration); requestWavePaint(); }
   };
 }
 
@@ -13206,10 +13602,11 @@ function mountLibraryPlayer(root, r) {
   // Rekordbox nachgeschlagen werden (kommt bei Bibliothekszeilen praktisch
   // nie vor, r.file bleibt hier defensiv wie bei mountDropPlayer beruecksichtigt).
   if (!r.file) {
+    loadWaveColor(entry, r.p);
     rekordboxExtrasFor(r.p)
       .then(extras => {
         if (extras && extras.available) {
-          setWaveData(entry, {cues: extras.cues || [], waveform: extras.waveform || null});
+          setWaveData(entry, {cues: extras.cues || []});
         }
       })
       .catch(() => {});
@@ -13232,7 +13629,7 @@ function mountLibraryPlayer(root, r) {
     const hit = cueHitAt(entry, canvas, ev.clientX, duration);
     const rect = canvas.getBoundingClientRect();
     const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
-    const seekTo = hit ? hit.position_s : (isFinite(duration) ? frac * duration : null);
+    const seekTo = hit ? hit.position_s : (isFinite(duration) ? waveTimeAt(entry, frac, duration) : null);
     if (current) {
       if (seekTo != null) queueAudio.currentTime = seekTo;
       if (queueAudio.paused) queueAudio.play().catch(err => playFailed(queueAudio, err));
@@ -13880,7 +14277,7 @@ function renderDrops() {
               ${dropSelected.has(r._id) ? "checked" : ""}
               title="${esc(t("drop.select_row_title"))}">` : ""}</td>
         ${statusHidden ? "" : `<td><span class="badge ${r.v}">${VERDICT_ICONS[r.v] || ""}${labels[r.v]}</span></td>`}
-        ${cols.map(k => CELL_RENDERERS[k](r)).join("")}
+        ${cols.map(k => dropCellHtml(k, r)).join("")}
         <td class="filler"></td>
         <td class="links"><div class="actions">
           <div class="actiongroup top">
@@ -14095,6 +14492,7 @@ function renderDropBulkBar() {
     <span class="sep"></span>
     ${bulkBpmKeyShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.analyseBpmKey}</button>` : ""}
     ${bulkGenreMoodShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}</button>` : ""}
+    ${bulkPhrasesShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkPhrases" title="${esc(t("action.phrases_title"))}">${ICONS.analysePhrases}</button>` : ""}
     <button class="iconbtn plain" id="dropBulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>
     ${!MIK_NAME ? "" : `<span class="sep"></span>
     <button class="iconbtn plain" id="dropBulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
@@ -14119,6 +14517,8 @@ function renderDropBulkBar() {
   if (dropBulkBpmKeyBtn) dropBulkBpmKeyBtn.onclick = () => analyseBpmKey(selectedDrops(), true);
   const dropBulkGenreMoodBtn = document.getElementById("dropBulkGenreMood");
   if (dropBulkGenreMoodBtn) dropBulkGenreMoodBtn.onclick = () => analyseGenreMood(selectedDrops(), true);
+  const dropBulkPhrasesBtn = document.getElementById("dropBulkPhrases");
+  if (dropBulkPhrasesBtn) dropBulkPhrasesBtn.onclick = () => analysePhrases(selectedDrops(), true);
   const dropBulkMikBtn = document.getElementById("dropBulkMik");
   if (dropBulkMikBtn) dropBulkMikBtn.onclick = async () => {
     const sel = selectedDrops();
@@ -14364,7 +14764,7 @@ function initDropzone() {
   applyDropzoneLabels();
   const overlay = document.getElementById("dropOverlay");
   let depth = 0;
-  // In der Player-Ansicht entfaellt die Einzelpruefung samt Drag&Drop
+  // Nur in der Player-Ansicht entfaellt die Einzelpruefung samt Drag&Drop
   // komplett (siehe Issue #14) -- das Panel wird per CSS ausgeblendet, die
   // vier fensterweiten Listener hier muessen aber selbst abschalten, sonst
   // reagiert ein Drag ueber die Seite trotzdem noch (Overlay/Import).
@@ -14493,6 +14893,56 @@ function currentDropPlayer() {
   if (activeKey && players.has(activeKey)) return players.get(activeKey);
   return players.size === 1 ? [...players.values()][0] : null;
 }
+
+// ── Neuladen waehrend der Wiedergabe ─────────────────────────────────────
+// Cmd/Strg+R und F5 lassen sich abfangen und bekommen den eigenen Dialog. Den
+// Reload-Knopf des Browsers und das Schliessen des Tabs sieht die Seite nur
+// noch ueber beforeunload -- dort zeigt der Browser seinen eigenen Hinweis,
+// der Text ist nicht beeinflussbar. Laeuft nichts, wird nie gefragt.
+// Eigene Neuladevorgaenge gehen deshalb ueber reloadPage() (ohne Rueckfrage)
+// oder requestReload() (mit), nie ueber ein nacktes location.reload().
+let reloadGuardOff = false;
+let reloadAsking = false;
+
+// Zusaetzlich zu anyAudioPlaying() die <audio>-Elemente im DOM: die
+// Hoerproben der Stem-Vorschau haengen an keinem der beiden Player.
+function playbackRunning() {
+  return anyAudioPlaying()
+    || [...document.querySelectorAll("audio")].some(a => !a.paused && !a.ended);
+}
+
+function reloadPage() {
+  reloadGuardOff = true;
+  location.reload();
+}
+
+async function requestReload() {
+  if (!playbackRunning()) { reloadPage(); return; }
+  if (reloadAsking) return;
+  reloadAsking = true;
+  const ok = await askConfirmSimple(t("reload.title"), t("reload.note"), t("reload.confirm"));
+  reloadAsking = false;
+  if (ok) reloadPage();
+}
+
+// Capture-Phase, damit kein anderer Tastatur-Handler das Ereignis vorher
+// schluckt. Bei einer schon offenen Ueberlagerung bleibt es beim Hinweis des
+// Browsers: askConfirmSimple() wuerde deren document.onkeydown ueberschreiben.
+document.addEventListener("keydown", ev => {
+  const isReload = ev.key === "F5"
+    || (ev.key.toLowerCase() === "r" && (ev.metaKey || ev.ctrlKey) && !ev.altKey);
+  if (!isReload || !playbackRunning()) return;
+  if (!reloadAsking
+      && [...document.querySelectorAll(".overlay")].some(o => o.style.display === "flex")) return;
+  ev.preventDefault();
+  requestReload();
+}, true);
+
+window.addEventListener("beforeunload", ev => {
+  if (reloadGuardOff || !playbackRunning()) return;
+  ev.preventDefault();
+  ev.returnValue = true;
+});
 
 // ── Cmd/Strg+Z: Rueckgaengig in der geoeffneten Playlist ─────────────────
 // Wie die Leertaste nur ausserhalb von Eingabefeldern -- in einem Textfeld
@@ -14781,6 +15231,8 @@ function applyToolbarLabels() {
     `<span class="btnicon">${ICONS.pencilRuler}</span> ${esc(t("layout.edit"))}`;
   document.querySelector('#layoutSwitch [data-layout="player"]').innerHTML =
     `<span class="btnicon">${ICONS.player}</span> ${esc(t("layout.player"))}`;
+  document.querySelector('#layoutSwitch [data-layout="dj"]').innerHTML =
+    `<span class="btnicon">${ICONS.layoutDj}</span> ${esc(t("layout.dj"))}`;
 }
 applyToolbarLabels();
 
@@ -15671,9 +16123,10 @@ function renderIssueBubbles() {
   if (state.view !== "tag_issues") { row.hidden = true; return; }
   const counts = new Map();
   for (const r of live()) {
-    if (!r.ti || !r.ti.length) continue;
+    const issues = rowIssues(r);
+    if (!issues.length) continue;
     const seen = new Set();
-    for (const i of r.ti) {
+    for (const i of issues) {
       if (seen.has(i.code)) continue;
       seen.add(i.code);
       counts.set(i.code, (counts.get(i.code) || 0) + 1);
@@ -15714,7 +16167,7 @@ function renderIssueBubbles() {
 // Sammel-Tags-Dialog fuer genau diese Zeilen, weil es dort kein
 // automatisierbares "richtig" gibt.
 async function editAllWithIssueCode(code) {
-  const rows = live().filter(r => (r.ti || []).some(i => i.code === code));
+  const rows = live().filter(r => rowIssues(r).some(i => i.code === code));
   if (!rows.length) return;
   if (!AUTO_FIXABLE_TAG_ISSUE_CODES.has(code)) {
     openTagsPopupBulk(rows, false);
@@ -16029,6 +16482,7 @@ function askRekordboxSyncOptions() {
     document.getElementById("rbSyncCancel").onclick = () => done(null);
     document.getElementById("rbSyncStart").onclick = () =>
       done({presence: presenceEl.checked, fixPaths: fixEl.checked,
+            load: document.getElementById("rbSyncLoad").checked,
             pending: pendEl.checked});
   });
 }
@@ -16213,15 +16667,40 @@ async function runRekordboxFixPathsFlow() {
   }
 }
 
+// Stueckweise, damit der Fortschritt sichtbar ist: beim ersten Mal liest das jeden Track.
+async function runRekordboxImport() {
+  const pt = progressToast(t("sync.rekordbox_import.running"));
+  let offset = 0, imported = 0, changed = 0;
+  try {
+    for (;;) {
+      const res = await fetch("/api/rekordbox-import", {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: JSON.stringify({offset})});
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || t("error.unknown"));
+      imported += data.imported; changed += data.changed;
+      if (data.next >= data.total || data.next === offset) break;
+      offset = data.next;
+      pt.update(100 * offset / data.total, t("toast.bpmkey_progress", {done: offset, total: data.total}));
+    }
+    await syncMarks();
+    render();
+    if (DJ && !DJ.closed) djLoad(DJ);
+    pt.done(t("sync.rekordbox_import.done", {imported, changed}));
+  } catch (err) {
+    pt.fail(t("sync.rekordbox_import.failed", {error: err.message}));
+  }
+}
+
 async function openRekordboxSyncFlow() {
   const choice = await askRekordboxSyncOptions();
-  if (!choice || (!choice.presence && !choice.fixPaths && !choice.pending)) return;
+  if (!choice || (!choice.presence && !choice.fixPaths && !choice.pending && !choice.load)) return;
   const btn = document.getElementById("btnRekordboxSync");
   btn.disabled = true;
   sourceBusy(t("sync.rekordbox.running"));
   try {
     if (choice.pending) await runRekordboxPendingApply();
     if (choice.presence) await runRekordboxPresenceSync();
+    if (choice.load) await runRekordboxImport();
     if (choice.fixPaths) await runRekordboxFixPathsFlow();
   } finally {
     btn.disabled = false;
@@ -16301,10 +16780,10 @@ function reloadAfterQuit() {
   const poll = setInterval(() => {
     tries += 1;
     fetch("/api/ping", { cache: "no-store" }).then(() => {
-      if (tries >= 30) { clearInterval(poll); location.reload(); }
+      if (tries >= 30) { clearInterval(poll); reloadPage(); }
     }).catch(() => {
       clearInterval(poll);
-      location.reload();
+      reloadPage();
     });
   }, 200);
 }

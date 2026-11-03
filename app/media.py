@@ -8,6 +8,7 @@ Zwei Aufgaben:
 """
 from __future__ import annotations
 
+import io
 import os
 import re
 import shutil
@@ -1941,6 +1942,33 @@ def _icns_of(app_path: str) -> Path | None:
     return icons[0] if icons else None
 
 
+def _trim_icon(png: bytes, size: int) -> bytes:
+    """
+    Transparenten Rand eines Symbols abschneiden und auf size x size bringen.
+
+    Apples Symbole fuellen ihre Flaeche nur zu rund 78 %, Rekordbox und Mixed In
+    Key ganz -- bei gleicher Anzeigegroesse wirkten sie deshalb unterschiedlich
+    gross. Die Schwelle laesst den weichen Schatten der Apple-Symbole aussen vor.
+    Ohne Pillow bleibt das Symbol, wie es ist.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        return png
+    img = Image.open(io.BytesIO(png)).convert("RGBA")
+    box = img.getchannel("A").point(lambda v: 255 if v > 128 else 0).getbbox()
+    if not box:
+        return png
+    tile = img.crop(box)
+    # Nicht quadratische Symbole mittig setzen statt verzerren
+    tile.thumbnail((size, size), Image.Resampling.LANCZOS)
+    out = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    out.paste(tile, ((size - tile.width) // 2, (size - tile.height) // 2))
+    buf = io.BytesIO()
+    out.save(buf, "PNG")
+    return buf.getvalue()
+
+
 def app_icon_png(app_path: str, size: int = 64) -> bytes:
     """Icon eines Programms als PNG. Ergebnis wird zwischengespeichert."""
     key = f"{app_path}:{size}"
@@ -1956,12 +1984,13 @@ def app_icon_png(app_path: str, size: int = 64) -> bytes:
         out_path = fh.name
     try:
         result = subprocess.run(
-            ["sips", "-s", "format", "png", "-Z", str(size), str(icns),
+            # Groesser als noetig: _trim_icon() verkleinert erst nach dem Zuschnitt
+            ["sips", "-s", "format", "png", "-Z", str(size * 4), str(icns),
              "--out", out_path],
             capture_output=True, timeout=30)
         if result.returncode != 0:
             raise RuntimeError("sips konnte das Symbol nicht umwandeln")
-        data = Path(out_path).read_bytes()
+        data = _trim_icon(Path(out_path).read_bytes(), size)
     finally:
         try:
             os.unlink(out_path)

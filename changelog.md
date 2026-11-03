@@ -3,7 +3,65 @@
 Alle nennenswerten Änderungen an TrackTab werden hier festgehalten.
 Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/) (Added/Changed/Fixed).
 
-## [Unreleased]
+## [2.0.0] - 2026-11-01
+
+### Added
+- DJ-Ansicht, Sammelleiste: „Zu Rekordbox hinzufügen“ für mehrere Tracks (schon vorhandene werden übersprungen) und „Beatgrid + Phrasen“ in einem Durchgang.
+- Einstellungen: Beatgrid & Phrasen stehen jetzt unter DJ-Ansicht.
+- „Zu Rekordbox hinzufügen“ in der DJ-Ansicht schreibt Beatgrid, Phrasen, Cues, Wellenformen und Cover direkt, Rekordbox muss den Track nicht erst analysieren. In Rekordbox und per USB-Export geprüft (AIF, FLAC, M4A, WAV, MP3); Flex-Tempo noch nicht gesondert. Bei seltenen MP3-Köpfen bleibt es bei Tags und Cues.
+- DJ-Ansicht: feste Phrasenfarben je Art und Nummer, für Rekordbox-Phrasen und die eigene Analyse.
+- DJ-Ansicht: Zoom und Gesamtansicht reichen einen Takt über Anfang und Ende hinaus. Das Beatgrid bleibt im Track; ein Schlag knapp vor dem Ton steht am Anfang, sodass sich ein Cue auf den ersten Schlag setzen lässt.
+- DJ-Ansicht: Sammelaktionen für markierte Tracks: Rekordbox laden, Rekordbox Update, Beatgrid-Analyse und Phrasen-Analyse (gesperrte überspringen).
+- „Rekordbox Update“ sperrt den Track für die Analyse, in TrackTab (Beatgrid und Phrasen) und in Rekordbox. Noch nicht in Rekordbox selbst geprüft.
+- Der Rekordbox-Status (Logo mit Umrandung) steht auch in der Spalte Rekordbox von Bearbeiten und Player. Bei einer Abweichung steht darunter, was abweicht (Beatgrid, Phrasen, Cues).
+- Neue Auffälligkeit: Tempowechsel im Beatgrid steht nicht im Titel, mit Autofix (z. B. „Titel (130 → 150 → 110 BPM)“, alle Wechsel in Track-Reihenfolge). Greift bei Tracks, die einmal im DJ-Editor geöffnet waren.
+- DJ-Editor, Info: Beatgrid-Analyse, Phrasen-Analyse und beides zusammen als eigene Knöpfe.
+- Phrasen rasten am Beatgrid ein: bei einer Analyse gegen ein gesperrtes Grid, bei einer Grid-Analyse auch gesperrte Phrasen, und nach Änderungen von Hand. In der DJ-Ansicht gilt eine Analyse sofort als Stand des Tracks.
+- DJ-Ansicht, Memory Cues: zehn feste Plätze, nach dem Löschen rückt der nächste nach. Ein Hot Cue an derselben Stelle wird angezeigt. Aus einem aktiven Loop entsteht ein Active Memory Loop (rot), ein Klick aufs Symbol wechselt zum normalen (orange). Läuft der Track über einen Active Memory Loop, greift er von selbst. Nach Rekordbox gehen beide Varianten so, wie Rekordbox sie selbst speichert (an je einem Beispiel abgelesen).
+- Rekordbox abgleichen lädt Beatgrid, Phrasen und Cues nach TrackTab, soweit dort noch nichts steht. Spätere Änderungen in Rekordbox überschreiben nichts mehr automatisch: sie werden angezeigt und nur per „Rekordbox laden“ übernommen.
+- Spalte Music: Logo wie bei Rekordbox, farbig in Music.app, sonst grau.
+- Spalte Rekordbox: Sortieren in vier Stufen (in Rekordbox, grün, rot, nicht in Rekordbox jeweils zuerst).
+- Listen: eigene Farbe über das Plus an letzter Stelle der Farbauswahl.
+- Ansicht „DJ“ neben Bearbeiten und Player: zeigt nur TrackTabs eigene Listen in einer festen Liste (Cover, Track und Interpret, Dauer, Tonart, BPM, Energie, Tags). Beim Aufklappen öffnet sich ein Editor mit Gesamtansicht und Zoom-Wellenform, acht Hot Cues, bis zu zehn Memory Cues, Farbwahl, Loops bis 64 Schläge ohne Lücke (Web Audio), Beatgrid- und Phrasen-Bearbeitung per Ziehen, Cue-Taste wie am Player, Quantisieren, Metronom, Rückgängig und Tastenkürzeln. Ausgangspunkt sind die Daten aus Rekordbox oder der eigenen Analyse; Änderungen liegen in der TrackTab-Datenbank, nie in der Datei.
+- Waveform der DJ-Ansicht: eigene Einstellungen für die Quelle (Rekordbox mit TrackTab als Rückfall oder nur TrackTab) und die Farbe (Standard, RGB, 3-Band), die tatsächliche Quelle zeigt ein Symbol im Zoom. Die Fläche ist einstellbar (dunkel, hell, UI-Farbe), die Kontur feiner, und bei tiefem Zoom erscheinen die einzelnen Schwingungen des Tons.
+- Bearbeiten und Player erzeugen die farbige Wellenform (RGB, 3-Band) jetzt immer selbst, also auch für Tracks, die Rekordbox nicht kennt. Die Farbe wird in der Form der grauen Wellenform weich eingeblendet. Die Einstellung „Waveform-Farbe“ liegt unter Darstellung, Beatgrid, Phrasen und Zoom gibt es dort nicht mehr.
+- Loops mit 1/2, 1/4 und 1/8 Schlag und den Tasten I, O, P. Metronom hörbar gemacht.
+- Phrasen hängen am Beatgrid: Verschieben oder Dehnen nimmt sie mit.
+- DJ-Ansicht: Taste X teilt die Phrase am nächsten Beatgrid-Marker (mit Shift am nächsten Takt 1, per Knopf mit Wahltaste genau an der Abspielposition), auch ohne Q. Hält man eine Beatjump-Taste (A, S, D, F, G, H) einen Moment, erscheint die Sprungweite leicht durchscheinend über der Listenspalte, Wellenform und Tracks bleiben frei.
+- DJ-Ansicht: Dateien öffnen wie in Bearbeiten, per Ordner-Symbol oder Drag&Drop. Die Einzelprüfung steht dort mit allen Funktionen zur Verfügung.
+- Beatjumps im eigenen Reiter, per Tastatur Buchstabe halten und Pfeiltaste (A 64, S 32, D 16, F 8, G 4, H 2). TAP geht nur bei laufendem Track. Die Spalte BPM der DJ-Liste ändert sich nur bei einem wirklich abweichenden bearbeiteten Tempo und wird rot, wenn das Tempo der Datei nicht zum Beatgrid passt. Neue Spalte Rekordbox: Logo farbig oder grau je nach Sammlung, grün oder rot umrandet je nachdem, ob TrackTab und Rekordbox übereinstimmen.
+- Analyse-Sperre in der DJ-Ansicht, je Beatgrid und Phrasen: Eine Bearbeitung sperrt das jeweilige Feld für die Analyse, die Beatgrid-Sperre auch für BPM und Tonart. Die Sperren lassen sich von Hand freigeben und setzen. Sie gilt nur in TrackTab, Rekordbox' eigene Analyse-Sperre wird noch nicht gelesen oder geschrieben.
+- Abgleich mit Rekordbox in der DJ-Ansicht: „Rekordbox laden“, „Rekordbox Update“ (schreibt Cues, Loops, Beatgrid und Phrasen nach Rekordbox, mit Sicherung) und „Zu Rekordbox hinzufügen“. Ändert sich ein bearbeiteter Teil zwischendurch in Rekordbox, fragt TrackTab nach. Das Ergebnis ist bisher nur an einer Kopie der Bibliothek geprüft, nicht in Rekordbox selbst.
+- Beatgrid & Phrasen (Testfunktion): TrackTab erkennt Tempo, Takt und Abschnitte eines Tracks selbst, wahlweise mit festem Tempo (Normal), mit Tempowechseln (Flex) oder automatisch (Auto). Beatgrid und Abschnitte erscheinen in der Wellenform und lassen sich getrennt ein- und ausblenden; als Quelle ist „Rekordbox, sonst TrackTab“, „Nur Rekordbox“ oder „Nur TrackTab“ wählbar. Es wird nichts in die Datei oder nach Rekordbox geschrieben.
+- Wellenform-Zoom im Player: bis 64-fach, die Breite bleibt, der Track läuft unter der mittigen Abspielposition durch. Die Lage gegenüber dem hörbaren Ton ist im echten Abspielen noch nicht geprüft.
+- Neu laden während der Wiedergabe: Cmd+R, Cmd+Shift+R und F5 sowie der Link „Seite neu laden“ nach einem Scan oder einer Backup-Wiederherstellung fragen erst nach, solange ein Track oder eine Stem-Hörprobe läuft; „Abbrechen“ lässt die Wiedergabe ungestört weiterlaufen. Beim Reload-Knopf des Browsers, beim Schließen des Tabs und bei Cmd+R über einem offenen Dialog erscheint stattdessen der Hinweis des Browsers (dieser Weg ist noch nicht im echten Browser geprüft). Läuft nichts, wird nie gefragt. Das automatische Neuladen nach dem Speichern von Einstellungen und beim Beenden fragt nicht nach.
+- Das Neuladen durch Ziehen über den oberen Fensterrand ist abgestellt, damit es die Wiedergabe in Safari nicht ohne Rückfrage beendet. Noch nicht in Safari geprüft.
+
+### Fixed
+- Phrasen beginnen frühestens am ersten Beat, nicht mehr in der Stille davor; gilt für neue Messungen, bestehende Analysen und das Schreiben nach Rekordbox.
+- Einstellungen: Der Punkt in der Navigation zeigt nur noch ungespeicherte Änderungen statt jede Abweichung von der Vorgabe.
+- Shop-Links öffnen im Standardbrowser des Systems, nicht im Browser der Oberfläche.
+- Touchpad-Zoom vergrößert nicht mehr die Seite; die Geste zoomt nur noch die Waveform im DJ-Editor, auch in Safari.
+- DJ-Editor: Die Seitenleiste behält die Höhe der zehn Memory Cues, die anderen Reiter scrollen darin.
+- Die Waveform-Farbe für Bearbeiten und Player sprang in der App nach dem Speichern immer auf den alten Wert zurück, wenn die einmal herauskopierte `config.yaml` noch den früheren Einstellungsnamen trug.
+- Beim Entfernen aus der Rekordbox-Sammlung blieben der Cover-Ordner und in TrackTab der festgehaltene Rekordbox-Stand zurück; Player und DJ-Ansicht zeigten danach weiter dessen Cues und Grid.
+- Phrasen, die TrackTab in einen Track ohne vorhandene Phrasen schrieb, zeigte Rekordbox nicht an (fehlendes Bit in `ContentLink`).
+- Up 2 und Up 3 wurden beim Lesen und Schreiben der Rekordbox-Phrasen falsch zugeordnet.
+- `.aif`-Dateien ließen sich nicht zu Rekordbox hinzufügen.
+- Das Beatgrid bekam beim Schreiben nach Rekordbox je Schlag leicht schwankende Tempi.
+- Hover-Kontrast: Aktive Knöpfe wie Q wurden beim Überfahren weiß auf hell und waren kaum lesbar. Text wechselt beim Hover nicht mehr in die Designfarbe, Text auf der Designfarbe ist je nach Design hell oder dunkel, Beschriftungen auf farbigen Flächen wählen die besser lesbare Farbe.
+- Programm-Symbole (Music, Finder, Rekordbox, Mixed In Key) werden ohne transparenten Rand ausgeliefert und wirken dadurch gleich groß.
+- Hot-Cue-Farben: nur noch die 16 in Rekordbox geprüften Farben, mit den dort gemessenen Farbwerten, auch im Farbwähler.
+- Memory-Cue-Farben: Die Zuordnung zu Rekordbox war um eins verschoben, Rot erschien dort orange. Alle Farben sind jetzt in Rekordbox bestätigt, auch „keine Farbe“. Bereits übertragene Cues ändern sich beim nächsten Update.
+- Player: In der Spalte Auffälligkeiten und deren Dialog führt kein Weg mehr zum Bearbeiten der Metadaten.
+- DJ-Ansicht, Rekordbox Update: Das Beatgrid beginnt jetzt auf dem Audiobeginn statt mit dem ersten späteren Schlag, die erste Phrase und ein Cue am Anfang liegen damit an derselben Stelle (noch nicht in Rekordbox selbst geprüft).
+- DJ-Ansicht: Phrasen werden je Kategorie automatisch durchnummeriert und so an Rekordbox übergeben, soweit Rekordbox die Nummer darstellen kann; die Auswahl von Hand entfällt.
+- Rekordbox-Hot-Cues ab D wurden um einen Buchstaben verschoben angezeigt (D als E, E als F), H fehlte: Rekordbox zählt sie als 1, 2, 3, 5, 6, 7, 8, 9.
+
+### Changed
+- Reihenfolge der Ansichten: Player, DJ, Bearbeiten.
+- Das Abgleich-Menü (Bibliothek scannen, Rekordbox und Music.app abgleichen) steht auch in der DJ-Ansicht zur Verfügung.
+- ZIP-Export startet den Download über einen Download-Link statt über eine Navigation der Seite, damit er während der Wiedergabe keinen Hinweis des Browsers auslöst (noch nicht mit einem echten Download geprüft).
 
 ## [1.10.0] - 2026-10-30
 

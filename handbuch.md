@@ -20,7 +20,7 @@ Andere Dokumente:
   - [3. Nutzung über das Terminal](#3-nutzung-über-das-terminal)
 - [Als eigene App installieren](#als-eigene-app-installieren)
 - [Die Web-Oberfläche](#die-web-oberfläche)
-  - [Ansichten: Bearbeiten und Player](#ansichten-bearbeiten-und-player)
+  - [Ansichten: Bearbeiten, Player und DJ](#ansichten-bearbeiten-player-und-dj)
 - [Einstellungen](#einstellungen)
 - [Ist die Bitrate korrekt?](#ist-die-bitrate-korrekt)
 - [Bitrate korrigieren](#bitrate-korrigieren)
@@ -36,6 +36,7 @@ Andere Dokumente:
 - [Smart Playlists](#smart-playlists)
 - [Playlist-Generator](#playlist-generator)
 - [Fremde Playlisten](#fremde-playlisten)
+- [DJ-Ansicht](#dj-ansicht)
 - [Suchen und filtern](#suchen-und-filtern)
 - [Spalten anpassen](#spalten-anpassen)
 - [Die Buttonleiste](#die-buttonleiste)
@@ -91,11 +92,11 @@ Die Installation ist ein einmaliger Schritt. Danach öffnest du TrackTab künfti
 
 Egal ob per Terminal (`serve`) oder über die gebaute App gestartet: Im Hintergrund läuft ein kleiner Server, ausschließlich auf deinem eigenen Rechner (`127.0.0.1`) — nichts davon ist über das Internet erreichbar. Das ist nötig, damit Ausblendungen gespeichert und Musikdateien zum Anhören ausgeliefert werden können; eine reine HTML-Datei kann das nicht.
 
-### Ansichten: Bearbeiten und Player
+### Ansichten: Bearbeiten, Player und DJ
 
-Es gibt zwei Ansichten: Bearbeiten und Player. Spalten-Reihenfolge, ausgeblendete Spalten und Spaltenbreite werden für beide Ansichten getrennt gespeichert — Änderungen in der Player-Ansicht wirken sich nicht auf die Bearbeiten-Ansicht aus und umgekehrt. Die Wiedergabe selbst läuft dagegen ansichtsübergreifend: ein Wechsel zwischen Bearbeiten und Player unterbricht weder laufende Musik noch die Warteschlange.
+Es gibt drei Ansichten: Player, DJ und Bearbeiten. Spalten-Reihenfolge, ausgeblendete Spalten und Spaltenbreite werden für jede Ansicht getrennt gespeichert — Änderungen in der Player-Ansicht wirken sich nicht auf die Bearbeiten-Ansicht aus und umgekehrt. Die Wiedergabe selbst läuft dagegen ansichtsübergreifend: ein Wechsel zwischen Bearbeiten und Player unterbricht weder laufende Musik noch die Warteschlange.
 
-Oben rechts wechselst du zwischen zwei Ansichten:
+Oben rechts wechselst du zwischen den Ansichten:
 
 - **Bearbeiten** — die volle Oberfläche mit allen Listen, Filtern und Zeilen-Aktionen (Standard).
 
@@ -113,9 +114,11 @@ Oben rechts wechselst du zwischen zwei Ansichten:
 
   *Die reduzierte Player-Ansicht.*
 
+- **DJ** — zeigt nur TrackTabs eigene Listen, ohne Music.app und Rekordbox. Ein aufgeklappter Track öffnet den Editor für Cues, Loops, Beatgrid und Phrasen, siehe [DJ-Ansicht](#dj-ansicht). Auch hierhin lässt sich während eines Scans nicht wechseln. Das Abgleich-Menü (Datenbank-Symbol oben rechts) steht auch hier zur Verfügung. Dateien öffnest du wie in Bearbeiten über das Ordner-Symbol oder per Drag & Drop, die [Einzelprüfung](#einzelprüfung-von-neuen-dateien-nicht-in-der-mediathek) steht dann mit allen Funktionen über der Liste.
+
 ## Einstellungen
 
-Unter dem Zahnrad-Symbol passt du Bibliothekspfade, Analyse-Empfindlichkeit, Klassengrenzen, externe Programme (Audio-Editor, DAW, Mixed In Key, Music App, Rekordbox) und weitere Optionen an. Links wählst du die Seite, das Suchfeld darüber findet jede Einstellung nach Name oder Hilfetext. Ein Punkt in der Navigation markiert Seiten mit geänderten Werten. Die meisten Gruppen lassen sich einzeln auf die Vorgabe zurücksetzen.
+Unter dem Zahnrad-Symbol passt du Bibliothekspfade, Analyse-Empfindlichkeit, Klassengrenzen, externe Programme (Audio-Editor, DAW, Mixed In Key, Music App, Rekordbox) und weitere Optionen an. Links wählst du die Seite, das Suchfeld darüber findet jede Einstellung nach Name oder Hilfetext. Ein Punkt in der Navigation markiert Seiten mit noch nicht gespeicherten Änderungen. Was von der Vorgabe abweicht, steht als „geändert“ direkt am Feld. Die meisten Gruppen lassen sich einzeln auf die Vorgabe zurücksetzen.
 
 ![Einstellungen-Dialog](docs/003-einstellungen.png)
 
@@ -131,7 +134,7 @@ Die Seiten im Überblick:
 | **BPM, Tonart und Genre** | Eine gemeinsame Seite für beide Analysen: welche Teile gemessen werden (BPM, Tonart, Genre-Vorschläge, Stimmung & Energie), Automatik für Einzelprüfungen (je Analyse), ein gemeinsames Längenlimit und – in den Abschnitten Tonart-Feld, BPM-Feld, Kommentar-Feld und Genre & Stimmung – was in welches Feld geschrieben wird. Im Abschnitt Tonart-Feld steht auch die Schreibweise der Tonart (Camelot, Open Key, Notennamen), siehe [Tonart](#tonart) und [Genre, Stimmung und Energie](#genre-stimmung-und-energie) |
 | **Stems** | Trennmodell laden oder entfernen, Titel-Zusatz und Genre der neuen Dateien, Längenlimit (siehe [Stems erzeugen](#stems-erzeugen-acapella--instrumental)) |
 | **Music.app** | Music App auswählen, Cover aus Music.app übernehmen |
-| **Rekordbox** | Rekordbox-App, Ziel-Playlist für den Schnellzugriff, Waveform-Stil (siehe [Bibliothek scannen](#bibliothek-scannen)), Qualitätsprüfung beim Import mit Mindest-Cutoff, Stimmungen und eigene Tags als „My Tag“ übertragen (siehe [Genre, Stimmung und Energie](#genre-stimmung-und-energie)), Stems in Rekordbox übernehmen, Rekordbox-Backup-Ordner öffnen. Ohne ausgewählte Rekordbox-Installation sind alle außer der Programmwahl ausgegraut |
+| **Rekordbox** | Rekordbox-App, Ziel-Playlist für den Schnellzugriff, Qualitätsprüfung beim Import mit Mindest-Cutoff, Stimmungen und eigene Tags als „My Tag“ übertragen (siehe [Genre, Stimmung und Energie](#genre-stimmung-und-energie)), Stems in Rekordbox übernehmen, Rekordbox-Backup-Ordner öffnen. Ohne ausgewählte Rekordbox-Installation sind alle außer der Programmwahl ausgegraut |
 | **Programme und Shops** | **Externe Programme:** Audio-Editor, DAW, Mixed In Key, AAC-Encoder. **Shops:** welche Plattformen als Such-Icons in der Buttonleiste erscheinen (siehe [Die Buttonleiste](#die-buttonleiste)) |
 | **Backup und Protokoll** | Datenbank-Backup erstellen und wiederherstellen, Backup-Ordner und Ordner des Änderungsprotokolls öffnen |
 | **Messwerte** | **Analyse:** Cutoff- und Klassengrenzen je Format. **Lautheit:** LUFS-Referenzbereich, True-Peak-Warnschwelle (siehe [Ist die Bitrate korrekt?](#ist-die-bitrate-korrekt)) |
@@ -241,7 +244,7 @@ Für die verlässlichste Wiedergabe aller unterstützten Formate empfiehlt sich 
    Genre-, Interpret- und Album-Änderungen aus dem **Zusammenführen** werden nicht sofort nach Rekordbox geschrieben, sondern vorgemerkt; die Zahl steht als Zähler am Knopf. Im Abgleich-Dialog überträgt die Option **„Vorgemerkte Tags übertragen"** alle gesammelt in einem Durchlauf (Rekordbox muss dafür geschlossen sein; es entsteht nur ein Backup der Rekordbox-Datenbank).
 
    > [!tip] 
->Damit dieser Button angezeigt wird, muss in den Einstellungen "Rekordbox" als Programm ausgewählt sein. Bis dahin sind auch die übrigen Rekordbox-Einstellungen (Playlist, Waveform-Stil, Qualitätsprüfung, My Tag, Stems) ausgegraut; sie werden frei, sobald du oben ein Rekordbox auswählst.
+>Damit dieser Button angezeigt wird, muss in den Einstellungen "Rekordbox" als Programm ausgewählt sein. Bis dahin sind auch die übrigen Rekordbox-Einstellungen (Playlist, Qualitätsprüfung, My Tag, Stems) ausgegraut; sie werden frei, sobald du oben ein Rekordbox auswählst.
 
 ## Music.app abgleichen
   
@@ -258,6 +261,8 @@ Am unteren Bildschirmrand sitzt ein fest angedockter Player — er ist in beiden
 - **Zufallswiedergabe** — spielt die Warteschlange in zufälliger statt fester Reihenfolge. Läuft gerade noch nichts, startet ein Klick darauf sofort einen zufälligen Track aus der aktuell gefilterten Ansicht. Die automatisch gefüllte Warteschlange nimmt von mehreren Fassungen desselben Liedes (gleicher Interpret, gleicher Titelkern, z. B. „Replay“ und „Replay (Remix)“) jeweils nur eine auf; weitere Fassungen rücken nur nach, wenn sonst nicht genug Titel übrig bleiben. Von Hand eingereihte Titel bleiben unberührt.
 - **Titel wiederholen** — der aktuelle Track startet nach seinem Ende erneut, statt zum nächsten zu springen.
 - **Liste wiederholen** — nach dem letzten Track der Warteschlange geht es wieder von vorn los.
+
+**Neu laden während der Wiedergabe:** Drückst du Cmd+R oder F5, während ein Track läuft, fragt TrackTab erst nach, damit die Wiedergabe nicht versehentlich abbricht. Beim Reload-Knopf des Browsers und beim Schließen des Tabs erscheint stattdessen der Hinweis des Browsers.
 
 In der **Player-Ansicht** startet ein Klick auf eine Zeile oder deren Abspielen-Button sofort eine komplett neue Warteschlange aus den nächsten (bis zu 25) Tracks der aktuell angezeigten Liste, beginnend bei dieser Zeile — spätere Änderungen an Suche/Filter wirken sich nicht mehr auf eine schon laufende Warteschlange aus. 
 
@@ -404,7 +409,7 @@ Tracks, zu denen TrackTab keine Datei hat, stehen trotzdem an ihrer Stelle in de
 **Rekordbox-Playlisten bearbeiten:** In einer geöffneten Rekordbox-Playlist (keine Smart Playlist) gibt es im „…"-Menü einer Zeile und in der Leiste für ausgewählte Tracks zwei Befehle:
 
 - **Aus Rekordbox-Playlist entfernen** — nimmt nur den Eintrag aus dieser Playlist. Der Track bleibt in der Rekordbox-Sammlung und in allen anderen Playlisten.
-- **Aus Rekordbox-Sammlung entfernen** — wirkt wie Rekordbox' eigenes „Von der Sammlung entfernen": Der Track verschwindet aus allen Rekordbox-Playlisten, Cues und Verlauf entfallen. Die Audiodatei bleibt liegen. Vorher fragt TrackTab nach und zeigt, wie viele Playlist-Einträge betroffen sind. Diesen Befehl gibt es auch in allen anderen Listen für Tracks mit Rekordbox-Haken.
+- **Aus Rekordbox-Sammlung entfernen** — wirkt wie Rekordbox' eigenes „Von der Sammlung entfernen": Der Track verschwindet aus allen Rekordbox-Playlisten, Cues und Verlauf entfallen. Die Audiodatei bleibt liegen. Vorher fragt TrackTab nach und zeigt, wie viele Playlist-Einträge betroffen sind. Diesen Befehl gibt es auch in allen anderen Listen für Tracks mit Rekordbox-Haken. TrackTab räumt dabei auch seinen eigenen Stand zu diesem Track ab: das aus Rekordbox übernommene Beatgrid, die Phrasen und Cues sowie den Cover-Ordner (landet mit der Analyse in der Sicherung). Deine Bearbeitungen aus der DJ-Ansicht und TrackTabs eigene Analyse bleiben.
 
 **Reihenfolge ändern:** Zieh Zeilen innerhalb einer Rekordbox-Playlist an eine neue Stelle — die neue Reihenfolge wird in Rekordbox übernommen. Die Spalte **„#"** zeigt die Position in der Playlist (auch in eigenen und Music-App-Playlisten). Sortierst du die Tabelle nach einer anderen Spalte, z. B. nach Titel, ändert das nur die Ansicht; die Zahlen in „#" bleiben die echte Reihenfolge. Ein Klick auf „#" (oder der dritte Klick auf eine andere Spalte) stellt die Playlist-Reihenfolge wieder her.
 
@@ -542,7 +547,7 @@ Die Leertaste pausiert/startet die Wiedergabe, die Pfeiltasten ←/→ wechseln 
 
 Ist der Track bereits in Rekordbox analysiert, werden dessen Hot Cues und Memory Cues zusätzlich über der Wellenform eingeblendet; ein Klick auf einen Hot-Cue-Marker springt im Mediaplayer direkt dorthin, die Zifferntasten 1–8 tun bei aufgeklappter Wellenform dasselbe.
 
-Liegt für den Track außerdem eine passende Rekordbox-Analysedatei vor, erscheint die Wellenform selbst farbig statt grau — in **RGB** oder **3-Band**, je nach der Einstellung „Waveform-Stil" unter Rekordbox. Mit „Standard" lässt sich dort auch bewusst bei der grauen Anzeige bleiben; ohne Rekordbox-Bezug ist Grau ohnehin die automatische Vorgabe.
+Die Wellenform erzeugt TrackTab hier immer selbst, auch für Tracks in Rekordbox. Unter ⚙ Einstellungen → Darstellung → „Waveform-Farbe in Bearbeiten und Player“ wählst du **Standard** (grau), **RGB** oder **3-Band**. Die Form bleibt dabei dieselbe wie bei Standard. Beim ersten Öffnen eines Tracks steht kurz die graue Wellenform da, bis die Farbe berechnet ist, dann wird sie weich eingeblendet.
 
 Die Pfeiltasten ↑/↓ bewegen unabhängig davon eine Markierung zeilenweise durch die Tabelle — praktisch zum Durchblättern per Tastatur, ohne deine Checkbox-Auswahl für Sammelaktionen zu verändern. Läuft gerade ein Track, startet die Markierung bei dessen Zeile. Die Eingabetaste startet die Wiedergabe der markierten Zeile.
 
@@ -564,6 +569,100 @@ Die Spalte **Tonart** zeigt jede Tonart als farbige Bubble. Die Farben folgen de
   - Die Tonart steht überall in der Schreibweise, die du im Abschnitt Tonart-Feld gewählt hast (Camelot, Open Key oder Notennamen).
   - Die Messung ist eine Einschätzung, kein Urteil: Beim Tempo kommt gelegentlich die halbe oder doppelte BPM heraus, bei der Tonart manchmal die parallele Dur-/Moll-Tonart. Die Funktion ist nur auf Macs mit Apple Silicon verfügbar; auf anderen Macs erscheinen die Knöpfe nicht, und die zugehörigen Einstellungen sind ausgegraut (mit Hinweis auf den Grund).
 - **Rekordbox:** Beim Übertragen **neuer** Tracks nach Rekordbox wird die Tonart mit gesetzt. Tracks, die schon in Rekordbox stehen, bleiben unberührt — Rekordbox kann ihre Daten über „Track-ID abrufen“ jederzeit selbst aus der Datei neu einlesen.
+
+## Beatgrid und Phrasen (Testfunktion)
+
+TrackTab kann das Tempo, den Takt und die Abschnitte eines Tracks (Intro, Up oder Verse, Down oder Bridge, Chorus, Outro) selbst erkennen, auch ohne Rekordbox. In die Datei und nach Rekordbox wird dabei nichts geschrieben.
+
+- **Starten:** Im Zeilenmenü **Beatgrid & Phrasen analysieren** wählen oder mehrere Tracks markieren und das Symbol in der Sammelleiste nutzen. Je Track dauert das rund 2 bis 3 Sekunden.
+- **Ansehen:** Beatgrid und Abschnitte erscheinen nur in der [DJ-Ansicht](#dj-ansicht), nicht in Bearbeiten und Player.
+- **Quelle:** Unter **Einstellungen → DJ-Ansicht → Beatgrid & Phrasen** wählst du, ob die Anzeige **Rekordbox, sonst TrackTab** (Vorgabe), **nur Rekordbox** oder **nur TrackTab** nutzt. Bei der Vorgabe springt die eigene Analyse ein, solange Rekordbox noch nichts hat, etwa bei einem dort gerade hinzugefügten Track. TrackTab-Werte gibt es erst nach einer Analyse.
+- **Modus:** In denselben Einstellungen wählst du den Beatgrid-Modus. **Auto** ist die Vorgabe und nutzt Flex nur, wenn ein Tempowechsel gefunden wird. **Normal** nimmt ein festes Tempo, **Flex** folgt Tempowechseln und ist für DJ-Edits gedacht. Ein neuer Modus gilt erst, wenn du den Track neu analysierst.
+
+Die Erkennung ist eine Einschätzung. Bei Clubmusik mit festem Tempo trifft sie die meisten Phrasengrenzen von Rekordbox. Bei Tracks mit Tempowechseln, bei Acapellas und vermutlich auch bei Pop oder Bandmusik ist sie deutlich schwächer und übersieht auch Tempowechsel. Ein blasses Band im DJ-Editor kennzeichnet solche Ergebnisse.
+
+## DJ-Ansicht
+
+Oben rechts auf **DJ** wechseln und einen Track aufklappen. Die Liste ist fest: Cover, Track und Interpret, Dauer, Tonart, BPM, Energie, Tags und, wenn Rekordbox in den Einstellungen ausgewählt ist, Rekordbox. Das Logo dort ist farbig, wenn der Track in der Rekordbox-Sammlung liegt, sonst grau. Eine grüne Umrandung heißt: Beatgrid, Phrasen und Cues stimmen mit TrackTab überein. Ein Klick auf den Spaltenkopf sortiert in vier Stufen: in Rekordbox zuerst, grün zuerst, rot zuerst, nicht in Rekordbox zuerst; der fünfte Klick hebt die Sortierung auf. Rot heißt: TrackTab weicht ab, darunter steht worin (Beatgrid, Phrasen, Cues), zum Beispiel weil eine Bearbeitung noch nicht per **Rekordbox Update** geschrieben ist oder sich der Track in Rekordbox geändert hat. Zeigt TrackTab unter „Beatgrid & Phrasen anzeigen aus“ nur die eigene Analyse, entfällt die Umrandung bei unbearbeiteten Tracks. Hat der offene Track begonnen, zeigt die Dauer die gespielte Zeit und daneben die Restzeit, die herunterzählt, Die Spalte BPM ändert sich nur, wenn du das Tempo im Beatgrid bearbeitet hast und es vom Tag der Datei abweicht, etwa 125,50 statt 125. Der Wert bleibt in der Liste stehen, die Datei ändert sich nicht. Rot wird die Zahl, wenn das Tempo in der Datei nicht zum Beatgrid passt, etwa bei einem Tempowechsel oder einer Bearbeitung; beim Überfahren stehen beide Werte da. Geprüft wird ein Track, sobald du ihn einmal im DJ-Editor geöffnet hast, das Ergebnis bleibt danach in der Liste. Play und Cue liegen links neben den Wellenformen, der Play-Knopf schaltet zwischen Abspielen und Anhalten um. Es ist immer nur ein Track offen, der Editor hat seine eigene Wiedergabe unabhängig vom Player-Balken.
+
+Beide Wellenformen reichen einen Takt über Anfang und Ende hinaus. Das Beatgrid endet mit dem Track. Liegt der erste Schlag knapp vor dem Ton, steht er am Trackanfang, ein Hot Cue oder Memory Cue lässt sich also auch dorthin setzen. In Rekordbox landet ein Cue vor dem Ton am Audiobeginn, weil es dort nichts davor gibt. Play startet aus diesem Bereich am Trackanfang. Die Phrasenfarben sind fest vorgegeben, je Art und Nummer eine eigene. Sie gelten nur in TrackTab, Rekordbox zeigt seine eigenen.
+
+Hat der Track schon Daten aus Rekordbox oder der eigenen Analyse, startest du damit, auch mit Rekordbox' Hot Cues, Memory Cues, Loops und Phrasen. Deine Änderungen speichert TrackTab sofort in der eigenen Datenbank, die Datei bleibt immer unberührt. Bearbeitete Cues erscheinen auch in den Wellenformen von Bearbeiten und Player. Unter **Info** setzt du Beatgrid, Phrasen oder Cues einzeln auf die Quelle zurück.
+
+**Wellenformen:** Oben der ganze Track als halbe Wellenform, darunter der Zoom mit der Abspielposition in der Mitte. Die Farbe zeigt die Frequenzen: bei RGB wie in Rekordbox Rot für Bass und Blau für Höhen, bei 3-Band Blau für Tiefen, Orange für Mitten und Weiß für Höhen (auf heller Fläche dunkel).
+
+- Klicken springt an die Stelle, Ziehen im Zoom spult.
+- Zoomen geht mit den Lupen, per Pinch oder mit den Tasten **+** und **−**, bis eine halbe Sekunde das ganze Fenster füllt.
+- Neben der Abspielposition steht, wie viele Takte es noch bis zum nächsten Cue sind.
+- Ein Tempowechsel im Track ist in beiden Wellenformen mit einer Linie und einer kleinen Marke mit dem neuen Tempo gekennzeichnet.
+
+**Cue-Knopf (Taste C):** Wie am Player. Steht der Track, wird die Stelle zum Cue-Punkt, und er spielt, solange du gedrückt hältst. Beim Loslassen geht er zurück. Drückst du währenddessen die Leertaste, läuft er weiter. Spielt der Track, springt C zurück zum Cue-Punkt und hält an.
+
+**Waveform:** Unter ⚙ Einstellungen → DJ-Ansicht wählst du die Quelle (**Rekordbox, sonst TrackTab** oder **Nur TrackTab**) und die Farbe (**Standard**, **RGB** oder **3-Band**). Die Farbe gilt nur hier, für Bearbeiten und Player gibt es eine eigene Einstellung unter Darstellung. Das App-Symbol oben rechts im Zoom zeigt, woher die Waveform gerade stammt: Rekordbox oder TrackTab. Beim Überfahren steht es als Text da. Zoomst du tief hinein, siehst du die einzelnen Schwingungen des Tons. Die **Waveform-Fläche** stellst du dort ebenfalls ein: **Dunkel** (Vorgabe), **Hell** oder **UI-Farbe**, die dem hellen oder dunklen Design folgt. Auf heller Fläche nimmt die Waveform dunklere Farben, bei 3-Band werden die Höhen dunkel statt weiß.
+
+**Beatjumps:** Der Reiter bietet Sprünge um 64, 32, 16, 8 und 4 Schläge in beide Richtungen sowie den Sprung zum vorigen und nächsten Cue. Per Tastatur hältst du einen Buchstaben und drückst ← oder →: **A** 64, **S** 32, **D** 16, **F** 8, **G** 4 und **H** 2 Schläge. Die Pfeiltasten allein springen 1 Schlag, mit Shift einen Takt. Hältst du den Buchstaben einen Moment, erscheint links über den Listen eine Anzeige mit der Sprungweite und allen Tasten.
+
+**Cue/Loop**
+
+- **Hot Cues A bis H:** Klick auf ein freies Feld oder Taste **1** bis **8** setzt den Cue. Ein belegtes Feld arbeitet wie der Cue-Knopf: Steht der Track, spielt er ab dem Hot Cue, solange du gedrückt hältst, und geht beim Loslassen dorthin zurück. Drückst du währenddessen die Leertaste, läuft er weiter. Spielt der Track schon, springt er hin und spielt weiter. **Shift** und die Zahl (oder Shift-Klick aufs Feld) löscht den Hot Cue. Zum Neusetzen löschst du ihn und setzt ihn wieder, oder du verschiebst ihn im Zoom an der Fahne.
+- **Memory Cues:** Knopf oder Taste **M**, höchstens 10 je Track. Aus Rekordbox Geladenes bleibt auch darüber sichtbar, nur neue kommen dann nicht dazu.
+- **Loops:** **In** und **Out** von Hand oder fertige Längen von 1/8 bis 64 Schlägen. Die Tastenreihe **Q W E R T Z U** startet 64, 32, 16, 8, 4, 2 und 1 Schläge, **I O P** dazu 1/2, 1/4 und 1/8 Schlag. Dieselbe Taste noch einmal beendet die Schleife. Die Schleife läuft ohne Sprung und ohne Lücke. Setzt du bei laufender Schleife einen Cue, wird daraus ein Loop-Cue.
+- **Farbe:** Klick auf den Farbpunkt in der Liste rechts oder Rechtsklick auf ein belegtes Feld. Neue Hot Cues sind grün, neue Memory Cues rot, wie in Rekordbox ohne eigene Farbe. Zur Wahl stehen die Farben von Rekordbox: für Hot Cues 16, für Memory Cues acht und „keine Farbe“: Pink, Rot, Orange, Gelb, Grün, Aqua, Blau und Lila. Die Farben auf dem Bildschirm können von denen in Rekordbox leicht abweichen.
+- In der Liste gibst du Cues außerdem einen Namen oder löschst sie. Im Zoom lassen sich Cues an ihrer Fahne verschieben.
+
+**Beatgrid**
+
+Die Knöpfe sind aufgebaut wie das GRID-Feld in Rekordbox: Du justierst das Raster nach, das Tempo folgt daraus.
+
+- Tempo eintippen, per **TAP** (Taste **B**, nur solange der Track läuft) klopfen, halbieren oder verdoppeln.
+- **Ganzes Grid** oder **ab hier:** bestimmt, wofür die Knöpfe gelten. „Ab hier“ beginnt am nächsten Schlag einen eigenen Abschnitt, davor bleibt alles stehen.
+- **Verschieben:** einfache Pfeile um 1 ms, doppelte um 10 ms. Du kannst auch eine Beat-Linie im Zoom direkt ziehen.
+- **Beat-Intervalle** verengen oder erweitern: fein um 0,01 BPM, grob um 0,1 BPM, der erste Schlag bleibt stehen. Mit gedrückter **Shift**-Taste dehnt auch das Ziehen einer Beat-Linie das Grid.
+- **Fadenkreuz** legt den nächsten Schlag auf die Abspielposition. **1.1** tut dasselbe und macht den Schlag dort zusätzlich zum Taktanfang, das Beatgrid beginnt also genau an der Abspielposition.
+- **Tempowechsel** beginnt ab diesem Schlag einen eigenen Abschnitt mit eigenem Tempo.
+- Das **Metronom** tickt auf dem Grid, der Track wird dabei etwas leiser, das **Schloss** sperrt es gegen Änderungen.
+
+Hat ein Track noch kein Grid, misst du es oder beginnst es an der Abspielposition.
+
+**Memory Cues**
+
+Der Reiter zeigt immer zehn Plätze, ein Klick auf einen freien setzt den Cue an der Abspielposition. Nach dem Löschen rückt der nächste nach, mit einem weiteren Klick auf dasselbe Kreuz ist auch er weg. Liegt ein Hot Cue an derselben Stelle, steht sein Buchstabe in der Zeile. Bei aktivem Loop entsteht ein Memory Loop: Vorgabe ist der Active Memory Loop (rot), ein Klick auf das Loop-Symbol wechselt zum normalen (orange) und zurück. Läuft der Track über den Beginn eines Active Memory Loop, greift dieser von selbst.
+
+**Phrasen**
+
+Die Phrasen hängen am Beatgrid: Verschiebst oder dehnst du es, wandern sie mit und bleiben auf ihren Schlägen. Cues bleiben dabei an ihrer Stelle im Track.
+
+Im farbigen Band unter dem Zoom, die Ränder auch im Band der Gesamtansicht:
+
+- **Am Rand ziehen** funktioniert wie bei einer Tabellenspalte: Beim Überfahren erscheint der Griff, der Rand folgt der Maus und rastet an den Rasterlinien ein. Beim Ziehen steht die neue Länge in Takten dabei. Die Nachbarphrase wird entsprechend kleiner oder größer, alles danach bleibt auf seiner Stelle im Track. Ziehst du über sie hinaus, verschwindet sie und die nächste wird kleiner. Solange du nicht loslässt, holst du sie durch Zurückziehen wieder, danach mit **Cmd+Z**.
+- **In der Mitte ziehen** verschiebt sie, ihre Nachbarn geben nach.
+- Beides rastet immer auf jedem Schlag ein, auch ohne Quantisieren, mit **Shift** nur auf Takt 1, mit der **Wahltaste** gar nicht.
+- **Teilen** (Taste **X**) zerlegt die Phrase am Beatgrid-Marker, der der Abspielposition am nächsten liegt. Mit Shift nimmt es den nächsten Takt 1. Klickst du den Knopf mit gedrückter Wahltaste, teilt es genau an der Abspielposition. Eine Phrase anklicken, dann die Art wählen oder sie entfernen. Die Nummer vergibt TrackTab selbst: Jede Phrase wird innerhalb ihrer Art in Track-Reihenfolge durchgezählt. Nach Rekordbox geht sie, soweit es sie dort gibt: bei mittlerer Stimmung Verse 1 bis 6, bei niedriger Verse 1 und 2, bei hoher Intro, Chorus und Outro 1 und 2 sowie Up 1 bis 3. Alle anderen Phrasen haben in Rekordbox keine Nummer, eine höhere Zahl wird dort zur höchsten möglichen.
+
+**Quantisieren (Knopf Q):** Cues und Loops rasten auf dem Schlag ein. Mit gedrückter **Wahltaste** rastet nichts ein.
+
+**Analyse-Sperre (zwei Schild-Symbole über den Werkzeugen, auch unter Info):** Beatgrid und Phrasen lassen sich einzeln sperren. Bearbeitest du eines davon, sperrt TrackTab es von selbst. Die Analyse lässt Gesperrtes aus und nennt die Zahl der übersprungenen Tracks. Die Beatgrid-Sperre gilt auch für „BPM & Tonart analysieren“, Genre und Stimmung laufen weiter. Ein Klick aufs Schild gibt frei oder sperrt von Hand, die nächste Bearbeitung sperrt wieder. Setzt du eine Bearbeitung zurück, fällt ihre Sperre von selbst. **Rekordbox Update** sperrt den Track zusätzlich: in TrackTab beide Felder und in Rekordbox dessen Analyse-Sperre, die dort immer für alles zusammen gilt. Bei noch nicht analysierten Tracks unterbleibt das. **Rekordbox laden** hebt die Sperre in Rekordbox nicht auf, das geht dort selbst. Unter **Info** startest du Beatgrid-Analyse, Phrasen-Analyse oder beides getrennt. Auch ein in Rekordbox gesperrter Track lässt sich weiter per **Rekordbox Update** überschreiben.
+
+Phrasen und Beatgrid bleiben aufeinander ausgerichtet: Neu gemessene Phrasen rasten auf dem bestehenden Beatgrid ein, eine neue Beatgrid-Analyse oder eine Änderung von Hand nimmt die Phrasen mit, auch gesperrte. In der DJ-Ansicht gilt das Ergebnis einer Analyse sofort, die Spalte Rekordbox zeigt es als Abweichung, bis du es überträgst.
+
+**Rekordbox abgleichen** (Datenbank-Symbol) lädt Beatgrid, Phrasen und Cues in TrackTab, soweit dort für den Track noch nichts steht. Der erste Lauf liest jeden Track und dauert etwas. Danach überschreibt nichts mehr von selbst: Ändert sich ein Track in Rekordbox, wird die Rekordbox-Spalte rot und der Editor fragt nach. Übernommen wird nur mit **Rekordbox laden**, in die andere Richtung nur mit **Rekordbox Update**.
+
+**Mehrere Tracks:** Markierst du in der DJ-Liste Tracks, stehen in der Leiste **Zu Rekordbox hinzufügen**, **Rekordbox laden**, **Rekordbox Update**, **Beatgrid-Analyse**, **Phrasen-Analyse** und **Beatgrid + Phrasen** (beides in einem Durchgang). Die Analysen überspringen Gesperrtes. Laden verwirft die Bearbeitungen der markierten Tracks. Hinzufügen überspringt Tracks, die schon in Rekordbox stehen, und lässt sie dort unverändert. Laden und Update überspringen Tracks, die dort fehlen oder bei denen nichts zu übertragen ist.
+
+**Rückgängig:** **Cmd+Z** und **Cmd+Shift+Z** gelten für alle Änderungen am offenen Track. Weitere Tastenkürzel stehen unter **Info**.
+
+### Abgleich mit Rekordbox
+
+Rechts unten stehen die Knöpfe. Der Text darüber sagt, was noch nicht in Rekordbox ist. Zum Schreiben muss **Rekordbox geschlossen sein**, auch der Hintergrunddienst „rekordboxAgent“. TrackTab sichert vorher die Datenbank und die betroffenen Analysedateien unter `backup/rekordbox/`.
+
+- **Rekordbox laden:** übernimmt den Stand aus Rekordbox und verwirft deine Bearbeitungen, nach Rückfrage.
+- **Rekordbox Update:** schreibt deine Bearbeitungen nach Rekordbox: Hot Cues, Memory Cues und Loops samt Namen und Farbe, das Beatgrid und die Phrasen.
+- **Zu Rekordbox hinzufügen:** erscheint bei Tracks, die dort fehlen. Tags, Beatgrid, Phrasen, Cues und Cover werden direkt übernommen, Rekordbox muss den Track nicht erst analysieren. Die farbigen Wellenformen rechnet Rekordbox beim ersten Laden selbst nach. Nur bei wenigen MP3s mit ungewöhnlichem Dateikopf fehlen Beatgrid und Phrasen zunächst, TrackTab sagt das dann: In Rekordbox analysieren lassen und danach **Rekordbox Update** drücken.
+
+**Änderungen in Rekordbox:** Hast du einen Teil in TrackTab bearbeitet und er wurde danach auch in Rekordbox geändert, erscheint beim Öffnen ein Hinweis. Du wählst **Aus Rekordbox übernehmen** oder **TrackTab behalten**. Unbearbeitetes zeigt ohnehin immer den aktuellen Stand aus Rekordbox.
+
+> [!warning]
+> Rekordbox hat keine offizielle Schnittstelle dafür. Die Daten werden direkt in seine Bibliothek geschrieben. Prüfe das Ergebnis deshalb zuerst an einem Track in Rekordbox selbst.
 
 ## Genre, Stimmung und Energie
 

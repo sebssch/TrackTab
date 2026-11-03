@@ -74,6 +74,7 @@ Die Laufzeit des Pakets (CPython) steht unter der PSF-Lizenz 2.0; zum Bündeln d
 | Bestandteil | Lizenz | Quelle |
 |---|---|---|
 | Lucide-Icons (`app/webui/lucide-icons.js`) | ISC (Text in [licenses/ui/](licenses/ui/lucide-LICENSE.txt)) | <https://lucide.dev> · <https://github.com/lucide-icons/lucide/blob/main/LICENSE> |
+| Beatgrid-Analyse (`app/beatgrid.py`) und Rekordbox-Analysedateien (`app/anlzwrite.py`), Python-Nachbauten von `crates/rbl-analysis` und `crates/rbl-anlz` aus rbxport | GPL-2.0-oder-später | <https://github.com/chrisle/rbxport> |
 
 ## 5. Hinweise
 

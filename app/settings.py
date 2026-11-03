@@ -71,6 +71,14 @@ GROUPS = [
                          {"value": "light", "label": "Hell"},
                          {"value": "dark", "label": "Dunkel"}],
              "help": "„Automatisch“ folgt der Systemeinstellung des Rechners."},
+            {"key": "waveform_style", "type": "select",
+             "label": "Waveform-Farbe in Bearbeiten und Player",
+             "options": [{"value": "standard", "label": "Standard (grau)"},
+                         {"value": "rgb", "label": "RGB"},
+                         {"value": "3band", "label": "3-Band"}],
+             "help": "Die Waveform erzeugt TrackTab hier immer selbst, auch für "
+                     "Tracks in Rekordbox. Beim ersten Öffnen eines Tracks dauert "
+                     "die Farbe rund eine Sekunde, danach ist sie gespeichert."},
             {"key": "font_size", "type": "select", "label": "Schriftgröße",
              "options": [{"value": "klein", "label": "Klein"},
                          {"value": "mittel", "label": "Mittel"},
@@ -486,6 +494,53 @@ GROUPS = [
         ],
     },
     {
+        "id": "djview", "title": "DJ-Ansicht",
+        "fields": [
+            {"key": "dj_waveform_source", "type": "select", "width": "half",
+             "label": "Waveform-Quelle",
+             "options": [{"value": "fallback", "label": "Rekordbox, sonst TrackTab"},
+                         {"value": "tracktab", "label": "Nur TrackTab"}],
+             "help": "Woher die Waveform im DJ-Editor stammt. Das App-Symbol oben rechts "
+                     "in der Waveform zeigt die tatsächliche Quelle."},
+            {"key": "dj_waveform_style", "type": "select", "width": "half",
+             "label": "Waveform-Farbe",
+             "options": [{"value": "standard", "label": "Standard (grau)"},
+                         {"value": "rgb", "label": "RGB"},
+                         {"value": "3band", "label": "3-Band"}],
+             "help": "Gilt nur für die DJ-Ansicht und für beide Quellen. Für "
+                     "Bearbeiten und Player gibt es eine eigene Einstellung unter "
+                     "Darstellung."},
+            {"key": "dj_waveform_surface", "type": "select", "width": "half",
+             "label": "Waveform-Fläche",
+             "options": [{"value": "dark", "label": "Dunkel"},
+                         {"value": "light", "label": "Hell"},
+                         {"value": "ui", "label": "UI-Farbe (folgt dem Design)"}],
+             "help": "Auf heller Fläche nimmt die Waveform eigene, dunklere Farben, "
+                     "damit Weiß und helle Töne sichtbar bleiben."},
+        ],
+    },
+    {
+        "id": "bpmkey_phrases", "parent": "djview", "title": "Beatgrid & Phrasen",
+        "fields": [
+            {"key": "phrase_grid_mode", "type": "select", "width": "half",
+             "requires": "phrases",
+             "label": "Beatgrid-Modus",
+             "options": [{"value": "auto", "label": "Auto (Flex nur bei Tempowechsel)"},
+                         {"value": "normal", "label": "Normal (ein festes Tempo)"},
+                         {"value": "flex", "label": "Flex (folgt Tempowechseln, für DJ-Edits)"}],
+             "help": "Gilt für neue Analysen, bereits gemessene Tracks bleiben, "
+                     "bis sie neu analysiert werden."},
+            {"key": "beatgrid_source", "type": "select", "width": "half",
+             "label": "Beatgrid & Phrasen anzeigen aus",
+             "options": [{"value": "fallback", "label": "Rekordbox, sonst TrackTab"},
+                         {"value": "rekordbox", "label": "Nur Rekordbox"},
+                         {"value": "tracktab", "label": "Nur TrackTab"}],
+             "help": "„Rekordbox, sonst TrackTab“ greift auf die eigene Analyse "
+                     "zurück, solange Rekordbox noch keine Daten hat, etwa bei "
+                     "einem dort gerade hinzugefügten Track."},
+        ],
+    },
+    {
         "id": "rekordbox", "title": "Rekordbox",
         "fields": [
             {"key": "external_rekordbox", "type": "app", "appList": "rekordboxes",
@@ -510,16 +565,6 @@ GROUPS = [
                      "in Rekordbox existieren. „Playlist auswählen“ lädt den "
                      "aktuellen Playlist-Baum und geht nur bei geschlossenem "
                      "Rekordbox. Leer lassen, dann bleibt der Knopf ausgeblendet."},
-            {"key": "rekordbox_waveform_style", "type": "select", "break": True, "width": "half",
-             "requires": "rekordbox",
-             "label": "Waveform-Stil",
-             "options": [{"value": "standard", "label": "Standard"},
-                         {"value": "rgb", "label": "RGB"},
-                         {"value": "3band", "label": "3-Band"}],
-             "help": "„Standard“ erzwingt die graue Waveform. RGB/3-Band wirken "
-                     "nur, wenn der Track in Rekordbox vorhanden, dort analysiert "
-                     "ist und die passende Analysedatei existiert — sonst "
-                     "automatisch ebenfalls die graue Standard-Waveform."},
             {"key": "rekordbox_quality_check", "type": "bool", "width": "half",
              "requires": "rekordbox",
              "label": "Qualitätsprüfung beim Import",
@@ -598,7 +643,7 @@ def current(cfg: dict | None = None) -> dict:
 
 
 def describe() -> dict:
-    from . import bpmkey, genremood, media, stems
+    from . import bpmkey, genremood, media, phrases, stems
     ensure_apple_music_column_view()
     defaults = current(_defaults_cfg())
     detected = media.find_audio_editor()
@@ -626,6 +671,8 @@ def describe() -> dict:
             # die eigenen Schalter und liesse sich nicht zuruecknehmen.
             "bpmkey_installed": bpmkey.available(),
             "genremood_installed": genremood.available(),
+            # onnxruntime + Phrasenmodell vorhanden? Sonst Aktion ausblenden.
+            "phrases_available": phrases.available(),
             # Kein UI-Feld (kein Setting zum Editieren, nur Anzeige im
             # Backup-Block) -- deshalb hier separat statt ueber _FIELDS/current().
             "backup_keep": int(cfgmod.load().get("backup_keep", 10)),
@@ -675,9 +722,11 @@ def _clean_number(field: dict, raw):
     return round(value, 3)
 
 
-def _clean_list(raw) -> list[str]:
+def _clean_list(raw, newline_only: bool = False) -> list[str]:
+    # Ordnernamen duerfen Kommas enthalten ("Chromeo, Chris Lorenzo"):
+    # fuer Ordnerlisten deshalb nur an Zeilenumbruechen trennen.
     if isinstance(raw, str):
-        raw = [x for x in raw.replace("\n", ",").split(",")]
+        raw = raw.split("\n") if newline_only else raw.replace("\n", ",").split(",")
     return [str(x).strip() for x in raw if str(x).strip()]
 
 
@@ -706,7 +755,7 @@ def validate(incoming: dict) -> dict:
                 raise ValueError(f"{field['label']}: ungültiger Wert")
             clean[key] = val
         elif field["type"] in ("list", "paths", "folderlist"):
-            items = _clean_list(raw)
+            items = _clean_list(raw, newline_only=field["type"] == "folderlist")
             if not items and not field.get("allow_empty"):
                 raise ValueError(f"{field['label']}: darf nicht leer sein")
             if field["type"] == "list" and key == "extensions":
@@ -803,6 +852,8 @@ def save(incoming: dict) -> dict:
     stored.pop("genremood_max_minutes", None)
     if "bpmkey_comment_content" in clean:
         stored.pop("genremood_write_energy", None)
+    if "waveform_style" in clean:
+        stored.pop("rekordbox_waveform_style", None)
 
     if classes:
         live = cfgmod.load()["cutoff_classes"]

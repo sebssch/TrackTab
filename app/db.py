@@ -129,6 +129,27 @@ CREATE TABLE IF NOT EXISTS waveform (
     ts    REAL
 );
 
+-- Kleinstes und groesstes Tempo im Beatgrid eines Tracks, beim Oeffnen im DJ-Editor
+-- gemerkt. Grundlage fuer die rote BPM-Spalte: das Grid selbst liegt in Rekordbox'
+-- Analysedateien, die sich nicht fuer die ganze Liste lesen lassen.
+CREATE TABLE IF NOT EXISTS grid_tempo (
+    path TEXT PRIMARY KEY,
+    lo   REAL,
+    hi   REAL,
+    ts   REAL,
+    seq  TEXT
+);
+
+-- Farbige Gesamtansicht fuer Bearbeiten und Player (wavedetail.overview()), wie
+-- 'waveform' ein reiner Cache. Nur der eingestellte Stil.
+CREATE TABLE IF NOT EXISTS waveform_color (
+    path  TEXT PRIMARY KEY,
+    mtime REAL,
+    style TEXT,
+    data  BLOB,
+    ts    REAL
+);
+
 -- Bulk-Cache: welche Pfade zuletzt in der Rekordbox-Sammlung gefunden
 -- wurden. Kein Nutzer-Toggle wie ignored/favorites/corrected, sondern ein
 -- Abgleichsergebnis -- wird bei jedem vollen Abgleich komplett ersetzt
@@ -198,6 +219,62 @@ CREATE TABLE IF NOT EXISTS genremood (
     energy REAL,
     model  TEXT,
     ts     REAL
+);
+
+-- Beatgrid und Phrasen aus der eigenen Analyse (app/phrases.py). Abgeleitete
+-- Messung wie 'genremood', nie in der Datei. Rekordbox-Phrasen stehen hier
+-- nicht: die liest rekordbox.track_state() bei Bedarf frisch.
+-- changes = JSON [[Sekunde, BPM], ...], phrases = JSON [{start, end, kind, num}],
+-- beats = JSON [[Millisekunde, Schlagnummer], ...].
+CREATE TABLE IF NOT EXISTS phrases (
+    path       TEXT PRIMARY KEY,
+    mode       TEXT,
+    used       TEXT,
+    bpm        REAL,
+    confidence REAL,
+    first_beat REAL,
+    downbeat   REAL,
+    changes    TEXT,
+    phrases    TEXT,
+    mood       INTEGER,
+    uncertain  INTEGER,
+    version    TEXT,
+    ts         REAL,
+    beats      TEXT
+);
+
+-- Bearbeitungen aus der DJ-Ansicht (app/webui/dj.js): Beatgrid, Phrasen und Cues
+-- als JSON, je Feld NULL = unbearbeitet (dann gilt Rekordbox bzw. die eigene
+-- Analyse). Nutzerdaten, deshalb nicht in _PRUNE_TABLES. Geht nie in die Datei,
+-- nach Rekordbox nur auf ausdruecklichen Knopfdruck. Alle Zeiten liegen auf der
+-- eigenen Zeitachse (ffmpeg). rb_base = JSON {"rb": {Feld: Pruefsumme}, "pushed":
+-- {Feld: Pruefsumme}}: Stand von Rekordbox beim letzten Abgleich und zuletzt dorthin
+-- geschriebener eigener Stand, daran haengt die Rueckfrage bei Abweichungen.
+-- Stand von Rekordbox, festgehalten beim Abgleich (je Feld JSON auf Rekordbox' Zeitachse,
+-- NULL = dort noch nichts). Danach gilt er in der DJ-Ansicht statt des Live-Stands, spaetere
+-- Aenderungen dort kommen nur per Knopf herueber. seen: Pruefsummen je Feld, was der Nutzer
+-- zuletzt gesehen hat; changed: Felder, die dort seither abweichen; stamp: Aenderungsstand
+-- des Tracks in Rekordbox, spart das Lesen unveraenderter Tracks.
+CREATE TABLE IF NOT EXISTS rb_snapshot (
+    path    TEXT PRIMARY KEY,
+    grid    TEXT,
+    phrases TEXT,
+    cues    TEXT,
+    seen    TEXT,
+    changed TEXT,
+    stamp   TEXT,
+    ts      REAL
+);
+
+CREATE TABLE IF NOT EXISTS dj_track (
+    path    TEXT PRIMARY KEY,
+    grid    TEXT,
+    phrases TEXT,
+    cues    TEXT,
+    ts      REAL,
+    rb_base TEXT,
+    grid_lock INTEGER NOT NULL DEFAULT 0,
+    phrases_lock INTEGER NOT NULL DEFAULT 0
 );
 
 -- Eigene Tags des Nutzers (frei benannt, z. B. "Warm-up", "Peak Time"),
@@ -338,9 +415,23 @@ def _ensure_playlist_columns(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(playlists)")}
     if "fav_slot" not in existing:
         conn.execute("ALTER TABLE playlists ADD COLUMN fav_slot INTEGER")
+    dj_track = {row["name"] for row in conn.execute("PRAGMA table_info(dj_track)")}
+    if "rb_base" not in dj_track:
+        conn.execute("ALTER TABLE dj_track ADD COLUMN rb_base TEXT")
+    if "seq" not in {row["name"] for row in conn.execute("PRAGMA table_info(grid_tempo)")}:
+        conn.execute("ALTER TABLE grid_tempo ADD COLUMN seq TEXT")
+    if "grid_lock" not in dj_track:
+        conn.execute("ALTER TABLE dj_track ADD COLUMN grid_lock INTEGER NOT NULL DEFAULT 0")
+        conn.execute("ALTER TABLE dj_track ADD COLUMN phrases_lock INTEGER NOT NULL DEFAULT 0")
+        # Frueher gab es eine Sperre fuer beides, sie gilt jetzt fuer beide.
+        if "analysis_lock" in dj_track:
+            conn.execute("UPDATE dj_track SET grid_lock = analysis_lock, phrases_lock = analysis_lock")
     pending = {row["name"] for row in conn.execute("PRAGMA table_info(rekordbox_pending)")}
     if "prior_path" not in pending:
         conn.execute("ALTER TABLE rekordbox_pending ADD COLUMN prior_path TEXT")
+    phrases = {row["name"] for row in conn.execute("PRAGMA table_info(phrases)")}
+    if "beats" not in phrases:
+        conn.execute("ALTER TABLE phrases ADD COLUMN beats TEXT")
     conn.commit()
 
 
@@ -653,7 +744,8 @@ def delete_cached_cover(conn: sqlite3.Connection, path: str) -> None:
 # wandert, die zweite Haelfte (playlist_id) bleibt.
 _PATH_TABLES = ("files", "ignored", "corrected", "waveform",
                 "rekordbox", "rekordbox_pending", "rekordbox_stem_pending",
-                "music_added", "cover_cache", "playlist_items", "dup_dismissed", "genremood", "user_tags")
+                "music_added", "cover_cache", "playlist_items", "dup_dismissed", "genremood", "user_tags",
+                "phrases", "dj_track", "waveform_color", "grid_tempo", "rb_snapshot")
 
 
 def move_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> bool:
@@ -770,7 +862,7 @@ def reconcile_case_renames(conn: sqlite3.Connection,
 # Daten. Ohne 'files'-Zeile sind sie unerreichbarer Ballast, und sie lassen
 # sich jederzeit neu berechnen bzw. abgleichen.
 _PRUNE_TABLES = ("files", "waveform", "rekordbox", "rekordbox_pending",
-                  "rekordbox_stem_pending", "music_added", "genremood")
+                  "rekordbox_stem_pending", "music_added", "genremood", "phrases", "waveform_color", "grid_tempo", "rb_snapshot")
 
 
 def prune_missing(conn: sqlite3.Connection, existing: set[str]) -> list[str]:
@@ -927,6 +1019,191 @@ def save_genremood(conn: sqlite3.Connection, path: str, genres: list,
          time.time()),
     )
     conn.commit()
+
+
+def save_phrases(conn: sqlite3.Connection, path: str, result: dict) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO phrases (path, mode, used, bpm, confidence, first_beat, "
+        "downbeat, changes, phrases, mood, uncertain, version, ts, beats) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (path, result["mode"], result["used"], result["bpm"], result["confidence"],
+         result["first_beat"], result["downbeat"], json.dumps(result["changes"]),
+         json.dumps(result["phrases"]), result["mood"], int(bool(result["uncertain"])),
+         result["version"], time.time(), json.dumps(result["beats"])),
+    )
+    conn.commit()
+
+
+def get_phrases(conn: sqlite3.Connection, path: str) -> dict | None:
+    """Gespeicherte Analyse eines Pfads oder None. Kaputte JSON-Werte zaehlen als leer."""
+    r = conn.execute("SELECT * FROM phrases WHERE path = ?", (path,)).fetchone()
+    if r is None:
+        return None
+    out = dict(r)
+    for key, empty in (("changes", []), ("phrases", []), ("beats", [])):
+        try:
+            out[key] = json.loads(out[key] or "[]")
+        except (TypeError, ValueError):
+            out[key] = empty
+    out["uncertain"] = bool(out["uncertain"])
+    return out
+
+
+DJ_TRACK_FIELDS = ("grid", "phrases", "cues")
+_DJ_LOCK_FIELDS = ("grid", "phrases")
+
+
+def get_dj_track(conn: sqlite3.Connection, path: str) -> dict:
+    """Bearbeitungen eines Pfads: {"grid": ..., "phrases": ..., "cues": ...},
+    je Feld None = unbearbeitet. Kaputte JSON-Werte zaehlen als unbearbeitet."""
+    r = conn.execute("SELECT grid, phrases, cues FROM dj_track WHERE path = ?", (path,)).fetchone()
+    out: dict = dict.fromkeys(DJ_TRACK_FIELDS)
+    if r is None:
+        return out
+    for key in DJ_TRACK_FIELDS:
+        try:
+            out[key] = json.loads(r[key]) if r[key] is not None else None
+        except (TypeError, ValueError):
+            out[key] = None
+    return out
+
+
+def dj_edited_bpms(conn: sqlite3.Connection) -> dict:
+    """{Pfad: Tempo} aller bearbeiteten Beatgrids, je Track das des laengsten Abschnitts."""
+    out: dict = {}
+    for row in conn.execute("SELECT path, grid FROM dj_track WHERE grid IS NOT NULL"):
+        try:
+            grid = json.loads(row["grid"]) or {}
+            segs = grid.get("segments") or []
+            beats = grid.get("beats") or []
+            if not segs:
+                continue
+            ends = [s["t"] for s in segs[1:]] + [beats[-1][0] / 1000 if beats else segs[-1]["t"]]
+            out[row["path"]] = max(zip(segs, ends), key=lambda p: p[1] - p[0]["t"])[0]["bpm"]
+        except (TypeError, ValueError, KeyError, IndexError):
+            continue
+    return out
+
+
+def dj_track_edits(conn: sqlite3.Connection) -> dict:
+    """{Pfad: (Bearbeitungen, Abgleich-Stand)} aller Tracks mit Bearbeitungen."""
+    paths = [r["path"] for r in conn.execute(
+        "SELECT path FROM dj_track WHERE grid IS NOT NULL OR phrases IS NOT NULL OR cues IS NOT NULL")]
+    return {p: (get_dj_track(conn, p), get_dj_base(conn, p)) for p in paths}
+
+
+def grid_tempo_map(conn: sqlite3.Connection) -> dict:
+    return {r["path"]: [r["lo"], r["hi"]] for r in conn.execute("SELECT path, lo, hi FROM grid_tempo")}
+
+
+def grid_tempo_seq_map(conn: sqlite3.Connection) -> dict:
+    """{Pfad: Tempi in Track-Reihenfolge}, nur wo die Folge schon bekannt ist."""
+    out: dict = {}
+    for r in conn.execute("SELECT path, seq FROM grid_tempo WHERE seq IS NOT NULL"):
+        try:
+            out[r["path"]] = json.loads(r["seq"])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def set_grid_tempo(conn: sqlite3.Connection, path: str, lo: float | None, hi: float | None,
+                   seq: list | None = None) -> None:
+    """None = der Track hat kein Beatgrid. seq = Tempowechsel in Track-Reihenfolge."""
+    if lo is None or hi is None:
+        conn.execute("DELETE FROM grid_tempo WHERE path = ?", (path,))
+    else:
+        conn.execute("INSERT OR REPLACE INTO grid_tempo (path, lo, hi, ts, seq) VALUES (?, ?, ?, ?, ?)",
+                     (path, lo, hi, time.time(), json.dumps(seq) if seq is not None else None))
+    conn.commit()
+
+
+def get_rb_snapshot(conn: sqlite3.Connection, path: str) -> dict | None:
+    """Festgehaltener Rekordbox-Stand eines Pfads oder None."""
+    r = conn.execute("SELECT * FROM rb_snapshot WHERE path = ?", (path,)).fetchone()
+    if r is None:
+        return None
+    out = {"stamp": r["stamp"]}
+    for key, empty in (("grid", None), ("phrases", None), ("cues", None), ("seen", {}), ("changed", [])):
+        try:
+            out[key] = json.loads(r[key]) if r[key] is not None else empty
+        except (TypeError, ValueError):
+            out[key] = empty
+    return out
+
+
+def save_rb_snapshot(conn: sqlite3.Connection, path: str, snap: dict) -> None:
+    conn.execute(
+        "INSERT OR REPLACE INTO rb_snapshot (path, grid, phrases, cues, seen, changed, stamp, ts)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (path, *(None if snap[k] is None else json.dumps(snap[k]) for k in DJ_TRACK_FIELDS),
+         json.dumps(snap["seen"]), json.dumps(snap["changed"]), snap.get("stamp"), time.time()))
+    conn.commit()
+
+
+def rb_snapshot_changed_map(conn: sqlite3.Connection) -> dict:
+    """{Pfad: Felder} aller Tracks, die sich in Rekordbox seit dem Festhalten geaendert haben."""
+    out: dict = {}
+    for r in conn.execute("SELECT path, changed FROM rb_snapshot WHERE changed IS NOT NULL AND changed != '[]'"):
+        try:
+            out[r["path"]] = json.loads(r["changed"])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def get_dj_base(conn: sqlite3.Connection, path: str) -> dict:
+    """Abgleich-Stand eines Pfads: {"rb": {...}, "pushed": {...}}."""
+    r = conn.execute("SELECT rb_base FROM dj_track WHERE path = ?", (path,)).fetchone()
+    try:
+        base = json.loads(r["rb_base"]) if r is not None and r["rb_base"] else {}
+    except (TypeError, ValueError):
+        base = {}
+    return {"rb": dict(base.get("rb") or {}), "pushed": dict(base.get("pushed") or {})}
+
+
+def save_dj_track(conn: sqlite3.Connection, path: str, fields: dict, base: dict | None = None,
+                  auto_lock: bool = True) -> None:
+    """Schreibt nur die uebergebenen Felder, None setzt eines zurueck. Sind danach
+    alle leer und ist nichts gesperrt, verschwindet die Zeile samt Abgleich-Stand.
+    base = neuer Abgleich-Stand, None laesst ihn stehen.
+
+    Analyse-Sperre je Beatgrid und Phrasen: eine Bearbeitung sperrt das jeweilige
+    Feld, zuruecksetzen gibt es wieder frei. Cues beruehrt keine Analyse. auto_lock=False
+    laesst die Sperren stehen: das Ergebnis einer Analyse ist keine Bearbeitung."""
+    merged = get_dj_track(conn, path)
+    merged.update({k: v for k, v in fields.items() if k in DJ_TRACK_FIELDS})
+    keep_base = base if base is not None else get_dj_base(conn, path)
+    locks = dj_locks(conn, path)
+    for key in _DJ_LOCK_FIELDS if auto_lock else ():
+        if key in fields:
+            locks[key] = fields[key] is not None
+    _write_dj_track(conn, path, merged, keep_base, locks)
+    conn.commit()
+
+
+def dj_locks(conn: sqlite3.Connection, path: str) -> dict:
+    r = conn.execute("SELECT grid_lock, phrases_lock FROM dj_track WHERE path = ?", (path,)).fetchone()
+    return {"grid": bool(r and r["grid_lock"]), "phrases": bool(r and r["phrases_lock"])}
+
+
+def set_dj_locks(conn: sqlite3.Connection, path: str, changes: dict) -> None:
+    """Sperren von Hand setzen oder freigeben, die Bearbeitungen bleiben dabei stehen."""
+    locks = dj_locks(conn, path)
+    locks.update({k: bool(v) for k, v in changes.items() if k in _DJ_LOCK_FIELDS})
+    _write_dj_track(conn, path, get_dj_track(conn, path), get_dj_base(conn, path), locks)
+    conn.commit()
+
+
+def _write_dj_track(conn: sqlite3.Connection, path: str, merged: dict, base: dict, locks: dict) -> None:
+    if not any(locks.values()) and all(merged[k] is None for k in DJ_TRACK_FIELDS):
+        conn.execute("DELETE FROM dj_track WHERE path = ?", (path,))
+        return
+    conn.execute(
+        "INSERT OR REPLACE INTO dj_track (path, grid, phrases, cues, ts, rb_base, grid_lock, phrases_lock)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (path, *(None if merged[k] is None else json.dumps(merged[k]) for k in DJ_TRACK_FIELDS),
+         time.time(), json.dumps(base), int(locks["grid"]), int(locks["phrases"])))
 
 
 def dup_dismissed_paths(conn: sqlite3.Connection) -> set[str]:
@@ -1327,10 +1604,19 @@ def rekordbox_stem_pending_clear(conn: sqlite3.Connection, paths: list[str]) -> 
     conn.commit()
 
 
-def unmark_rekordbox_present(conn: sqlite3.Connection, paths: list[str]) -> None:
-    """Gegenstueck zu mark_rekordbox_present() nach einem Entfernen aus der
-    Rekordbox-Sammlung -- der Haken verschwindet sofort."""
-    conn.executemany("DELETE FROM rekordbox WHERE path = ?", [(p,) for p in paths])
+def forget_rekordbox_tracks(conn: sqlite3.Connection, paths: list[str]) -> None:
+    """Raeumt alles ab, was nach einem Entfernen aus der Rekordbox-Sammlung noch an deren
+    Stand haengt: Praesenz, Warteschlangen, festgehaltener Stand, Abgleich-Pruefsummen und
+    gemerkte Tempo-Spanne. Eigene Bearbeitungen in 'dj_track' und die eigene Analyse in
+    'phrases' bleiben. Eine Sperre bleibt nur, wo eine Bearbeitung dahintersteht, sonst
+    stammt sie vom Schreiben nach Rekordbox."""
+    for path in paths:
+        for table in ("rekordbox", "rekordbox_pending", "rekordbox_stem_pending", "rb_snapshot", "grid_tempo"):
+            conn.execute(f"DELETE FROM {table} WHERE path = ?", (path,))
+        edits = get_dj_track(conn, path)
+        locks = dj_locks(conn, path)
+        locks = {f: locks[f] and edits[f] is not None for f in locks}
+        _write_dj_track(conn, path, edits, {"rb": {}, "pushed": {}}, locks)
     conn.commit()
 
 
@@ -1430,6 +1716,19 @@ def waveform_get(conn: sqlite3.Connection, path: str, mtime: float) -> list | No
         return json.loads(row["peaks"] or "[]")
     except (TypeError, ValueError):
         return None
+
+
+def waveform_color_get(conn: sqlite3.Connection, path: str, mtime: float, style: str) -> bytes | None:
+    row = conn.execute("SELECT mtime, style, data FROM waveform_color WHERE path = ?", (path,)).fetchone()
+    if row is None or row["style"] != style or abs((row["mtime"] or 0) - mtime) > 1.0:
+        return None
+    return row["data"]
+
+
+def waveform_color_put(conn: sqlite3.Connection, path: str, mtime: float, style: str, data: bytes) -> None:
+    conn.execute("INSERT OR REPLACE INTO waveform_color (path, mtime, style, data, ts) VALUES (?, ?, ?, ?, ?)",
+                 (path, mtime, style, data, time.time()))
+    conn.commit()
 
 
 def waveform_put(conn: sqlite3.Connection, path: str, mtime: float, peaks: list) -> None:

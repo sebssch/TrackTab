@@ -21,8 +21,9 @@
   </div>
   <div class="topcorner">
     <div class="layoutswitch" id="layoutSwitch">
-      <button class="lsbtn on" data-layout="edit"><span data-i18n="layout.edit">Bearbeiten</span></button>
       <button class="lsbtn" data-layout="player"><span data-i18n="layout.player">Player</span></button>
+      <button class="lsbtn" data-layout="dj"><span data-i18n="layout.dj">DJ</span></button>
+      <button class="lsbtn on" data-layout="edit"><span data-i18n="layout.edit">Bearbeiten</span></button>
     </div>
     <div class="combobar" id="comboBar">
       <button class="cbseg" id="btnOpenFile" data-seg="openfile" data-i18n-title="header.open_file" title="Datei öffnen"></button>
@@ -580,6 +581,14 @@
             Sammlung liegen, und aktualisiert das entsprechende Zeichen in der Prüfliste.</div>
         </div>
         <label class="toggle"><input id="rbSyncPresence" type="checkbox" checked>
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <div class="optrow">
+        <div class="opttext">
+          <label for="rbSyncLoad" class="optlabel" data-i18n="rbsync.load_label">Beatgrid, Phrasen und Cues laden</label>
+          <div class="opthelp" data-i18n="rbsync.load_help">Übernimmt die Werte aus Rekordbox für alles, was in TrackTab noch fehlt. Vorhandenes wird nie überschrieben.</div>
+        </div>
+        <label class="toggle"><input id="rbSyncLoad" type="checkbox" checked>
           <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
       </div>
       <div class="optrow">

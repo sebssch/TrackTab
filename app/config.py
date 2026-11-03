@@ -293,7 +293,10 @@ def defaults() -> dict:
         # Welcher Rekordbox-Analysedaten-Stil fuer die Player-Waveform genutzt
         # wird, wenn der Track dort analysiert ist ("rgb" oder "3band") --
         # sonst automatisch die graue Standard-Waveform.
-        "rekordbox_waveform_style": "rgb",
+        "waveform_style": "rgb",
+        "dj_waveform_source": "fallback",
+        "dj_waveform_style": "rgb",
+        "dj_waveform_surface": "dark",
         # Beim Hinzufuegen zu einer Rekordbox-Playlist erkannte Stimmungen
         # und eigene Tags als Rekordbox-"My Tag" setzen -- in der My-Tag-
         # Spalte rekordbox_mytag_category (muss in Rekordbox existieren,
@@ -472,6 +475,11 @@ def defaults() -> dict:
         "bpmkey_comment_existing": "overwrite",
         # Genre-Vorschlaege unter dieser Wahrscheinlichkeit (Prozent) ausblenden:
         "genremood_min_percent": 5,
+        # Beatgrid der Phrasen-Analyse: auto | normal | flex (siehe beatgrid.py).
+        "phrase_grid_mode": "auto",
+        # Woher Beatgrid und Phrasen kommen: fallback (Rekordbox, sonst TrackTab)
+        # | rekordbox | tracktab.
+        "beatgrid_source": "fallback",
         # Stimmungen als Mood-Tag schreiben (TXXX:MOOD / MOOD): no | tag.
         "genremood_write_mood": "no",
 
@@ -597,11 +605,21 @@ def _normalize_columns(cfg: dict) -> None:
 def load() -> dict:
     cfg = defaults()
     for source in (config_path(), local_config_path()):
-        cfg.update({k: v for k, v in _read_yaml(source).items() if v is not None})
+        values = {k: v for k, v in _read_yaml(source).items() if v is not None}
+        # Hiess frueher rekordbox_waveform_style. Je Datei umbenennen, nicht erst am Ende:
+        # im Bundle wird config.yaml nur einmal herauskopiert und behaelt den alten Namen,
+        # er darf einen spaeter gespeicherten Wert in config.local.yaml nicht schlagen.
+        if "rekordbox_waveform_style" in values:
+            old = values.pop("rekordbox_waveform_style")
+            values.setdefault("waveform_style", old)
+        cfg.update(values)
 
     _normalize_cutoff_classes(cfg)
     _normalize_columns(cfg)
     _migrate_energy_comment(cfg)
+    # "Nur Rekordbox" gibt es nicht mehr.
+    if cfg.get("dj_waveform_source") == "rekordbox":
+        cfg["dj_waveform_source"] = "fallback"
     return cfg
 
 

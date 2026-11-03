@@ -33,65 +33,53 @@ _BACKUP_KEEP = 10
 
 _HOT_CUE_LETTERS = "ABCDEFGH"
 
-# Rekordbox' Standard-Gruen fuer Hot Cues ohne eigene Farbe (aelteres
-# "CDJ"-Farbschema, siehe Praeferenzen View->Color->HOT CUE) -- Hot Cues
-# haben KEINE eigene Vorgabefarbe je Buchstabe A-H, sondern alle dieselbe.
-# Bestaetigt durch Deep-Symmetry/beat-link (dieselbe Quelle, die
-# pyrekordbox selbst fuer die ANLZ-Tag-Reihenfolge zitiert), Issue
-# https://github.com/Deep-Symmetry/beat-link/issues/51 sowie CueList.java
-# (expectedEmbeddedColor(): "the default green color used by older CDJs").
-_HOT_CUE_DEFAULT_COLOR = [0x28, 0xE2, 0x14]
+# DjmdCue.Kind -> Hot-Cue-Platz (1 = A). Kind 4 ist KEIN Platz: an echtem Material
+# steht dort ausschliesslich der Memory-Loop (561 von 561 Zeilen haben OutMsec),
+# die Hot Cues laufen 1, 2, 3 und ab D bei 5 weiter.
+_HOT_KIND_SLOT = {1: 1, 2: 2, 3: 3, 5: 4, 6: 5, 7: 6, 8: 7, 9: 8}
+_SLOT_HOT_KIND = {slot: kind for kind, slot in _HOT_KIND_SLOT.items()}
+_MEMORY_LOOP_KIND = 4
+# Color=255: keine Farbe, Rekordbox' Vorgabe bei Loops. Dort schwarz zu sehen, auf der dunklen
+# Wellenform ginge das unter, deshalb grau.
+_NO_COLOR = 255
+_NO_COLOR_RGB = [128, 128, 128]
+# So stand "keine Farbe" bei Loops frueher in gespeicherten Bearbeitungen.
+_LEGACY_LOOP_RGB = [0, 0, 255]
+# Rekordbox rechnet Cue-Zeiten zusaetzlich in 1/150 s (InFrame/OutFrame).
+_CUE_FRAMES_PER_S = 150
 
-# DjmdCue.ColorTableIndex -> RGB, NUR fuer Hot Cues (bei Memory Cues bleibt
-# das Feld leer, siehe _MEMORY_CUE_PALETTE unten fuer deren eigene, davon
-# komplett unabhaengige Farbwelt). Aus Deep-Symmetry/beat-link
-# (CueList.findRekordboxColor()), dort an echtem Material durch Testen
-# aller Werte 0-255 gegen die Rekordbox-UI ermittelt (s.o. Issue #51).
-# Werte oberhalb 0x3e sind in der Rekordbox-UI nicht waehlbar und rendern
-# dort schwarz -- deshalb hier nicht mit abgedeckt.
+# DjmdCue.ColorTableIndex -> RGB, NUR fuer Hot Cues (bei Memory Cues siehe
+# _MEMORY_CUE_PALETTE). Genau die 16 Farben, die Rekordbox 7 anbietet: je Farbe ein Hot Cue
+# dort gesetzt, Index aus der master.db gelesen, RGB aus dem Screenshot gemessen. Andere
+# Indizes kommen nicht vor, ausser als Altbestand (siehe _hot_cue_color()).
 _HOT_CUE_TABLE_COLORS = {
-    0x01: [0x30, 0x5A, 0xFF], 0x02: [0x50, 0x73, 0xFF], 0x03: [0x50, 0x8C, 0xFF],
-    0x04: [0x50, 0xA0, 0xFF], 0x05: [0x50, 0xB4, 0xFF], 0x06: [0x50, 0xB0, 0xF2],
-    0x07: [0x50, 0xAE, 0xE8], 0x08: [0x45, 0xAC, 0xDB], 0x09: [0x00, 0xE0, 0xFF],
-    0x0A: [0x19, 0xDA, 0xF0], 0x0B: [0x32, 0xD2, 0xE6], 0x0C: [0x21, 0xB4, 0xB9],
-    0x0D: [0x20, 0xAA, 0xA0], 0x0E: [0x1F, 0xA3, 0x92], 0x0F: [0x19, 0xA0, 0x8C],
-    0x10: [0x14, 0xA5, 0x84], 0x11: [0x14, 0xAA, 0x7D], 0x12: [0x10, 0xB1, 0x76],
-    0x13: [0x30, 0xD2, 0x6E], 0x14: [0x37, 0xDE, 0x5A], 0x15: [0x3C, 0xEB, 0x50],
-    0x16: [0x28, 0xE2, 0x14], 0x17: [0x7D, 0xC1, 0x3D], 0x18: [0x8C, 0xC8, 0x32],
-    0x19: [0x9B, 0xD7, 0x23], 0x1A: [0xA5, 0xE1, 0x16], 0x1B: [0xA5, 0xDC, 0x0A],
-    0x1C: [0xAA, 0xD2, 0x08], 0x1D: [0xB4, 0xC8, 0x05], 0x1E: [0xB4, 0xBE, 0x04],
-    0x1F: [0xBA, 0xB4, 0x04], 0x20: [0xC3, 0xAF, 0x04], 0x21: [0xE1, 0xAA, 0x00],
-    0x22: [0xFF, 0xA0, 0x00], 0x23: [0xFF, 0x96, 0x00], 0x24: [0xFF, 0x8C, 0x00],
-    0x25: [0xFF, 0x75, 0x00], 0x26: [0xE0, 0x64, 0x1B], 0x27: [0xE0, 0x46, 0x1E],
-    0x28: [0xE0, 0x30, 0x1E], 0x29: [0xE0, 0x28, 0x23], 0x2A: [0xE6, 0x28, 0x28],
-    0x2B: [0xFF, 0x37, 0x6F], 0x2C: [0xFF, 0x2D, 0x6F], 0x2D: [0xFF, 0x12, 0x7B],
-    0x2E: [0xF5, 0x1E, 0x8C], 0x2F: [0xEB, 0x2D, 0xA0], 0x30: [0xE6, 0x37, 0xB4],
-    0x31: [0xDE, 0x44, 0xCF], 0x32: [0xDE, 0x44, 0x8D], 0x33: [0xE6, 0x30, 0xB4],
-    0x34: [0xE6, 0x19, 0xDC], 0x35: [0xE6, 0x00, 0xFF], 0x36: [0xDC, 0x00, 0xFF],
-    0x37: [0xCC, 0x00, 0xFF], 0x38: [0xB4, 0x32, 0xFF], 0x39: [0xB9, 0x3C, 0xFF],
-    0x3A: [0xC5, 0x42, 0xFF], 0x3B: [0xAA, 0x5A, 0xFF], 0x3C: [0xAA, 0x72, 0xFF],
-    0x3D: [0x82, 0x72, 0xFF], 0x3E: [0x64, 0x73, 0xFF],
+    1: [58, 89, 246], 5: [107, 178, 249], 9: [102, 221, 251], 14: [78, 161, 146],
+    18: [81, 174, 123], 22: [109, 223, 70], 26: [178, 223, 74], 30: [182, 190, 61],
+    32: [192, 176, 57], 38: [209, 107, 50], 42: [211, 61, 52], 45: [234, 56, 123],
+    49: [205, 80, 201], 56: [166, 61, 246], 60: [162, 116, 247], 62: [103, 115, 246],
 }
+_HOT_CUE_GREEN_INDEX = 22
+# Vorgabe ohne eigene Farbe: das Gruen. Muss zu djHotColor() in dj.js passen.
+_HOT_CUE_DEFAULT_COLOR = _HOT_CUE_TABLE_COLORS[_HOT_CUE_GREEN_INDEX]
 
 # Rekordbox' Standard-Rot fuer Memory Cues ohne eigene Farbe -- bestaetigt
 # durch Deep-Symmetry/beat-link (CueList.getNexusColor()).
 _MEMORY_CUE_DEFAULT_COLOR = [0xFF, 0x00, 0x00]
+_MEMORY_CUE_RED_INDEX = 1
 
-# DjmdCue.Color ist bei MEMORY Cues (anders als bei Hot Cues, siehe oben)
-# KEIN gepacktes RGB, sondern derselbe 8-Farben-Index wie Rekordbox'
-# Track-Farben (0/-1 = keine Farbe). Bestaetigt durch Deep-Symmetry/
-# beat-link (ColorItem.colorForId(), Java-AWT-Standardfarben Pink/Red/
-# Orange/Yellow/Green/Cyan/Blue plus eigenem Lila) UND an echtem Material:
-# eine als "Orange" erkennbare Memory-Cue-Farbe stand hier als Color=3.
+# DjmdCue.Color ist bei MEMORY Cues (anders als bei Hot Cues, siehe oben) KEIN gepacktes
+# RGB, sondern ein Index. Alle Werte in Rekordbox 7 abgelesen: je ein Memory Cue je Farbe,
+# im Kommentar benannt (beat-link nennt dagegen 1 Pink, 2 Rot, 3 Orange). 255 =
+# _NO_COLOR, -1 = ohne eigene Farbe, dort rot zu sehen. Die RGB-Werte sind eigene.
 _MEMORY_CUE_PALETTE = {
-    1: [255, 175, 175],  # Pink
-    2: [255, 0, 0],      # Red
-    3: [255, 200, 0],    # Orange
-    4: [255, 255, 0],    # Yellow
-    5: [0, 255, 0],       # Green
-    6: [0, 255, 255],     # Aqua/Cyan
-    7: [0, 0, 255],       # Blue
-    8: [128, 0, 128],     # Purple
+    0: [255, 175, 175],  # Pink
+    1: [255, 0, 0],      # Rot
+    2: [255, 165, 0],    # Orange
+    3: [255, 255, 0],    # Gelb
+    4: [0, 255, 0],      # Gruen
+    5: [0, 255, 255],    # Aqua
+    6: [0, 102, 255],    # Blau
+    7: [160, 32, 240],   # Violett
 }
 
 
@@ -297,27 +285,29 @@ def _add_content_fresh(db, path: str, **kwargs):
     Fall eine neue Zeile an (siehe _live_content()). Der Nachbau folgt
     add_content() aus pyrekordbox Feld fuer Feld (in 0.4.4 und 0.5.0 gleich).
     """
-    try:
-        return db.add_content(path, **kwargs)
-    except ValueError as exc:
-        if "already exists" not in str(exc):
-            raise
-        live = _live_content(db, path)
-        if live is not None:
-            # Wettlauf: zwischendurch doch lebend angelegt worden.
-            return live
+    # .aif kennt pyrekordbox nicht, Rekordbox fuehrt es als AIFF.
+    if Path(path).suffix.lower() != ".aif":
+        try:
+            return db.add_content(path, **kwargs)
+        except ValueError as exc:
+            if "already exists" not in str(exc):
+                raise
+            live = _live_content(db, path)
+            if live is not None:
+                # Wettlauf: zwischendurch doch lebend angelegt worden.
+                return live
     import datetime
     from uuid import uuid4
     from pyrekordbox.masterdb import models as tables
 
     p = Path(path)
-    file_type_string = p.suffix.lstrip(".").upper()
+    file_type_string = {"AIF": "AIFF"}.get(p.suffix.lstrip(".").upper(), p.suffix.lstrip(".").upper())
     try:
         file_type = getattr(tables.FileType, file_type_string)
     except (AttributeError, ValueError) as exc:
         raise ValueError(f"Ungültiger Dateityp: {p.suffix}") from exc
-    id_ = db.generate_unused_id(tables.DjmdContent)
-    file_id = db.generate_unused_id(tables.DjmdContent, id_field_name="rb_file_id")
+    id_ = str(db.generate_unused_id(tables.DjmdContent))
+    file_id = str(db.generate_unused_id(tables.DjmdContent, id_field_name="rb_file_id"))
     content_link = db.get_menu_items(Name="TRACK").one()
     device = db.get_device().first()
     today = datetime.date.today()
@@ -509,110 +499,125 @@ def stale_content_entries() -> list[dict]:
     return _query_cached(pyrekordbox_mod, _query)
 
 
-def _decode_color(color: int | None) -> list[int] | None:
-    """Gepacktes 0xRRGGBB -> [r,g,b], oder None wenn keine Farbe gesetzt
-    (Color == -1). Gilt NUR fuer Hot Cues/Loops (eingebettetes RGB, z.B. aus
-    einem Serato-Import) -- bei Memory Cues bedeutet Color etwas anderes,
-    siehe _MEMORY_CUE_PALETTE. An echtem Material bestaetigt: Color=255 bei
-    einer erkennbar blauen Schleifenmarkierung ergibt (0,0,255), reines Blau,
-    was zur ueblichen Rekordbox-Loop-Farbe passt."""
-    if color is not None and 0 <= color <= 0xFFFFFF:
-        return [(color >> 16) & 0xFF, (color >> 8) & 0xFF, color & 0xFF]
-    return None
-
-
 def _hot_cue_color(color: int | None, color_table_index: int | None) -> list[int]:
-    """Farbe eines Hot Cues in der Prioritaet, die Rekordbox selbst nutzt:
-    ColorTableIndex (eigene Palette bis 0x3e, siehe _HOT_CUE_TABLE_COLORS)
-    vor eingebettetem RGB (Color, siehe _decode_color) vor dem Standard-
-    Gruen fuer noch nicht eingefaerbte Hot Cues."""
-    if color_table_index is not None and color_table_index in _HOT_CUE_TABLE_COLORS:
-        return list(_HOT_CUE_TABLE_COLORS[color_table_index])
-    embedded = _decode_color(color)
-    if embedded is not None:
-        return embedded
-    return list(_HOT_CUE_DEFAULT_COLOR)
+    """Farbe eines Hot Cues. Nur die geprueften Farben: alles andere (kein Index, Altbestand
+    wie 0, 21, 34, 53) gilt als Standard-Gruen und bleibt beim Schreiben unberuehrt, solange
+    keine neue Farbe gewaehlt wird (_still_default_color())."""
+    return list(_HOT_CUE_TABLE_COLORS.get(color_table_index, _HOT_CUE_DEFAULT_COLOR))
 
 
 def _memory_cue_color(color: int | None) -> list[int]:
     """Farbe eines Memory Cues ueber die 8-Farben-Palette (siehe
     _MEMORY_CUE_PALETTE); ohne zugewiesene Farbe Rekordbox' Standard-Rot."""
+    if color == _NO_COLOR:
+        return list(_NO_COLOR_RGB)
     if color is not None and color in _MEMORY_CUE_PALETTE:
         return list(_MEMORY_CUE_PALETTE[color])
     return list(_MEMORY_CUE_DEFAULT_COLOR)
 
 
-def _read_waveform(db, content, style: str) -> dict | None:
-    """
-    Farbige Waveform-Daten aus Rekordbox' Analysedateien fuer EINEN Track,
-    im gewaehlten Stil. Liefert None, wenn die passende Analysedatei/der
-    passende Tag fehlt (z.B. eine alte Analyse ohne .2EX) -- eigener,
-    von den Cues getrennter Fehlerpfad (siehe get_track_extras()), damit ein
-    kaputtes/fehlendes .EXT/.2EX nicht auch die laengst funktionierenden
-    Cues mit wegwirft.
+def track_wave_detail(path: str, style: str) -> bytes | None:
+    """Rekordbox' feine Wellenform (150 Spalten/s) im Format von
+    wavedetail.STYLED_RATE. None = Track oder Analysedatei fehlt. RGB aus dem Tag PWV5
+    (.EXT, 2 Byte: je 3 Bit r/g/b, 5 Bit Hoehe), 3-Band aus PWV7 (.2EX, Tief/Mitten/
+    Hoehen, Werte bis rund 126)."""
+    import numpy as np
 
-    Werte pro Stil anhand einer visuellen Vorschau am echten Material
-    geprueft (nicht nur aus der pyrekordbox-Doku uebernommen):
-    - rgb (.EXT, Tag PWV4/wf_color): Hoehe aus der "back"-Spalte (glattere
-      Huellkurve, max(d2,d3,d4)), Farbe aus der "front"-Spalte (col_color) --
-      bewusst aus unterschiedlichen Spalten gemischt, die reine front-Hoehe
-      (d5) wirkte zu klein/jittrig. Die dritte Rueckgabe von f.get("wf_color")
-      (col_blues) wird NICHT verwendet -- das ist eine eigenstaendige, von
-      RGB unabhaengige Blau-Rendervariante aus derselben Datei.
-    - 3band (.2EX, Tag PWV6): pyrekordbox hat dafuer keinen Decoder, nur der
-      rohe 3-Byte-je-Spalte-Container. Reihenfolge laut externer ANLZ-
-      Referenz (Deep Symmetry, von pyrekordbox selbst zitiert): Mitten,
-      Hoehen, Tief -- NICHT Bass/Mitten/Hoehen.
-    - standard: erzwingt die graue Waveform -- kein Datei-Zugriff, liefert
-      direkt None, identischer Fallback-Pfad wie "nicht in Rekordbox".
-    """
-    if style == "standard":
-        return None
-    if style not in ("rgb", "3band"):
-        style = "rgb"
-    if style == "rgb":
-        f = db.read_anlz_file(content, "EXT")
-        if f is None:
+    def _query(db):
+        content = _live_content(db, path)
+        if content is None or not content.Analysed:
             return None
-        heights, col_color, _col_blues = f.get("wf_color")
-        if heights is None or len(heights) == 0:
+        if style == "3band":
+            anlz = db.read_anlz_file(content, "2EX")
+            if anlz is None or "PWV7" not in anlz.tag_types:
+                return None
+            raw = np.frombuffer(bytes(anlz.get_tag("PWV7").content.entries), dtype=np.uint8).reshape(-1, 3)
+            out = np.zeros((len(raw), 4), dtype=np.uint8)
+            out[:, :3] = (np.minimum(raw.astype(np.uint16), 126) * 255 // 126).astype(np.uint8)
+            return out.tobytes()
+        anlz = db.read_anlz_file(content, "EXT")
+        if anlz is None or "PWV5" not in anlz.tag_types:
             return None
-        color = [[int(c) for c in col_color[i, 0].clip(0, 255)] for i in range(len(heights))]
-        # Unvollstaendig analysierte Tracks liefern nur Nullen -> schwarze
-        # Wellenform. Dann wie "nicht vorhanden" behandeln (graue Standard-
-        # Wellenform, die Cues kommen trotzdem).
-        if not any(c[0] or c[1] or c[2] for c in color):
-            return None
-        return {
-            "style": "rgb",
-            "height": [round(float(v) / 127.0, 4) for v in heights[:, 1]],
-            "color": color,
-        }
-    # 3band -- Dateityp-Key ist "2EX", nicht "EX2" (Docstring-Fehler in
-    # pyrekordbox selbst, siehe Plan).
-    f = db.read_anlz_file(content, "2EX")
-    if f is None:
+        v = np.array(list(anlz.get_tag("PWV5").content.entries), dtype=np.uint32)
+        out = np.empty((len(v), 4), dtype=np.uint8)
+        for k, shift in enumerate((13, 10, 7)):
+            out[:, k] = ((v >> shift) & 7) * 255 // 7
+        out[:, 3] = ((v >> 2) & 31) * 255 // 31
+        return out.tobytes()
+    try:
+        return _query_cached(_import_pyrekordbox(), _query) or None
+    except Exception:                                   # noqa: BLE001
         return None
-    container = f.get("PWV6")
-    raw = container.entries
-    n = len(raw) // 3
-    if n == 0:
-        return None
-    return {
-        "style": "3band",
-        "mid": [round(min(1.0, raw[i * 3] / 31.0), 4) for i in range(n)],
-        "high": [round(min(1.0, raw[i * 3 + 1] / 31.0), 4) for i in range(n)],
-        "low": [round(min(1.0, raw[i * 3 + 2] / 31.0), 4) for i in range(n)],
-    }
 
 
-def get_track_extras(path: str, style: str = "rgb") -> dict | None:
+def _phrase_kind(mood: int, kind: int, k1: int, k2: int, k3: int) -> tuple | None:
+    """Rekordbox' PSSI-Eintrag als (Art, Nummer); 0 = ohne Nummer. Stimmung
+    1 = hoch (Up/Down), 2 = mittel, 3 = niedrig (beide Verse/Bridge)."""
+    if mood == 1:
+        if kind == 1:
+            return ("intro", 1 if k1 == 1 else 2)
+        if kind == 2:
+            # k2/k3 0/0 = Up 1, 0/1 = Up 2, 1/0 = Up 3 (in den Dateien kommt 1/1 nie vor)
+            return ("up", 3 if k2 else (2 if k3 else 1))
+        if kind == 3:
+            return ("down", 0)
+        if kind == 5:
+            return ("chorus", 1 if k1 == 1 else 2)
+        if kind == 6:
+            return ("outro", 1 if k1 == 1 else 2)
+        return None
+    if kind == 1:
+        return ("intro", 0)
+    if kind == 8:
+        return ("bridge", 0)
+    if kind == 9:
+        return ("chorus", 0)
+    if kind == 10:
+        return ("outro", 0)
+    if 2 <= kind <= 7:
+        return ("verse", kind - 1 if mood == 2 else (1 if kind <= 4 else 2))
+    return None
+
+
+def _track_grid(db, path: str) -> dict | None:
+    content = _live_content(db, path)
+    if content is None or not content.Analysed:
+        return None
+    dat = db.read_anlz_file(content, "DAT")
+    if dat is None or "PQTZ" not in dat:
+        return None
+    grid = dat.get_tag("PQTZ").content.entries
+    if not grid:
+        return None
+    result = {"beats": [[int(b.time), int(b.beat)] for b in grid], "phrases": [], "mood": None}
+    ext = db.read_anlz_file(content, "EXT")
+    if ext is None or "PSSI" not in ext:
+        return result
+    pssi = ext.get_tag("PSSI").content
+    times = [b.time / 1000.0 for b in grid]
+    last_beat = 6000.0 / grid[-1].tempo if grid[-1].tempo else 0.5
+
+    def beat_time(n: int) -> float:
+        # Beats zaehlen ab 1; ueber das Grid hinaus mit dem letzten Tempo weiter.
+        if n < 1:
+            return times[0]
+        return times[n - 1] if n <= len(times) else times[-1] + (n - len(times)) * last_beat
+
+    phrases = []
+    for i, e in enumerate(pssi.entries):
+        nxt = pssi.entries[i + 1].beat if i + 1 < pssi.len_entries else pssi.end_beat
+        found = _phrase_kind(pssi.mood, e.kind, e.k1, e.k2, e.k3)
+        if found and nxt > e.beat:
+            phrases.append({"start": beat_time(e.beat), "end": beat_time(nxt),
+                            "kind": found[0], "num": found[1]})
+    return {**result, "phrases": phrases, "mood": pssi.mood - 1}
+
+
+def get_track_extras(path: str) -> dict | None:
     """
-    Hot Cues, Memory Cues und die farbige Waveform aus Rekordbox fuer EINEN
-    Track -- nur wenn der Track dort bereits in der Sammlung UND analysiert
-    ist. `style` waehlt die Waveform-Variante ("rgb"/"3band", siehe
-    _read_waveform()); fehlt die passende Analysedatei, bleibt "waveform"
-    None und der Aufrufer zeigt die graue Standardanzeige.
+    Hot Cues und Memory Cues aus Rekordbox fuer EINEN Track -- nur wenn der
+    Track dort bereits in der Sammlung UND analysiert ist. Die Wellenform von
+    Bearbeiten und Player erzeugt TrackTab immer selbst (/api/wave-color).
 
     Liefert None, wenn der Track dort nicht (analysiert) vorliegt. Ein
     Lesefehler (master.db gerade gesperrt, pyrekordbox fehlt, ...) kommt als
@@ -621,12 +626,12 @@ def get_track_extras(path: str, style: str = "rgb") -> dict | None:
     """
     try:
         pyrekordbox_mod = _import_pyrekordbox()
-        return _query_cached(pyrekordbox_mod, lambda db: _track_extras(db, path, style))
+        return _query_cached(pyrekordbox_mod, lambda db: _track_extras(db, path))
     except Exception as exc:                           # noqa: BLE001
         return {"error": str(exc) or exc.__class__.__name__}
 
 
-def _track_extras(db, path: str, style: str) -> dict | None:
+def _track_extras(db, path: str) -> dict | None:
     content = _live_content(db, path)
     if content is None or not content.Analysed:
         return None
@@ -649,10 +654,11 @@ def _track_extras(db, path: str, style: str) -> dict | None:
             # Material auf Nutzerwunsch ganz ausgeblendet, nicht nur aus
             # den Hot Cues entfernt.
             continue
-        if c.is_hot_cue and 1 <= c.Kind <= 8:
+        if c.Kind in _HOT_KIND_SLOT:
+            slot = _HOT_KIND_SLOT[c.Kind]
             cues.append({
-                "kind": "hot", "slot": c.Kind,
-                "label": _HOT_CUE_LETTERS[c.Kind - 1],
+                "kind": "hot", "slot": slot,
+                "label": _HOT_CUE_LETTERS[slot - 1],
                 "position_s": position_s,
                 "color": _hot_cue_color(c.Color, c.ColorTableIndex),
             })
@@ -664,13 +670,596 @@ def _track_extras(db, path: str, style: str) -> dict | None:
                 "color": _memory_cue_color(c.Color),
             })
 
-    waveform = None
-    try:
-        waveform = _read_waveform(db, content, style)
-    except Exception:                              # noqa: BLE001
-        pass
+    return {"cues": cues}
 
-    return {"cues": cues, "waveform": waveform}
+
+# ── DJ-Ansicht: lesen und abgleichen ───────────────────────────────────────
+
+def _track_cues(db, content) -> list[dict]:
+    """Alle lebenden Cues eines Tracks fuer den DJ-Editor, anders als
+    _track_extras() auch die Loops."""
+    cues: list[dict] = []
+    seen_slots: set[int] = set()
+    for c in db.get_cue(ContentID=content.ID).all():
+        if not _live(c):
+            continue
+        loop = c.OutMsec / 1000 if c.OutMsec is not None and c.OutMsec >= 0 else None
+        slot = _HOT_KIND_SLOT.get(c.Kind)
+        if slot is not None and slot not in seen_slots:
+            seen_slots.add(slot)
+            color = _hot_cue_color(c.Color, c.ColorTableIndex)
+            cues.append({"kind": "hot", "slot": slot, "label": _HOT_CUE_LETTERS[slot - 1],
+                         "name": c.Comment or "", "position_s": (c.InMsec or 0) / 1000,
+                         "loop_s": loop, "color": list(color)})
+        elif slot is None:
+            color = _memory_cue_color(c.Color)
+            cues.append({"kind": "memory", "slot": None, "label": c.Comment or "",
+                         "name": c.Comment or "", "position_s": (c.InMsec or 0) / 1000,
+                         "loop_s": loop, "color": list(color),
+                         # Nur wenn gesetzt: die Pruefsumme normaler Cues bleibt gleich.
+                         **({"active": True} if c.Kind == _MEMORY_LOOP_KIND and loop is not None else {})})
+    cues.sort(key=lambda x: x["position_s"])
+    return cues
+
+
+def track_state(path: str) -> dict:
+    """Was Rekordbox gerade zu einem Track weiss. Zeiten auf SEINER Zeitachse.
+    {"available": False} = Rekordbox nicht lesbar; "present" = in der Sammlung,
+    "analysed" = es gibt ANLZ-Dateien, in die Beatgrid und Phrasen koennen."""
+    def _query(db):
+        content = _live_content(db, path)
+        if content is None:
+            return {"available": True, "present": False, "analysed": False,
+                    "grid": [], "phrases": [], "cues": []}
+        grid = _track_grid(db, path) if content.Analysed else None
+        return {"available": True, "present": True,
+                "analysed": bool(content.Analysed and content.AnalysisDataPath),
+                "grid": grid["beats"] if grid else [],
+                "phrases": grid["phrases"] if grid else [],
+                "cues": _track_cues(db, content)}
+    try:
+        return _query_cached(_import_pyrekordbox(), _query)
+    except Exception as exc:                            # noqa: BLE001
+        return {"available": False, "error": str(exc) or exc.__class__.__name__,
+                "present": False, "analysed": False, "grid": [], "phrases": [], "cues": []}
+
+
+def track_stamp(path: str) -> str | None:
+    """Aenderungsstand eines Tracks, ohne seine Analysedateien zu lesen. None = fehlt."""
+    def _query(db):
+        c = _live_content(db, path)
+        return None if c is None else f"{c.AnalysisUpdated}|{c.CueUpdated}|{c.updated_at}"
+    try:
+        return _query_cached(_import_pyrekordbox(), _query)
+    except Exception:                                   # noqa: BLE001
+        return None
+
+
+def cue_palettes() -> dict:
+    """Farbauswahl im Editor: genau die in Rekordbox geprueften Farben, Hot Cues (16, als
+    ColorTableIndex) in Rekordbox' Reihenfolge, Memory Cues (8, als Color 0-7) und "keine"."""
+    return {"hot": [list(v) for v in _HOT_CUE_TABLE_COLORS.values()],
+            "memory": [list(v) for v in _MEMORY_CUE_PALETTE.values()] + [list(_NO_COLOR_RGB)]}
+
+
+def _nearest(rgb, table: dict) -> int:
+    return min(table, key=lambda k: sum((a - b) ** 2 for a, b in zip(table[k], rgb)))
+
+
+def _cue_fields(cue: dict) -> dict:
+    """Unser Cue-Format -> DjmdCue-Spalten. Zeiten schon auf Rekordbox' Achse."""
+    in_ms = int(round(cue["position_s"] * 1000))
+    loop = cue.get("loop_s")
+    out_ms = int(round(loop * 1000)) if loop is not None else -1
+    rgb = list(cue.get("color") or [])
+    if cue["kind"] == "hot":
+        kind = _SLOT_HOT_KIND[int(cue["slot"])]
+        color, table = -1, _nearest(rgb or _HOT_CUE_DEFAULT_COLOR, _HOT_CUE_TABLE_COLORS)
+    else:
+        # An einem Beispiel in Rekordbox abgelesen: Active Memory Loop = Kind 4, normaler
+        # Memory Loop = Kind 0 mit Ende. Die Spalte ActiveLoop bleibt dort bei beiden 0.
+        kind = _MEMORY_LOOP_KIND if loop is not None and cue.get("active") else 0
+        table = 0
+        if rgb == _NO_COLOR_RGB or (loop is not None and rgb == _LEGACY_LOOP_RGB):
+            color = _NO_COLOR
+        else:
+            color = _nearest(rgb or _MEMORY_CUE_DEFAULT_COLOR, _MEMORY_CUE_PALETTE)
+    return {"Kind": kind, "InMsec": in_ms, "InFrame": in_ms * _CUE_FRAMES_PER_S // 1000,
+            "OutMsec": out_ms, "OutFrame": out_ms * _CUE_FRAMES_PER_S // 1000 if out_ms >= 0 else 0,
+            "InMpegFrame": 0, "InMpegAbs": 0, "OutMpegFrame": 0, "OutMpegAbs": 0,
+            "Color": color, "ColorTableIndex": table, "ActiveLoop": 0,
+            "Comment": cue.get("name") or "", "CueMicrosec": 0,
+            "BeatLoopSize": _beat_loop_size(cue, in_ms, out_ms)}
+
+
+def _still_default_color(row, fields: dict) -> bool:
+    """Ein Cue ohne eigene Farbe liest sich als Standard-Rot bzw. -Gruen. Kommt genau
+    die zurueck, bleibt er ohne eigene Farbe: ein Update soll in Rekordbox nur
+    aendern, was wirklich geaendert wurde."""
+    if row.Kind == 0 or row.Kind == _MEMORY_LOOP_KIND:
+        return row.Color in (None, -1) and fields["Color"] == _MEMORY_CUE_RED_INDEX
+    return row.ColorTableIndex not in _HOT_CUE_TABLE_COLORS and fields["ColorTableIndex"] == _HOT_CUE_GREEN_INDEX
+
+
+def _beat_loop_size(cue: dict, in_ms: int, out_ms: int) -> int:
+    """Rekordbox: Schlaege << 16 | 1 (16 Schlaege = 1048577), 0 = kein ganzzahliger Loop."""
+    bpm = cue.get("bpm") or 0
+    if out_ms < 0 or bpm <= 0:
+        return 0
+    beats = (out_ms - in_ms) * bpm / 60000
+    return (int(round(beats)) << 16) | 1 if abs(beats - round(beats)) < 0.02 and beats >= 0.5 else 0
+
+
+def _write_cues(db, content, cues: list[dict], now) -> None:
+    """Gleicht die Cues eines Tracks ab: Unveraendertes bleibt, Wegfallendes wird
+    soft-geloescht, Neues angelegt, und contentCue (JSON-Kopie, die Rekordbox je
+    Track fuehrt) wird nachgezogen."""
+    import json
+    from uuid import uuid4
+    from pyrekordbox.masterdb import models as tables
+
+    wanted = [_cue_fields(c) for c in cues]
+    existing = [c for c in db.get_cue(ContentID=content.ID).all() if _live(c)]
+    remaining = list(existing)
+    keep: list[tuple] = []
+    for fields in wanted:
+        match = next((c for c in remaining
+                      if c.Kind == fields["Kind"] and c.InMsec == fields["InMsec"]
+                      and (c.OutMsec if c.OutMsec is not None else -1) == fields["OutMsec"]), None)
+        if match is not None:
+            remaining.remove(match)
+        keep.append((fields, match))
+    _soft_delete(db, remaining, now)
+    final = []
+    for fields, row in keep:
+        if row is None:
+            row = tables.DjmdCue(
+                ID=str(db.generate_unused_id(tables.DjmdCue, is_28_bit=False)),
+                ContentID=content.ID, ContentUUID=content.UUID, UUID=str(uuid4()),
+                rb_data_status=0, rb_local_data_status=0, rb_local_deleted=0,
+                rb_local_synced=0, created_at=now, updated_at=now, **fields)
+            db.add(row)
+        else:
+            names = ("Comment", "BeatLoopSize") if _still_default_color(row, fields) \
+                else ("Color", "ColorTableIndex", "Comment", "BeatLoopSize")
+            changed = {k: fields[k] for k in names if getattr(row, k) != fields[k]}
+            if changed:
+                _touch(db, [row], now, **changed)
+        final.append(row)
+    db.flush()
+
+    def stamp(value) -> str:
+        return (value or now).strftime("%Y-%m-%dT%H:%M:%S.") + f"{(value or now).microsecond // 1000:03d}+00:00"
+
+    payload = []
+    for row in final:
+        item = {"ID": row.ID, "ContentID": row.ContentID}
+        for col in _STEM_CUE_COLUMNS:
+            value = getattr(row, col, None)
+            if value is not None and value != "":
+                item[col] = value
+        item.update(ContentUUID=row.ContentUUID, UUID=row.UUID,
+                    created_at=stamp(row.created_at), updated_at=stamp(row.updated_at))
+        payload.append(item)
+    model = getattr(tables, "ContentCue", None)
+    if model is not None:
+        cue_row = db.query(model).filter(model.ContentID == content.ID).first()
+        text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        if cue_row is not None:
+            _touch(db, [cue_row], now, Cues=text)
+        elif payload:
+            db.add(model(ID=content.UUID, ContentID=content.ID, Cues=text, UUID=str(uuid4()),
+                         rb_data_status=0, rb_local_data_status=0, rb_local_deleted=0,
+                         rb_local_synced=0))
+    _touch(db, [content], now, CueUpdated=str(int(content.CueUpdated or 0) + 1))
+
+
+def _set_pqtz(anlz, beats: list[list]) -> None:
+    """beats: [[ms, Nummer, BPM], ...]. pyrekordbox' set() kann die Anzahl nicht
+    aendern, die Eintraege werden deshalb direkt ersetzt."""
+    from construct import Container
+
+    tag = anlz.get_tag("PQTZ")
+    tag.struct.content.entries = [
+        Container(beat=int(n), tempo=int(round(bpm * 100)), time=int(ms)) for ms, n, bpm in beats]
+    tag.struct.content.entry_count = len(beats)
+    tag.update_len()
+
+
+def _set_pqt2(anlz, beats: list[list]) -> None:
+    """PQT2 (Beatgrid fuer neuere Player): Anfang und Ende stehen im Kopf, je Schlag
+    zwei Bytes, deren Bedeutung nicht bekannt ist. Anfang, Ende und Anzahl werden
+    nachgezogen, fehlende Eintraege wiederholen den letzten."""
+    if "PQT2" not in anlz:
+        return
+    from construct import Container
+
+    tag = anlz.get_tag("PQT2")
+    content = tag.struct.content
+    for entry, (ms, num, bpm) in zip(content.bpm, (beats[0], beats[-1])):
+        entry.beat, entry.tempo, entry.time = int(num), int(round(bpm * 100)), int(ms)
+    old = list(content.entries or [])
+    filler = old[-1] if old else Container(beat=0, unkown=0)
+    content.entries = (old + [filler] * len(beats))[:len(beats)]
+    content.entry_count = len(beats)
+    tag.struct.len_tag = tag.struct.len_header + 2 * len(beats)
+
+
+def _pssi_kind(phrase: dict, mood: int) -> tuple[int, int, int, int]:
+    """Gegenstueck zu _phrase_kind(): (kind, k1, k2, k3)."""
+    kind, num = phrase["kind"], int(phrase.get("num") or 0)
+    if mood == 1:
+        kind = {"verse": "up", "bridge": "down"}.get(kind, kind)
+        if kind == "intro":
+            return 1, 1 if num <= 1 else 0, 0, 0
+        if kind == "up":
+            return 2, 0, 1 if num >= 3 else 0, 1 if num == 2 else 0
+        if kind == "down":
+            return 3, 0, 0, 0
+        if kind == "chorus":
+            return 5, 1 if num <= 1 else 0, 0, 0
+        return 6, 1 if num <= 1 else 0, 0, 0
+    kind = {"up": "verse", "down": "bridge"}.get(kind, kind)
+    if kind == "intro":
+        return 1, 0, 0, 0
+    if kind == "bridge":
+        return 8, 0, 0, 0
+    if kind == "chorus":
+        return 9, 0, 0, 0
+    if kind == "outro":
+        return 10, 0, 0, 0
+    if mood == 2:
+        return max(2, min(7, max(1, num) + 1)), 0, 0, 0
+    return 2 if num <= 1 else 5, 0, 0, 0
+
+
+def _phrase_beat(times: list[float], sec: float) -> int:
+    """1-basierte Nummer des naechsten Schlags."""
+    import bisect
+    i = bisect.bisect_left(times, sec)
+    if i >= len(times):
+        return len(times)
+    if i > 0 and sec - times[i - 1] <= times[i] - sec:
+        return i
+    return i + 1
+
+
+def _number_phrases(ordered: list[dict], mood: int) -> list[dict]:
+    """Nummer = laufende Zahl innerhalb der Kategorie, wie djRenumberPhrases(). Was
+    Rekordbox davon darstellen kann, entscheidet _pssi_kind(): mittel Verse 1-6, niedrig
+    Verse 1-2, hoch Intro/Chorus/Outro 1-2 und Up 1-3, alles andere ohne Nummer."""
+    alias = {"verse": "up", "bridge": "down"} if mood == 1 else {"up": "verse", "down": "bridge"}
+    count: dict[str, int] = {}
+    numbered = []
+    for p in ordered:
+        cat = alias.get(p["kind"], p["kind"])
+        count[cat] = count.get(cat, 0) + 1
+        numbered.append({**p, "num": count[cat]})
+    return numbered
+
+
+def _set_pssi(anlz, phrases: list[dict], beat_ms: list[int]) -> None:
+    """Schreibt die Phrasen. Stimmung: Verse/Bridge verlangen mittel oder niedrig,
+    sonst bleibt die alte. Vorhandene Fill-Marken bleiben, wo der Schlag gleich ist."""
+    import struct as struct_mod
+    from construct import Container
+    from pyrekordbox.anlz.tags import PSSIAnlzTag
+
+    times = [ms / 1000 for ms in beat_ms]
+    if "PSSI" not in anlz:
+        raw = b"PSSI" + struct_mod.pack(">II", 32, 32) + struct_mod.pack(
+            ">HHHH6sH2sB1s", 0, 24, 0, 1, b"\0" * 6, 1, b"\x01\0", 0, b"\0")
+        anlz.tags.append(PSSIAnlzTag(raw))
+    tag = anlz.get_tag("PSSI")
+    content = tag.struct.content
+    old_mood = int(content.mood)
+    wants_low = any(p["kind"] in ("verse", "bridge") for p in phrases)
+    wants_high = any(p["kind"] in ("up", "down") for p in phrases)
+    if wants_low and not wants_high:
+        mood = old_mood if old_mood in (2, 3) else 2
+    elif wants_high and not wants_low:
+        mood = 1
+    else:
+        mood = old_mood
+    fills = {e.beat: (e.fill, e.beat_fill) for e in (content.entries or [])}
+    ordered = _number_phrases(sorted(phrases, key=lambda p: p["start"]), mood)
+    entries = []
+    for i, p in enumerate(ordered, start=1):
+        beat = _phrase_beat(times, p["start"])
+        kind, k1, k2, k3 = _pssi_kind(p, mood)
+        fill, beat_fill = fills.get(beat, (0, 0))
+        entries.append(Container(index=i, beat=beat, kind=kind, u1=0, k1=k1, u2=0, k2=k2, u3=0, b=0,
+                                 beat_2=0, beat_3=0, beat_4=0, u4=0, k3=k3, u5=0, fill=fill,
+                                 beat_fill=beat_fill))
+    content.entries = entries
+    content.len_entries = len(entries)
+    content.mood = mood
+    content.end_beat = _phrase_beat(times, ordered[-1]["end"]) if ordered else 1
+    tag.struct.len_tag = tag.struct.len_header + 24 * len(entries)
+
+
+def _write_analysis(db, content, beats: list[list] | None, phrases: list[dict] | None, now) -> list[str]:
+    """Schreibt Beatgrid (DAT + EXT) und Phrasen (EXT) in die ANLZ-Dateien und zieht
+    die Pruefsummen in contentFile nach. Vorher landet eine Kopie unter
+    backup/rekordbox/anlz/. Geschrieben wird ueber eine Temp-Datei, die sich erst
+    wieder parsen lassen muss. Liefert die geschriebenen Dateinamen."""
+    import hashlib
+    from pyrekordbox.anlz import AnlzFile
+    from pyrekordbox.masterdb import models as tables
+
+    anlz_dir = db.get_anlz_dir(content)
+    if phrases is not None and beats is None:
+        grid = AnlzFile.parse_file(anlz_dir / "ANLZ0000.DAT").get_tag("PQTZ").content.entries
+        beat_ms = [int(e.time) for e in grid]
+    else:
+        beat_ms = [int(b[0]) for b in beats or []]
+
+    updates: list[tuple[str, object]] = []
+    if beats is not None:
+        dat = AnlzFile.parse_file(anlz_dir / "ANLZ0000.DAT")
+        _set_pqtz(dat, beats)
+        updates.append(("ANLZ0000.DAT", dat))
+    ext_path = anlz_dir / "ANLZ0000.EXT"
+    if ext_path.is_file():
+        ext = AnlzFile.parse_file(ext_path)
+        if beats is not None:
+            _set_pqt2(ext, beats)
+        if phrases is not None:
+            _set_pssi(ext, phrases, beat_ms)
+        updates.append(("ANLZ0000.EXT", ext))
+    elif phrases is not None:
+        raise RuntimeError("Rekordbox hat für diesen Track keine EXT-Datei (Phrasen)")
+
+    built: list[tuple[str, bytes]] = []
+    for name, anlz in updates:
+        data = anlz.build()
+        AnlzFile.parse(data)               # was nicht lesbar ist, geht nicht auf die Platte
+        built.append((name, data))
+
+    backup_dir = cfgmod.resolve("backup") / "rekordbox" / "anlz" / time.strftime("%Y%m%d-%H%M%S") / content.UUID
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    for name, data in built:
+        target = anlz_dir / name
+        shutil.copy2(target, backup_dir / name)
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        tmp.write_bytes(data)
+        os.replace(tmp, target)
+
+    model = getattr(tables, "ContentFile", None)
+    if model is not None:
+        rows = {Path(str(r.Path)).name: r for r in
+                db.query(model).filter(model.ContentID == content.ID) if _live(r)}
+        for name, data in built:
+            row = rows.get(name)
+            if row is not None:
+                _touch(db, [row], now, Hash=hashlib.md5(data).hexdigest(), Size=len(data))
+    return [name for name, _data in built]
+
+
+# djmdContent.ContentLink merkt sich, welche Analysedaten es gibt (an 5.884 Tracks abgelesen):
+# PSSI 0x010000, PVDI 0x100000, 3EX 0x200000. PSSI ohne das Bit zeigt Rekordbox nicht an, auch
+# wenn die Datei stimmt; die beiden anderen setzt es beim Laden selbst.
+_CONTENT_LINK_PSSI = 0x010000
+_GRID_START_TOLERANCE_MS = 80
+# Analyse-Sperre in djmdContent.Analysed: an einem in Rekordbox gesperrten Track abgelesen
+# (233 statt 105, die uebrigen 5.883 Tracks stehen auf 105). Rekordbox kennt nur diese
+# eine Sperre fuer Analyse, Tonart und Beatgrid zusammen.
+_ANALYSIS_LOCK_BIT = 128
+
+
+def _grid_from_start(beats: list[list], audio_start_ms: int = 0) -> list[list]:
+    """Rekordbox legt den ersten Schlag auf den Audiobeginn, nicht auf 0 ms (an 258
+    m4a abgelesen: Median 52 ms, nie 0; der Audiobeginn liegt dort beim Versatz aus
+    playback_lead()). Faengt ein bearbeitetes Grid spaeter an, kommen die fehlenden
+    Schlaege im gleichen Abstand davor dazu. Liegt der naechste Schlag knapp vor dem
+    Audiobeginn, rueckt er darauf: Grid, Phrase und Cue beginnen dann an einer Stelle,
+    nur der erste Abstand ist kuerzer (djSegmentsFromBeats() rechnet das wieder heraus)."""
+    if not beats:
+        return beats
+    ms, num, bpm = beats[0]
+    period = 60000.0 / bpm if bpm else 0
+    if period <= 0:
+        return beats
+    head: list[list] = []
+    t, n = float(ms), int(num)
+    while True:
+        t -= period
+        n = n - 1 or 4
+        if t < audio_start_ms - _GRID_START_TOLERANCE_MS:
+            break
+        head.insert(0, [max(audio_start_ms, int(round(t))), n, bpm])
+    return head + beats
+
+
+def update_track(path: str, *, cues: list[dict] | None = None,
+                 beats: list[list] | None = None, phrases: list[dict] | None = None,
+                 audio_start_ms: int = 0) -> dict:
+    """
+    Schreibt Bearbeitungen aus der DJ-Ansicht nach Rekordbox. Alle Zeiten schon auf
+    Rekordbox' Achse; None = Feld nicht anfassen. beats: [[ms, Nummer, BPM], ...].
+
+    Cues gehen immer (DjmdCue + contentCue). Beatgrid und Phrasen brauchen die ANLZ-
+    Dateien, also eine Analyse durch Rekordbox: fehlt sie, stehen sie in "skipped".
+    audio_start_ms: wo der Ton auf Rekordbox' Achse beginnt, siehe _grid_from_start().
+    """
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+    if beats:
+        beats = _grid_from_start(beats, audio_start_ms)
+
+    def _run(db):
+        import datetime
+        now = datetime.datetime.now()
+        content = _live_content(db, path)
+        if content is None:
+            raise RuntimeError("Der Track steht nicht in der Rekordbox-Sammlung.")
+        written: list[str] = []
+        skipped: list[str] = []
+        if cues is not None:
+            _write_cues(db, content, cues, now)
+            written.append("cues")
+        wants_analysis = beats is not None or phrases is not None
+        if wants_analysis and not (content.Analysed and content.AnalysisDataPath):
+            skipped += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
+        elif wants_analysis:
+            _write_analysis(db, content, beats, phrases, now)
+            fields: dict = {"AnalysisUpdated": str(int(content.AnalysisUpdated or 0) + 1)}
+            if phrases is not None:
+                fields["ContentLink"] = int(content.ContentLink or 0) | _CONTENT_LINK_PSSI
+            if beats:
+                # Tempo des Tracks = haeufigstes Tempo im Grid, wie Rekordbox es anzeigt.
+                from collections import Counter
+                fields["BPM"] = int(round(Counter(round(b[2], 2) for b in beats).most_common(1)[0][0] * 100))
+            _touch(db, [content], now, **fields)
+            written += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
+        # Sperren, damit Rekordbox das Geschriebene nicht neu analysiert. Noch nicht
+        # analysierte Tracks nicht: das braeuchten sie erst noch.
+        if written and content.Analysed and not int(content.Analysed) & _ANALYSIS_LOCK_BIT:
+            _touch(db, [content], now, Analysed=int(content.Analysed) | _ANALYSIS_LOCK_BIT)
+        db.commit()
+        return {"written": written, "skipped": skipped}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def _template_for_content_files(db):
+    """Lebender, analysierter Track mit vollstaendigen contentFile-Zeilen, nur als
+    Spaltenvorlage fuer _add_content_files(). None = keiner da."""
+    from pyrekordbox.masterdb import models as tables
+
+    model = getattr(tables, "ContentFile", None)
+    if model is None:
+        return None
+    wanted = {*_STEM_ANLZ_FILES, "artwork.jpg"}
+    for content in db.get_content():
+        if not _live(content) or not content.Analysed or not content.ImagePath:
+            continue
+        names = {Path(str(r.Path)).name for r in db.query(model).filter(model.ContentID == content.ID) if _live(r)}
+        if wanted <= names:
+            return content
+    return None
+
+
+def _cover_files(path: str) -> dict[str, bytes]:
+    """Cover in Rekordbox' drei Groessen. Leer ohne Cover oder ohne Pillow, Rekordbox
+    legt es dann beim Laden selbst an."""
+    try:
+        import io
+        from PIL import Image
+
+        got = tags_mod.read_cover(path)
+        if not got:
+            return {}
+        image = Image.open(io.BytesIO(got[0])).convert("RGB")
+
+        def jpeg(picture) -> bytes:
+            buf = io.BytesIO()
+            picture.save(buf, "JPEG", quality=90)
+            return buf.getvalue()
+
+        return {"artwork.jpg": jpeg(image),
+                "artwork_m.jpg": jpeg(image.resize((240, 240), Image.LANCZOS)),
+                "artwork_s.jpg": jpeg(image.resize((80, 80), Image.LANCZOS))}
+    except Exception:                                   # noqa: BLE001
+        return {}
+
+
+def _authored_analysis(path: str, beats: list[list], phrases: list[dict] | None, lead: int) -> dict:
+    """Analysedateien samt Datei-Index und Phrasen, siehe anlzwrite.build()."""
+    from pyrekordbox.anlz import AnlzFile
+    from . import anlzwrite
+
+    built = anlzwrite.build(path, Path(path).name, beats, lead)
+    files = built["files"]
+    dat = AnlzFile.parse(files["ANLZ0000.DAT"])
+    _stem_pvbr(dat, path)
+    files["ANLZ0000.DAT"] = bytes(dat.build())
+    if phrases:
+        ext = AnlzFile.parse(files["ANLZ0000.EXT"])
+        _set_pssi(ext, phrases, [int(b[0]) for b in beats])
+        files["ANLZ0000.EXT"] = bytes(ext.build())
+    for data in files.values():
+        AnlzFile.parse(data)               # was nicht lesbar ist, geht nicht auf die Platte
+    return built
+
+
+def add_track(path: str, row, cues: list[dict] | None, *, beats: list[list] | None = None,
+              phrases: list[dict] | None = None, lead: int | None = None,
+              audio_start_ms: int = 0) -> dict:
+    """Nimmt einen Track in die Rekordbox-Sammlung auf, mit Tags aus unserer DB-Zeile und
+    unseren Cues. Mit beats und bekanntem lead (Samples, anlzwrite.lead_samples()) auch mit
+    eigenen Analysedateien und Cover, Rekordbox muss dann nicht erst analysieren; ohne das
+    koennen Beatgrid und Phrasen erst nach Rekordbox' eigener Analyse folgen. Zeiten schon
+    auf Rekordbox' Achse. Liefert {"added", "written", "skipped"}."""
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+    authored = None
+    if beats and lead is not None:
+        beats = _grid_from_start(beats, audio_start_ms)
+        authored = _authored_analysis(path, beats, phrases, lead)
+    cover = _cover_files(path) if authored else {}
+
+    def _run(db):
+        import datetime
+        from collections import Counter
+        from pathlib import PurePosixPath
+
+        if _live_content(db, path) is not None:
+            return {"added": False, "written": [], "skipped": []}
+        content = _add_content_fresh(db, path, **_content_tag_kwargs(db, row))
+        if row is not None:
+            if row["sample_rate"]:
+                content.SampleRate = row["sample_rate"]
+            if row["declared_kbps"]:
+                content.BitRate = row["declared_kbps"]
+        written: list[str] = []
+        made: list[Path] = []
+        try:
+            if authored:
+                content.BPM = int(round(Counter(round(b[2], 2) for b in beats).most_common(1)[0][0] * 100))
+                content.BitDepth = authored["depth"]
+                content.Length = int(round((row["duration_s"] if row is not None else 0) or authored["seconds"]))
+                rel = PurePosixPath("/PIONEER/USBANLZ") / _uuid_dir(content.UUID)
+                content.AnalysisDataPath = str(rel / "ANLZ0000.DAT")
+                content.Analysed = 105     # Rekordbox' Wert fuer vollstaendig analysiert
+                if phrases:
+                    content.ContentLink = int(content.ContentLink or 0) | _CONTENT_LINK_PSSI
+                db.flush()
+                anlz_dir = Path(db.get_anlz_dir(content))
+                anlz_dir.mkdir(parents=True, exist_ok=False)
+                made.append(anlz_dir)
+                files: list[tuple[str, Path]] = []
+                for name, data in authored["files"].items():
+                    (anlz_dir / name).write_bytes(data)
+                    files.append((str(rel / name), anlz_dir / name))
+                if cover:
+                    art_rel = PurePosixPath("/PIONEER/Artwork") / _uuid_dir(content.UUID)
+                    art_dir = anlz_dir.parents[2] / "Artwork" / _uuid_dir(content.UUID)
+                    art_dir.mkdir(parents=True, exist_ok=False)
+                    made.append(art_dir)
+                    for name, data in cover.items():
+                        (art_dir / name).write_bytes(data)
+                        files.append((str(art_rel / name), art_dir / name))
+                    content.ImagePath = str(art_rel / "artwork.jpg")
+                template = _template_for_content_files(db)
+                if template is not None:
+                    _add_content_files(db, template, content, files)
+                written.append("grid")
+                if phrases:
+                    written.append("phrases")
+            db.flush()
+            if cues:
+                _write_cues(db, content, cues, datetime.datetime.now())
+                written.append("cues")
+            db.commit()
+        except Exception:
+            for folder in made:
+                shutil.rmtree(folder, ignore_errors=True)
+            raise
+        skipped = [f for f, v in (("grid", beats), ("phrases", phrases)) if v and f not in written]
+        return {"added": True, "written": written, "skipped": skipped}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
 
 
 def is_running() -> bool:
@@ -1516,7 +2105,9 @@ def remove_from_collection(content_ids: list[str]) -> dict:
     Befehl "Von der Sammlung entfernen" (an echtem Material abgelesen):
     DjmdContent und ALLE abhaengigen Zeilen werden soft-geloescht, die
     Analyseordner (ANLZ: Beatgrid, Wellenform, Cues) verschwinden. Die
-    Audiodatei selbst bleibt unangetastet.
+    Audiodatei selbst bleibt unangetastet. Rekordbox laesst dabei den
+    Cover-Ordner liegen (106 verwaiste Ordner in einer echten Sammlung);
+    hier geht er mit, ausser ein lebender Track benutzt ihn noch.
 
     Die ANLZ-Ordner werden nicht geloescht, sondern nach
     backup/rekordbox/anlz/<zeitstempel>/ verschoben -- zusammen mit dem
@@ -1535,7 +2126,7 @@ def remove_from_collection(content_ids: list[str]) -> dict:
         import datetime
         from pyrekordbox.masterdb import models as tables
         now = datetime.datetime.now()
-        removed, skipped, anlz_dirs = [], [], []
+        removed, skipped, anlz_dirs, art_dirs = [], [], [], []
         touched_playlists: set[str] = set()
         dep_tables = _content_tables()
         for cid in wanted:
@@ -1553,6 +2144,8 @@ def remove_from_collection(content_ids: list[str]) -> dict:
                     anlz_dirs.append((cid, Path(db.get_anlz_dir(content))))
             except Exception:                            # noqa: BLE001
                 pass
+            if content.ImagePath:
+                art_dirs.append((cid, content.ImagePath))
             _soft_delete(db, [content], now)
             removed.append({"content_id": cid, "path": content.FolderPath or ""})
         for pid in touched_playlists:
@@ -1562,6 +2155,13 @@ def remove_from_collection(content_ids: list[str]) -> dict:
         anlz_backup = None
         anlz_errors: dict[str, str] = {}
         existing = [(cid, d) for cid, d in anlz_dirs if d.is_dir()]
+        if art_dirs:
+            in_use = {Path(c.ImagePath).parent for c in db.get_content() if _live(c) and c.ImagePath}
+            for cid, image in art_dirs:
+                rel = Path(image.lstrip("/")).parent
+                folder = Path(db._share_dir) / rel
+                if Path("/" + str(rel)) not in in_use and folder.is_dir():
+                    existing.append((f"{cid}-artwork", folder))
         if existing:
             anlz_backup = cfgmod.resolve("backup") / "rekordbox" / "anlz" / time.strftime("%Y%m%d-%H%M%S")
             anlz_backup.mkdir(parents=True, exist_ok=True)
@@ -1929,6 +2529,8 @@ def add_stems(items: list[dict], metadata: dict, cues: bool = True) -> dict:
                     problems: list[str] = []
                     try:
                         analysis = _clone_analysis(db, source, content, path, cues)
+                        if int(source.ContentLink or 0) & _CONTENT_LINK_PSSI:
+                            content.ContentLink = int(content.ContentLink or 0) | _CONTENT_LINK_PSSI
                     except Exception as exc:               # noqa: BLE001
                         problems.append(f"Raster nicht übernommen: {exc}")
                         # Ohne eigene Analyse wuerde Rekordbox die Spalten
