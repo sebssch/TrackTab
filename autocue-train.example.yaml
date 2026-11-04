@@ -1,0 +1,24 @@
+# Auto-Cue-Training im Entwicklungsordner (./run.command autocue-train).
+# Kopieren nach autocue-train.yaml (wird nicht eingecheckt) und anpassen.
+
+# Datenordner der TrackTab-Instanz, deren Tracks und Hand-Cues gelernt werden.
+# Ein Ordner, eine TrackTab.app (dann gilt deren Datenordner) oder kurz:
+# dev (dieser Ordner), installed (installierte App), build.
+instance: installed
+
+# TrackTab-Playlisten dieser Instanz, per Name (bei gleichen Namen "Ordner/Name").
+# Nur normale Playlisten. Die beiden duerfen keinen Track gemeinsam haben.
+training_playlist: "Training"     # aus diesen Tracks wird gelernt (je mehr, desto besser)
+check_playlist: "Prüfliste"       # an diesen Tracks wird gemessen, nie gelernt
+
+# Wohin das neue Modell nach der Rueckfrage kommt:
+#   vendor    vendor/models/autocue/ -- geht mit der naechsten DMG mit
+#   instance  <instance>/models/autocue/ -- dort sofort aktiv
+# Eine ZIP zum Laden in der App (Einstellungen -> Auto Cue -> Modell laden)
+# entsteht immer, mit Protokoll und Modell in autocue-training/runs/<zeit>/
+# in diesem Ordner (gitignored).
+targets: [vendor]
+
+# Faltungen der Kreuzvalidierung und Prozesse (0 = Kerne minus 2).
+folds: 5
+workers: 0

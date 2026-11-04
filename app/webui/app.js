@@ -1242,7 +1242,11 @@ const ICONS = {
   databaseArrowDown: SVG(LUCIDE_ICONS["database-arrow-down"]),
   databaseBackup: SVG(LUCIDE_ICONS["database-backup"]),
   bookDown: SVG(LUCIDE_ICONS["book-down"]),
+  // Auto-Cue-Modell laden (Einstellungen); Vorschlag, Tausch nur hier.
+  modelLoad: SVG(LUCIDE_ICONS["file-up"]),
   lock: SVG(LUCIDE_ICONS["lock"]),
+  lockOpen: SVG(LUCIDE_ICONS["lock-open"]),
+  fileUp: SVG(LUCIDE_ICONS["file-up"]),
   // Eigene Marken in den Hausfarben der Dienste — bewusst kein Logo-Nachbau.
   beatport: `<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
       <rect width="24" height="24" rx="6" fill="#01FF95"/>
@@ -1647,6 +1651,7 @@ function playlistChildren(parentId, depth = 0) {
       // aber (Feedback: "Aufraeumen" ist genauso gesperrt und zeigt auch
       // keins).
       locked: false,
+      userLocked: !!n.locked,
       node: n,
       count: n.kind === "folder" ? null : playlistCount(n.id),
       kids: playlistChildren(n.id, depth + 1),
@@ -1821,6 +1826,7 @@ function renderTree() {
       badge +
       `<span class="tlabel">${esc(n.label)}</span>` +
       (n.count == null ? "" : `<span class="tcount">${n.count.toLocaleString("de-DE")}</span>`) +
+      (n.userLocked ? `<span class="tlock" title="${esc(t("tree.user_locked"))}">${ICONS.lock}</span>` : "") +
       (n.locked ? `<span class="tlock" title="${esc(t("tree.readonly"))}">${ICONS.lock}</span>` : "") +
       (n.node && apiMode && nodeMenuItems(n.node).length
         ? `<span class="tmenu" data-nodemenu="${esc(n.node.id)}">&#8943;</span>`
@@ -2951,6 +2957,13 @@ async function dropTreeNode(dragId, btn, where) {
   const target = targetDb ? PLAYLISTS.find(n => n.id === targetDb) : null;
   const zielIstOben = btn.dataset.top === "1" || targetId === "root:tracktab";
 
+  // Gesperrtes bleibt, wo es ist; ein gesperrter Ordner nimmt nichts auf.
+  const dragNode = dragDb ? PLAYLISTS.find(n => n.id === dragDb) : null;
+  if (dragNode && dragNode.locked) { note(t("tree.locked_move"), "soft"); return; }
+  if (target && target.locked && target.kind === "folder" && where === "into") {
+    note(t("tree.locked_folder"), "soft"); return;
+  }
+
   // Eine feste Ansicht hat keine Datenbankzeile -- sie kann nur ihre Position
   // auf der obersten Ebene aendern, nicht in einen Ordner wandern.
   if (!dragDb && (!zielIstOben || where === "into")) return;
@@ -3427,7 +3440,21 @@ function nodeMenuItems(node) {
   const inhalt = [];
   const entfernen = [];
 
+  const userLocked = !!node.locked;
   if (!locked) {
+    listeSelbst.push({
+      icon: userLocked ? ICONS.lockOpen : ICONS.lock,
+      label: t(userLocked ? "tree.unlock" : "tree.lock"),
+      action: async () => {
+        try {
+          await playlistApi("/api/playlist", {op: "lock", id: node.id, locked: !userLocked});
+          await reloadPlaylists();
+          renderTree(); render();
+        } catch (err) { note(err.message, true); }
+      },
+    });
+  }
+  if (!locked && !userLocked) {
     listeSelbst.push({
       icon: ICONS.edit, label: t("tree.edit"),
       action: async () => {
@@ -3524,7 +3551,7 @@ function nodeMenuItems(node) {
     });
   }
 
-  if (!locked) {
+  if (!locked && !userLocked) {
     entfernen.push({
       icon: ICONS.trash, cls: "del", label: t("tree.delete"),
       action: async () => {
@@ -4101,6 +4128,8 @@ async function initStorage() {
         GENREMOOD_AVAILABLE = !!s.genremood_available;
         // Beatgrid & Phrasen (onnxruntime + Phrasenmodell), gleiche Logik.
         PHRASES_AVAILABLE = !!s.phrases_available;
+        // Auto Cue (Modelle vorhanden), gleiche Logik.
+        AUTOCUE_AVAILABLE = !!s.autocue_available;
         // Stem-Trennung (onnxruntime + Demucs-Modell), gleiche Logik.
         STEMS_AVAILABLE = !!s.stems_available;
         BPMKEY_INSTALLED = !!s.bpmkey_installed;
@@ -7335,6 +7364,8 @@ function flStateOfSelection(rows, listId) {
 function renderPlayerBulkBar(bar) {
   const rows = [...state.selected].map(i => DATA[i]).filter(Boolean);
   const isDj = state.layout === "dj" && apiMode, withRb = isDj && !!REKORDBOX_NAME, withAna = isDj && PHRASES_AVAILABLE;
+  // Bewusst nicht an PHRASES_AVAILABLE: Auto Cue kommt auch mit einem Rekordbox-Grid aus.
+  const withAutocue = isDj && AUTOCUE_AVAILABLE;
   bar.innerHTML = `
     <span>${esc(t("bulk.selected_count", {count: state.selected.size.toLocaleString("de-DE")}))}</span>
     <button class="iconbtn plain" id="bulkQueueAdd" title="${esc(t("bulk.queue_add_title"))}">${ICONS.listEnd}</button>
@@ -7352,6 +7383,8 @@ function renderPlayerBulkBar(bar) {
     <button class="act small djbulk" id="bulkDjGrid" title="${esc(t("bulk.dj_analyse_title"))}">${djIcon("grid-3x3")} ${esc(t("bulk.dj_grid"))}</button>
     <button class="act small djbulk" id="bulkDjPhrases" title="${esc(t("bulk.dj_analyse_title"))}">${ICONS.analysePhrases} ${esc(t("bulk.dj_phrases"))}</button>
     <button class="act small djbulk" id="bulkDjBoth" title="${esc(t("bulk.dj_analyse_title"))}">${djIcon("grid-3x3")}${ICONS.analysePhrases} ${esc(t("bulk.dj_both"))}</button>` : ""}
+    ${withAutocue ? `<span class="sep"></span>
+    <button class="act small djbulk" id="bulkDjAutoCue" title="${esc(t("bulk.dj_autocue_title"))}">${djIcon("square-sparkles")} ${esc(t("bulk.dj_autocue"))}</button>` : ""}
     <button class="act small djbulkclear" id="bulkClear">${ICONS.close} ${esc(t("bulk.clear_selection"))}</button>`;
   document.getElementById("bulkQueueAdd").onclick = () => bulkApply("queue-add-all");
   bar.querySelectorAll("[data-bulkfl]").forEach(b => b.onclick = () => bulkApply(`fl:${b.dataset.bulkfl}`));
@@ -7365,6 +7398,7 @@ function renderPlayerBulkBar(bar) {
     document.getElementById("bulkDjPhrases").onclick = () => analysePhrases(rows, false, "phrases");
     document.getElementById("bulkDjBoth").onclick = () => analysePhrases(rows, false, "both");
   }
+  if (withAutocue) document.getElementById("bulkDjAutoCue").onclick = () => djBulkAutoCue(rows);
   document.getElementById("bulkClear").onclick = () => { state.selected.clear(); render(); };
 }
 
@@ -10045,6 +10079,8 @@ let STEMS_AVAILABLE = false;
 // das Sperren von Einstellungen (SETTING_REQUIREMENTS).
 let BPMKEY_INSTALLED = false, GENREMOOD_INSTALLED = false;
 let PHRASES_AVAILABLE = false;
+// Auto Cue (app/autocue/, Modelle in vendor/models/autocue/).
+let AUTOCUE_AVAILABLE = false;
 let GENREMOOD_AVAILABLE = false, GENREMOOD_AUTO = false, GENREMOOD_MIN_PERCENT = 5,
   GENREMOOD_WRITES = false;
 let MUSIC_NAME = "";
@@ -10943,7 +10979,7 @@ function keySyncHintHtml() {
 // Bearbeiten-Dialog markiert (askPlaylistProps()).
 const SETTINGS_LAYOUT = [
   "library", "search", "display", "bpmkey", "stems", "columnviews",
-  "music", "rekordbox", "tools", "shops", "rename", "djview", "analysis", "loudness",
+  "music", "rekordbox", "tools", "shops", "rename", "djview", "autocueslots", "autocuemodel", "autocue", "analysis", "loudness",
   "backup", "logs",
 ];
 
@@ -10965,6 +11001,7 @@ function renderSettings() {
   const dynamicBlocks = {
     columnviews: renderColumnViewsBlock,
     shops: renderShopsBlock, backup: renderBackupBlock, logs: renderLogsBlock,
+    autocueslots: renderAutocueSlotsBlock, autocuemodel: renderAutocueModelBlock,
   };
 
   document.getElementById("settingsBody").innerHTML = SETTINGS_LAYOUT
@@ -11015,6 +11052,8 @@ function renderSettings() {
 
   wireColumnViewsBlock();
   wireShopsBlock();
+  wireAutocueSlotsBlock();
+  wireAutocueModelBlock();
   wireBackupBlock();
   wireLogsBlock();
   document.querySelectorAll("#settingsBody .sethint").forEach(h =>
@@ -11032,6 +11071,8 @@ const SETTINGS_PAGES = [
   {id: "views", icon: "columns-3", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviews"]},
   {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename"]},
   {id: "djview", icon: "disc-3", nav: "settings.nav_general", label: "settings.page_djview", groups: ["djview"]},
+  {id: "autocue", icon: "square-sparkles", nav: "settings.nav_general", label: "settings.page_autocue",
+   groups: ["autocueslots", "autocuemodel", "autocue"]},
   {id: "bpmkey", icon: "audio-waveform", nav: "settings.nav_analysis", label: "settings.page_bpmkey", groups: ["bpmkey"]},
   {id: "stems", icon: "layers", nav: "settings.nav_analysis", label: "settings.page_stems", groups: ["stems"]},
   {id: "music", icon: "music", nav: "settings.nav_connections", label: "settings.page_music", groups: ["music"]},
@@ -11465,6 +11506,242 @@ async function saveShops() {
   }
 }
 
+// ── Auto Cue: Slot-Belegung ───────────────────────────────────────────
+// Eigener Speichern-Knopf wie bei den Shops: eine Tabelle aus 8 Hot Cues und
+// 10 Memory-Zeilen, keine feste Feldmenge. Gespeichert und geprueft wird im
+// Server (settings.validate_autocue_slots(), app/autocue/slots.py). Farben
+// nur aus Rekordbox' Paletten (schema.cue_palettes), sonst rundete das
+// Schreiben nach Rekordbox sie ohnehin um.
+let autocueDraft = null;
+
+function autocueSlotKey(group, i) {
+  return group === "hot" ? "ABCDEFGH"[i] : String(i + 1);
+}
+
+function autocueOptions(values, current, label) {
+  return values.map(v => `<option value="${esc(String(v))}"${String(v) === String(current) ? " selected" : ""}>${
+    esc(label(v))}</option>`).join("");
+}
+
+function autocueRowHTML(group, i, slot) {
+  const ch = schema.autocue_choices || {roles: [], anchors: [], offsets: []};
+  const palette = (schema.cue_palettes || {})[group === "hot" ? "hot" : "memory"] || [];
+  const mode = slot.mode || "off";
+  const offsets = group === "hot" ? ch.offsets : [...ch.offsets, "auto"];
+  const color = slot.color || palette[0] || [128, 128, 128];
+  const sameColor = c => c[0] === color[0] && c[1] === color[1] && c[2] === color[2];
+  const role = n => t("autocue.role." + n);
+  // Das Kennzeichen zeigt die Farbe des Cues wie ein Pad in Rekordbox.
+  const idStyle = mode === "off" ? "" : ` style="background:rgb(${color.join(",")})"`;
+  const what = mode === "role"
+    ? `<select data-acf="role">${autocueOptions(ch.roles, slot.role || ch.roles[0], role)}</select>`
+    : `<select data-acf="offset" class="acslot-offset">${autocueOptions(offsets, slot.offset ?? 8,
+        o => o === "auto" ? t("autocue.offset_auto") : t("autocue.offset_bars", {n: o}))}</select>
+      <select data-acf="direction" class="acslot-dir">${autocueOptions(["before", "after"], slot.direction || "before",
+        d => t("autocue.dir." + d))}</select>
+      <select data-acf="anchor">${autocueOptions(ch.anchors, slot.anchor || "drop2", role)}</select>`;
+  return `<div class="acslot${mode === "off" ? " off" : ""}" data-acg="${group}" data-aci="${i}">
+    <span class="acslot-id ${group}"${idStyle}>${esc(autocueSlotKey(group, i))}</span>
+    <div class="acslot-main">
+      <select data-acf="mode" class="acslot-mode">${autocueOptions(["off", "role", "rule"], mode, m => t("autocue.mode." + m))}</select>
+      ${mode === "off" ? "" : `<div class="acslot-what">${what}</div>
+      <input type="text" data-acf="name" value="${esc(slot.name || "")}" placeholder="${esc(t("autocue.name_placeholder"))}">`}
+    </div>
+    ${mode === "off" ? "" : `<div class="acslot-colors">${palette.map((c, k) =>
+      `<button type="button" class="acswatch${sameColor(c) ? " on" : ""}" data-acc="${k}"
+        style="background:rgb(${c.join(",")})" title="${esc(t("autocue.color_title"))}"></button>`).join("")}</div>`}
+  </div>`;
+}
+
+function renderAutocueSlotRows() {
+  const rows = group => autocueDraft[group].map((s, i) => autocueRowHTML(group, i, s)).join("");
+  return `<div class="acslots-head">${esc(t("autocue.hot_title"))}</div><div class="acslots">${rows("hot")}</div>
+    <div class="acslots-head">${esc(t("autocue.memory_title"))}</div><div class="acslots">${rows("memory")}</div>`;
+}
+
+function renderAutocueSlotsBlock() {
+  autocueDraft = JSON.parse(JSON.stringify(schema.autocue_slots || schema.autocue_slots_default ||
+    {hot: [], memory: []}));
+  const off = AUTOCUE_AVAILABLE ? "" : " req-off";
+  return `<div class="setgroup collapsed${off}" data-sg="autocueslots">
+    <div class="sethead">
+      <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("autocue.slots_title"))}</b>
+        <button class="act small" id="btnAutocueSlotsDefault"><span class="btnicon">${ICONS.bookDown}</span> ${
+          esc(t("settings.reset_default"))}</button>
+      </div>
+    </div>
+    <div class="setbody">
+      ${AUTOCUE_AVAILABLE ? "" : `<div class="sethint">${esc(t("settings.requires_autocue"))}</div>`}
+      <div id="acSlotRows">${renderAutocueSlotRows()}</div>
+      <div id="acSlotStatus"></div>
+      <button class="act" id="btnSaveAutocueSlots" style="margin-top:10px"${AUTOCUE_AVAILABLE ? "" : " disabled"}>
+        <span class="btnicon">${ICONS.save}</span> ${esc(t("autocue.slots_save"))}</button>
+    </div>
+  </div>`;
+}
+
+function redrawAutocueSlotRows() {
+  document.getElementById("acSlotRows").innerHTML = renderAutocueSlotRows();
+  wireAutocueSlotRows();
+}
+
+function wireAutocueSlotRows() {
+  document.querySelectorAll("#acSlotRows .acslot").forEach(row => {
+    const group = row.dataset.acg, i = +row.dataset.aci;
+    const slot = autocueDraft[group][i];
+    const palette = (schema.cue_palettes || {})[group === "hot" ? "hot" : "memory"] || [];
+    row.querySelectorAll("[data-acf]").forEach(el => {
+      const field = el.dataset.acf;
+      const read = () => {
+        if (field === "offset") slot.offset = el.value === "auto" ? "auto" : +el.value;
+        else slot[field] = el.value;
+      };
+      if (field === "mode") {
+        el.onchange = () => {
+          read();
+          // Felder der gewaehlten Art mit sichtbaren Werten belegen, sonst
+          // speicherte der Knopf eine Regel ohne Anker.
+          const ch = schema.autocue_choices || {};
+          if (slot.mode === "role" && !slot.role) slot.role = (ch.roles || [])[0];
+          if (slot.mode === "rule") {
+            slot.anchor = slot.anchor || "drop2";
+            slot.offset = slot.offset ?? 8;
+            slot.direction = slot.direction || "before";
+          }
+          if (slot.mode !== "off" && !slot.color) slot.color = palette[0];
+          redrawAutocueSlotRows();
+        };
+      } else {
+        el.oninput = el.onchange = read;
+      }
+    });
+    row.querySelectorAll("[data-acc]").forEach(btn => btn.onclick = () => {
+      slot.color = palette[+btn.dataset.acc];
+      redrawAutocueSlotRows();
+    });
+  });
+}
+
+function wireAutocueSlotsBlock() {
+  const btnDefault = document.getElementById("btnAutocueSlotsDefault");
+  if (!btnDefault) return;
+  btnDefault.onclick = () => {
+    autocueDraft = JSON.parse(JSON.stringify(schema.autocue_slots_default));
+    redrawAutocueSlotRows();
+  };
+  document.getElementById("btnSaveAutocueSlots").onclick = () => saveAutocueSlots();
+  wireAutocueSlotRows();
+}
+
+// Ungespeicherte Aenderungen in der Slot-Tabelle? Dann nimmt das grosse "Speichern" des
+// Dialogs sie mit -- sonst gingen Farben, Namen und Rollen still verloren, wenn man nicht
+// den eigenen Knopf des Blocks erwischt.
+function autocueSlotsDirty() {
+  if (!autocueDraft || !document.getElementById("acSlotRows")) return false;
+  return JSON.stringify(autocueDraft) !== JSON.stringify(schema.autocue_slots || schema.autocue_slots_default);
+}
+
+async function saveAutocueSlots() {
+  const st = document.getElementById("acSlotStatus");
+  st.textContent = t("autocue.slots_saving"); st.className = "";
+  try {
+    const res = await fetch("/api/autocue-slots", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({slots: autocueDraft})});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    schema.autocue_slots = data.slots;
+    autocueDraft = JSON.parse(JSON.stringify(data.slots));
+    redrawAutocueSlotRows();
+    st.textContent = t("autocue.slots_saved");
+    return true;
+  } catch (err) {
+    st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
+    return false;
+  }
+}
+
+// Modellstand und Laden eines Modells (ZIP aus ./run.command autocue-train, autocue/package.py).
+// Trainiert wird nie hier: die App bekommt das fertige Modell mit der DMG oder als Datei.
+function autocueModelSummary(info) {
+  if (!info || !info.trained_at) return esc(t("autocue.model_none"));
+  const date = new Date(info.trained_at);
+  const when = isNaN(date) ? info.trained_at : date.toLocaleDateString(undefined, {dateStyle: "medium"});
+  const lines = [t(info.origin === "trained" ? "autocue.model_loaded" : "autocue.model_bundled",
+    {date: when, tracks: info.n_tracks || "?"})];
+  const res = info.gold && info.gold.results;
+  if (res && res.A) {
+    lines.push(t("autocue.model_gold", {source: info.gold.source || "", n: info.gold.n || 0,
+      a: `${res.A.hit2}/${res.A.n}`, b: `${res.B.hit2}/${res.B.n}`, c: `${res.C.hit2}/${res.C.n}`}));
+  }
+  if (info.has_loaded && info.origin !== "trained") lines.push(t("autocue.model_loaded_older"));
+  return lines.map(l => `<div>${esc(l)}</div>`).join("");
+}
+
+function renderAutocueModelBlock() {
+  const info = schema.autocue_model || {};
+  return `<div class="setgroup collapsed" data-sg="autocuemodel">
+    <div class="sethead">
+      <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("autocue.model_title"))}</b></div>
+    </div>
+    <div class="setbody">
+      <div class="sethint">${esc(t("autocue.model_note"))}</div>
+      <div class="acmodel-info" id="acModelInfo">${autocueModelSummary(info)}</div>
+      <div id="acModelStatus"></div>
+      <div class="acmodel-actions">
+        <button class="act" id="btnAutocueModelLoad"><span class="btnicon">${ICONS.modelLoad}</span> ${esc(t("autocue.model_load"))}</button>
+        <button class="act" id="btnAutocueModelRemove"${info.has_loaded ? "" : " hidden"}>${esc(t("autocue.model_remove"))}</button>
+        <input type="file" id="acModelFile" accept=".zip,application/zip" hidden>
+      </div>
+    </div>
+  </div>`;
+}
+
+function showAutocueModel(info, statusKey, warn) {
+  schema.autocue_model = info;
+  document.getElementById("acModelInfo").innerHTML = autocueModelSummary(info);
+  document.getElementById("btnAutocueModelRemove").hidden = !info.has_loaded;
+  const st = document.getElementById("acModelStatus");
+  st.textContent = statusKey ? t(statusKey) : ""; st.className = warn ? "warn" : "";
+  AUTOCUE_AVAILABLE = !!info.trained_at;
+}
+
+function wireAutocueModelBlock() {
+  const load = document.getElementById("btnAutocueModelLoad");
+  if (!load) return;
+  const input = document.getElementById("acModelFile");
+  load.onclick = () => input.click();
+  input.onchange = async () => {
+    const file = input.files[0];
+    input.value = "";
+    if (!file) return;
+    const st = document.getElementById("acModelStatus");
+    st.textContent = t("autocue.model_loading"); st.className = "";
+    try {
+      const res = await fetch("/api/autocue/model-import", {method: "POST",
+        headers: {"Content-Type": "application/zip"}, body: file});
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || t("error.unknown"));
+      showAutocueModel(data.model, data.active ? "autocue.model_loaded_ok" : "autocue.model_loaded_inactive",
+        !data.active);
+    } catch (err) {
+      st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
+    }
+  };
+  document.getElementById("btnAutocueModelRemove").onclick = async () => {
+    if (!await askConfirmSimple(t("autocue.model_remove_confirm"), "", t("autocue.model_remove_yes"))) return;
+    const st = document.getElementById("acModelStatus");
+    try {
+      const res = await fetch("/api/autocue/model-remove", {method: "POST"});
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || t("error.unknown"));
+      showAutocueModel(data.model, "autocue.model_removed");
+    } catch (err) {
+      st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
+    }
+  };
+}
+
 // ── Backup ────────────────────────────────────────────────────────────
 // Eigener Block statt Teil des generischen Schemas: das sind Aktionen
 // (Backup jetzt / wiederherstellen), keine Einstellungswerte zum Editieren.
@@ -11707,6 +11984,7 @@ const SETTING_REQUIREMENTS = {
   bpmkey: {ok: () => BPMKEY_INSTALLED},
   genremood: {ok: () => GENREMOOD_INSTALLED},
   phrases: {ok: () => PHRASES_AVAILABLE},
+  autocue: {ok: () => AUTOCUE_AVAILABLE},
   analysis: {ok: () => BPMKEY_INSTALLED || GENREMOOD_INSTALLED},
 };
 
@@ -15329,7 +15607,14 @@ document.querySelectorAll("#layoutSwitch [data-layout]").forEach(b => {
 });
 
 document.getElementById("btnSettings").onclick = openSettings;
-document.getElementById("btnSave").onclick = () => postSettings("/api/settings", collectSettings());
+document.getElementById("btnSave").onclick = async () => {
+  // Fehlerhafte Slot-Belegung: Dialog bleibt offen, der Fehler steht am Block.
+  if (autocueSlotsDirty() && !await saveAutocueSlots()) {
+    document.getElementById("acSlotStatus").scrollIntoView({block: "center"});
+    return;
+  }
+  postSettings("/api/settings", collectSettings());
+};
 
 // ── Statistik ────────────────────────────────────────────────────────────
 // Jahres-/Monats-Auswertung aus audit_log.py + der events-Tabelle (siehe
@@ -16691,6 +16976,26 @@ async function runRekordboxImport() {
   }
 }
 
+// Danach im Hintergrund: Rekordbox-Grids, zu denen TrackTab noch kein eigenes hat, als
+// eigene uebernehmen (gridstore.SeedJob, je Track eine Dekodierung). Nicht abwarten.
+async function runGridSeed() {
+  let s;
+  try {
+    s = await (await fetch("/api/grid-seed", {method: "POST"})).json();
+  } catch (_) { return; }
+  if (!s.ok || (!s.running && !s.total)) return;
+  const pt = progressToast(t("sync.grid_seed.running"));
+  for (;;) {
+    if (s.total) pt.update(100 * s.done / s.total, t("toast.bpmkey_progress", {done: s.done, total: s.total}));
+    if (!s.running) break;
+    await new Promise(r => setTimeout(r, 1000));
+    try { s = await (await fetch("/api/grid-seed/status")).json(); } catch (_) { break; }
+  }
+  if (s.error) pt.fail(t("sync.grid_seed.failed", {error: s.error}));
+  else pt.done(s.total ? t("sync.grid_seed.done", {seeded: s.seeded}) : null);
+  if (DJ && !DJ.closed) djLoad(DJ);
+}
+
 async function openRekordboxSyncFlow() {
   const choice = await askRekordboxSyncOptions();
   if (!choice || (!choice.presence && !choice.fixPaths && !choice.pending && !choice.load)) return;
@@ -16700,7 +17005,7 @@ async function openRekordboxSyncFlow() {
   try {
     if (choice.pending) await runRekordboxPendingApply();
     if (choice.presence) await runRekordboxPresenceSync();
-    if (choice.load) await runRekordboxImport();
+    if (choice.load) { await runRekordboxImport(); runGridSeed(); }
     if (choice.fixPaths) await runRekordboxFixPathsFlow();
   } finally {
     btn.disabled = false;
@@ -16826,6 +17131,33 @@ document.getElementById("btnNewPlaylist").onclick = () => createPlaylistNode("pl
 document.getElementById("btnNewSmart").onclick = () => createPlaylistNode("smart");
 document.getElementById("btnNewGenerator").onclick = () => createPlaylistNode("generator");
 document.getElementById("btnNewFolder").onclick = () => createPlaylistNode("folder");
+document.getElementById("btnImportM3u").onclick = () => document.getElementById("m3uImportFile").click();
+document.getElementById("m3uImportFile").onchange = async ev => {
+  const file = ev.target.files[0];
+  ev.target.value = "";
+  if (file) await importM3uFile(file);
+};
+
+// Manueller M3U/M3U8-Import: Datei hier zerlegen, Zuordnung zu den Tracks macht der Server.
+async function importM3uFile(file) {
+  try {
+    const paths = (await file.text()).split(/\r?\n/).map(l => l.trim())
+      .filter(l => l && !l.startsWith("#"))
+      .map(l => {
+        if (/^file:\/\//i.test(l)) { try { return decodeURIComponent(l.replace(/^file:\/\/(localhost)?/i, "")); } catch (e) { return l; } }
+        return l;
+      });
+    if (!paths.length) { note(t("tree.import_empty"), "soft"); return; }
+    const current = PLAYLISTS.find(n => `pl:${n.id}` === state.view);
+    const parent = current ? (current.parent_id || null) : null;
+    const name = file.name.replace(/\.m3u8?$/i, "") || "Import";
+    const data = await playlistApi("/api/playlist-import", {name, paths, parent_id: parent});
+    await reloadPlaylists();
+    selectView(`pl:${data.node.id}`);
+    note(t("tree.import_done", {name, added: data.added, missing: data.missing}),
+         data.missing ? "soft" : undefined);
+  } catch (err) { note(t("tree.import_failed", {error: err.message}), true); }
+}
 syncLayoutSwitch();
 syncControls();
 renderHead();

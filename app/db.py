@@ -240,7 +240,20 @@ CREATE TABLE IF NOT EXISTS phrases (
     uncertain  INTEGER,
     version    TEXT,
     ts         REAL,
-    beats      TEXT
+    beats      TEXT,
+    grid_origin    TEXT,
+    phrases_origin TEXT
+);
+
+-- Was Auto Cue zuletzt je Track gesetzt hat (app/autocue/, server._post_autocue()):
+-- cues = JSON wie dj_track.cues. Nur Herkunftsnachweis -- das Training
+-- (app/autocue/training/) laesst Cues an diesen Stellen als Labels aus, sonst lernte
+-- das Modell aus seinen eigenen Ergebnissen, sobald sie in Rekordbox stehen. Nicht in
+-- _PRUNE_TABLES (wie dj_track: Nutzerdaten).
+CREATE TABLE IF NOT EXISTS autocue_log (
+    path TEXT PRIMARY KEY,
+    cues TEXT,
+    ts   REAL
 );
 
 -- Bearbeitungen aus der DJ-Ansicht (app/webui/dj.js): Beatgrid, Phrasen und Cues
@@ -337,7 +350,8 @@ CREATE TABLE IF NOT EXISTS playlists (
     system    INTEGER DEFAULT 0,
     seq       INTEGER DEFAULT 0,
     ts        REAL,
-    fav_slot  INTEGER
+    fav_slot  INTEGER,
+    locked    INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_playlists_parent ON playlists(parent_id, seq);
 
@@ -415,6 +429,10 @@ def _ensure_playlist_columns(conn: sqlite3.Connection) -> None:
     existing = {row["name"] for row in conn.execute("PRAGMA table_info(playlists)")}
     if "fav_slot" not in existing:
         conn.execute("ALTER TABLE playlists ADD COLUMN fav_slot INTEGER")
+    if "locked" not in existing:
+        # Vom Nutzer gesetzte Sperre (Name, Ort, Inhalt), nicht zu verwechseln
+        # mit 'system' (feste Listen).
+        conn.execute("ALTER TABLE playlists ADD COLUMN locked INTEGER DEFAULT 0")
     dj_track = {row["name"] for row in conn.execute("PRAGMA table_info(dj_track)")}
     if "rb_base" not in dj_track:
         conn.execute("ALTER TABLE dj_track ADD COLUMN rb_base TEXT")
@@ -432,6 +450,10 @@ def _ensure_playlist_columns(conn: sqlite3.Connection) -> None:
     phrases = {row["name"] for row in conn.execute("PRAGMA table_info(phrases)")}
     if "beats" not in phrases:
         conn.execute("ALTER TABLE phrases ADD COLUMN beats TEXT")
+    # Herkunft je Feld (app/gridstore.py): NULL = eigene Messung von vor der Spalte.
+    for col in ("grid_origin", "phrases_origin"):
+        if col not in phrases:
+            conn.execute(f"ALTER TABLE phrases ADD COLUMN {col} TEXT")
     conn.commit()
 
 
@@ -745,7 +767,7 @@ def delete_cached_cover(conn: sqlite3.Connection, path: str) -> None:
 _PATH_TABLES = ("files", "ignored", "corrected", "waveform",
                 "rekordbox", "rekordbox_pending", "rekordbox_stem_pending",
                 "music_added", "cover_cache", "playlist_items", "dup_dismissed", "genremood", "user_tags",
-                "phrases", "dj_track", "waveform_color", "grid_tempo", "rb_snapshot")
+                "phrases", "dj_track", "waveform_color", "grid_tempo", "rb_snapshot", "autocue_log")
 
 
 def move_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> bool:
@@ -1024,12 +1046,15 @@ def save_genremood(conn: sqlite3.Connection, path: str, genres: list,
 def save_phrases(conn: sqlite3.Connection, path: str, result: dict) -> None:
     conn.execute(
         "INSERT OR REPLACE INTO phrases (path, mode, used, bpm, confidence, first_beat, "
-        "downbeat, changes, phrases, mood, uncertain, version, ts, beats) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "downbeat, changes, phrases, mood, uncertain, version, ts, beats, grid_origin, phrases_origin) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (path, result["mode"], result["used"], result["bpm"], result["confidence"],
          result["first_beat"], result["downbeat"], json.dumps(result["changes"]),
          json.dumps(result["phrases"]), result["mood"], int(bool(result["uncertain"])),
-         result["version"], time.time(), json.dumps(result["beats"])),
+         result["version"], time.time(), json.dumps(result["beats"]),
+         # Eine Messung bringt keine Herkunft mit: dann ist sie eigene.
+         result.get("grid_origin") or "tracktab" if result["beats"] else None,
+         result.get("phrases_origin") or "tracktab" if result["phrases"] else None),
     )
     conn.commit()
 
@@ -1046,6 +1071,23 @@ def get_phrases(conn: sqlite3.Connection, path: str) -> dict | None:
         except (TypeError, ValueError):
             out[key] = empty
     out["uncertain"] = bool(out["uncertain"])
+    return out
+
+
+def save_autocue_log(conn: sqlite3.Connection, path: str, cues: list) -> None:
+    conn.execute("INSERT OR REPLACE INTO autocue_log (path, cues, ts) VALUES (?, ?, ?)",
+                 (path, json.dumps(cues), time.time()))
+    conn.commit()
+
+
+def autocue_log_map(conn: sqlite3.Connection) -> dict[str, list]:
+    """Pfad -> zuletzt von Auto Cue gesetzte Cues (fuer das Training)."""
+    out = {}
+    for r in conn.execute("SELECT path, cues FROM autocue_log"):
+        try:
+            out[r["path"]] = json.loads(r["cues"] or "[]")
+        except (TypeError, ValueError):
+            out[r["path"]] = []
     return out
 
 
@@ -1342,7 +1384,7 @@ def _seed_system_playlists(conn: sqlite3.Connection) -> None:
 def playlists_all(conn: sqlite3.Connection) -> list[dict]:
     """Alle Knoten als flache Liste, Geschwister nach 'seq' und dann Name."""
     rows = conn.execute(
-        "SELECT id, parent_id, kind, name, icon, color, rules, system, seq, fav_slot "
+        "SELECT id, parent_id, kind, name, icon, color, rules, system, seq, fav_slot, locked "
         "FROM playlists ORDER BY seq ASC, name ASC")
     return [dict(r) for r in rows]
 
@@ -1359,7 +1401,7 @@ def playlist_items_map(conn: sqlite3.Connection) -> dict[str, list[str]]:
 
 def playlist_by_id(conn: sqlite3.Connection, playlist_id: str) -> dict | None:
     row = conn.execute(
-        "SELECT id, parent_id, kind, name, icon, color, rules, system, seq, fav_slot "
+        "SELECT id, parent_id, kind, name, icon, color, rules, system, seq, fav_slot, locked "
         "FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
     return dict(row) if row else None
 
@@ -1411,12 +1453,13 @@ def save_playlist(conn: sqlite3.Connection, node: dict) -> dict:
         "seq": int(node.get("seq") or 0),
         "ts": time.time(),
         "fav_slot": node.get("fav_slot") or None,
+        "locked": 1 if node.get("locked") else 0,
     }
     conn.execute(
         "INSERT OR REPLACE INTO playlists "
-        "(id, parent_id, kind, name, icon, color, rules, system, seq, ts, fav_slot) "
+        "(id, parent_id, kind, name, icon, color, rules, system, seq, ts, fav_slot, locked) "
         "VALUES (:id, :parent_id, :kind, :name, :icon, :color, :rules, "
-        ":system, :seq, :ts, :fav_slot)", fields)
+        ":system, :seq, :ts, :fav_slot, :locked)", fields)
     conn.commit()
     return fields
 

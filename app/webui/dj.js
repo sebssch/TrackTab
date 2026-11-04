@@ -474,6 +474,18 @@ async function djLoad(ed) {
   }
 }
 
+// Cue in der Form des Servers (dj_track.cues, Rekordbox, /api/autocue) -> Editor.
+function djCueFromServer(c) {
+  return {
+    id: djNewId(), kind: c.kind, slot: c.slot || null, label: c.kind === "hot" ? "ABCDEFGH"[(c.slot || 1) - 1] : "",
+    name: c.name != null ? c.name : (c.kind === "memory" ? (c.label || "") : ""),
+    // Knapp vor dem Ton gesetzt: der erste Schlag steht jetzt am Anfang, der Cue mit ihm.
+    position_s: c.position_s < 0 && c.position_s >= -djGridStartTolerance() ? 0 : c.position_s,
+    loop_s: c.loop_s != null ? c.loop_s : null, active: !!c.active,
+    color: c.color || djMemoryColor(),
+  };
+}
+
 function djAdopt(ed, data) {
   ed.src = {grid: data.grid.source, phrases: data.phrases.source, cues: data.cues.source};
   ed.edited = {grid: data.grid.edited, phrases: data.phrases.edited, cues: data.cues.edited};
@@ -485,14 +497,7 @@ function djAdopt(ed, data) {
   ed.segs = data.grid.segments || djSegmentsFromBeats(data.grid.beats || []);
   ed.phrases = (data.phrases.items || []).map(p => ({start: p.start, end: p.end, kind: p.kind, num: p.num || 0}));
   djRenumberPhrases(ed);
-  ed.cues = (data.cues.items || []).map(c => ({
-    id: djNewId(), kind: c.kind, slot: c.slot || null, label: c.kind === "hot" ? "ABCDEFGH"[(c.slot || 1) - 1] : "",
-    name: c.name != null ? c.name : (c.kind === "memory" ? (c.label || "") : ""),
-    // Knapp vor dem Ton gesetzt: der erste Schlag steht jetzt am Anfang, der Cue mit ihm.
-    position_s: c.position_s < 0 && c.position_s >= -djGridStartTolerance() ? 0 : c.position_s,
-    loop_s: c.loop_s != null ? c.loop_s : null, active: !!c.active,
-    color: c.color || djMemoryColor(),
-  }));
+  ed.cues = (data.cues.items || []).map(djCueFromServer);
   ed.undo = []; ed.redo = [];
   ed.selCue = null; ed.selPhrase = -1;
   ed.dirty.clear();
@@ -976,8 +981,15 @@ function djAddHot(ed, slot, ev) {
                color: djHotColor()};
   if (cue.loop_s != null) cue.position_s = ed.loop.start;
   ed.cues.push(cue);
-  ed.selCue = cue.id;
+  djSelectCue(ed, cue.id);
   djTouched(ed, "cues");
+}
+
+// Cue und Phrase sind nie gleichzeitig ausgewaehlt: Entf loescht genau das zuletzt
+// Gewaehlte (sonst traf es einen eben gesetzten Hot Cue statt der angeklickten Phrase).
+function djSelectCue(ed, id) {
+  ed.selCue = id;
+  ed.selPhrase = -1;
 }
 
 function djAddMemory(ed, ev) {
@@ -992,7 +1004,7 @@ function djAddMemory(ed, ev) {
   const cue = {id: djNewId(), kind: "memory", slot: null, label: "", name: "", position_s: pos,
                loop_s: hasLoop ? ed.loop.end : null, active: !!hasLoop, color: hasLoop ? djLoopColor(true) : djMemoryColor()};
   ed.cues.push(cue);
-  ed.selCue = cue.id;
+  djSelectCue(ed, cue.id);
   if (ed.side !== "memory") djSetSide(ed, "memory");
   djTouched(ed, "cues");
 }
@@ -1015,7 +1027,7 @@ function djDeleteCue(ed, id) {
 }
 
 function djGoCue(ed, cue) {
-  ed.selCue = cue.id;
+  djSelectCue(ed, cue.id);
   djSeek(ed, cue.position_s);
   // Wie am Player: ein angesprungener Cue wird zum Cue-Punkt.
   ed.tempCue = cue.position_s;
@@ -1085,6 +1097,7 @@ function djLoopBeats(ed, beats) {
     ed.loop = null;
   } else {
     ed.loop = {start, end, on: true, beats};
+    djFlashLoopHud(ed, djLoopLabel(beats));
   }
   djApplyLoop(ed);
   djRenderTools(ed); requestWavePaint();
@@ -1240,6 +1253,7 @@ function djCutPhrase(ed, ev) {
   }
   djSortPhrases(ed);
   ed.selPhrase = djPhraseAt(ed, at);
+  ed.selCue = null;
   djTouched(ed, "phrases");
 }
 function djSetPhraseKind(ed, kind) {
@@ -1329,6 +1343,8 @@ function djCueTools(ed) {
     return djToolBtn("looplen", djLoopLabel(n), t("dj.loop_len_title", {beats: djLoopLabel(n), key: key.toUpperCase()}), {cls: on ? "on" : "", attrs: `data-n="${n}"`});
   }).join("");
   return `${djToolBtn("memory", `${djIcon("bookmark")} ${esc(t("dj.memory_set"))}`, t("dj.memory_title"), {cls: "wide"})}
+    ${AUTOCUE_AVAILABLE ? djToolBtn("autocue", `${djIcon("square-sparkles")} ${esc(t("dj.autocue"))}`, t("dj.autocue_title"),
+      {cls: "wide", attrs: ed.autocueBusy ? "disabled" : ""}) : ""}
     <span class="dj-sep"></span>
     <span class="dj-toollabel">${djIcon("repeat")} ${esc(t("dj.loop"))}</span>
     ${djToolBtn("loopin", esc(t("dj.loop_in")), t("dj.loop_in_title"), {cls: loop ? "on" : ""})}
@@ -1402,8 +1418,9 @@ function djCueRow(ed, cue, letter) {
   const loopMark = cue.loop_s == null ? "" : isMemory
     ? `<span class="dj-loopmark ${cue.active ? "active" : "normal"}" data-dj="looptoggle" data-id="${cue.id}" title="${esc(t(cue.active ? "dj.loop_active_title" : "dj.loop_normal_title", {time: djFmt(cue.loop_s)}))}">${djIcon("repeat")}</span>`
     : `<span class="dj-loopmark" title="${esc(t("dj.loop_until", {time: djFmt(cue.loop_s)}))}">${djIcon("repeat")}</span>`;
-  return `<div class="dj-row${ed.selCue === cue.id ? " sel" : ""}" data-dj="cuejump" data-id="${cue.id}">
-    <span class="dj-dot" data-dj="cuecolor" data-id="${cue.id}" title="${esc(t("dj.color_title"))}" style="background:${djRgb(cue.color)}">${letter || ""}</span>
+  const near = ed.nearCues && ed.nearCues.has(String(cue.id));
+  return `<div class="dj-row${ed.selCue === cue.id ? " sel" : ""}${near ? " near" : ""}" data-dj="cuejump" data-id="${cue.id}">
+    <span class="dj-dot" data-dj="cuecolor" data-id="${cue.id}" title="${esc(t("dj.color_title"))}" style="--c:${djRgb(cue.color)};background:var(--c)">${letter || ""}</span>
     <span class="dj-time">${djFmt(cue.position_s)}</span>
     ${hot ? `<span class="dj-dot dj-samehot" title="${esc(t("dj.memory_same_hot", {slot: hot.label}))}" style="background:${djRgb(hot.color)}">${esc(hot.label)}</span>` : ""}
     ${loopMark}
@@ -1614,6 +1631,8 @@ function djInfoHTML(ed) {
       const off = what === "both" ? ed.locks.grid && ed.locks.phrases : ed.locks[what];
       return `<button class="dj-addrow" data-dj="measure" data-what="${what}"${off ? ` disabled title="${esc(t("dj.analysis_locked"))}"` : ""}>${icon} ${esc(t(label))}</button>`;
     }).join("") : ""}
+    ${AUTOCUE_AVAILABLE ? `<button class="dj-addrow" data-dj="autocue"${ed.autocueBusy ? " disabled" : ""} title="${
+      esc(t("dj.autocue_title"))}">${djIcon("square-sparkles")} ${esc(t("dj.autocue"))}</button>` : ""}
     <div class="dj-note">${esc(t("dj.storage_note"))}</div>
     <div class="dj-keys">
       ${[["Space", "dj.key_play"], ["C", "dj.key_cue"], ["M", "dj.key_memory"], ["X", "dj.key_cut"], ["1–8", "dj.key_hot"], ["⇧ 1–8", "dj.key_hot_delete"],
@@ -1703,6 +1722,7 @@ function djOnClick(ed, ev) {
       djTouched(ed, "grid");
       break;
     case "measure": djMeasure(ed, d.what || "both"); break;
+    case "autocue": djAutoCue(ed); break;
     case "cut": djCutPhrase(ed, ev); break;
     case "kind": djSetPhraseKind(ed, d.kind); break;
     case "delphrase": djDeletePhrase(ed); break;
@@ -1730,14 +1750,100 @@ function djOnChange(ed, ev) {
 
 function djSelectPhrase(ed, i, jump) {
   ed.selPhrase = i;
+  ed.selCue = null;              // siehe djSelectCue()
   if (jump && ed.phrases[i]) djSeek(ed, ed.phrases[i].start);
-  djRenderSide(ed); djRenderTools(ed); requestWavePaint();
+  djRenderPads(ed); djRenderSide(ed); djRenderTools(ed); requestWavePaint();
 }
 
 async function djMeasure(ed, what) {
   const off = what === "both" ? ed.locks.grid && ed.locks.phrases : ed.locks[what];
   if (off) { note(t("dj.analysis_locked"), "soft"); return; }
   await analysePhrases([ed.r], false, what);
+}
+
+// Auto Cue (app/autocue/) fuer den offenen Track. Der Server rechnet nur (ohne apply),
+// uebernommen wird hier -- so laeuft es wie jede Bearbeitung ueber Rueckgaengig und den
+// normalen Speicherweg (djTouched()). Hat der Server dabei Grid/Phrasen aus Rekordbox
+// uebernommen oder erst gemessen, steht das schon in dj_track: dann zuerst neu laden.
+async function djAutoCue(ed) {
+  if (ed.autocueBusy) return;
+  ed.autocueBusy = true;
+  djRenderTools(ed); djRenderSide(ed);
+  const pt = progressToast(t("dj.autocue_running"), {indeterminate: true});
+  try {
+    await djSave(ed);
+    const res = await fetch("/api/autocue", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({path: ed.path})});
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || String(res.status));
+    if (!ed.closed && (data.measured || (data.loaded || []).length)) await djLoad(ed);
+    const extra = autocueSourceText(data);
+    if (data.status === "done" && !ed.closed) {
+      djPush(ed);
+      ed.cues = data.cues.map(djCueFromServer);
+      ed.selCue = null;
+      djTouched(ed, "cues");
+      pt.done(`${t("autocue.status_done", {count: data.cues.length})} ${extra}`.trim());
+    } else {
+      pt.done(`${autocueStatusText(data)} ${extra}`.trim(), true);
+    }
+  } catch (err) {
+    pt.fail(t("error.generic", {error: err.message}));
+  } finally {
+    ed.autocueBusy = false;
+    if (!ed.closed) { djRenderTools(ed); djRenderSide(ed); }
+  }
+}
+
+// Sammelaktion: Auto Cue fuer die Auswahl, einer nach dem anderen (je Track Dekodieren
+// und Messen, ein paar Sekunden). Der Server speichert gleich (apply); Tracks, bei denen
+// keine Cue sicher genug war, behalten ihre bisherigen.
+async function djBulkAutoCue(rows) {
+  const todo = rows.filter(r => !r.gone);
+  if (!todo.length) return;
+  const label = t("bulk.dj_autocue");
+  const ok = await askConfirmSimple(t("dj.autocue_confirm"), t("dj.autocue_confirm_note", {count: todo.length}), label);
+  if (!ok) return;
+  if (DJ) await djSave(DJ);
+  const pt = progressToast(t("dj.bulk_running", {action: label, count: todo.length}));
+  let done = 0, skipped = 0, failed = 0, lastError = "";
+  for (let i = 0; i < todo.length; i++) {
+    const r = todo[i];
+    try {
+      const res = await fetch("/api/autocue", {method: "POST", headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path: r.p, apply: true})});
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || String(res.status));
+      if (data.status === "done") done++;
+      else skipped++;
+    } catch (err) {
+      failed++; lastError = `${baseName(r.p)}: ${err.message}`;
+    } finally {
+      pt.update(100 * (i + 1) / todo.length, t("toast.bpmkey_progress", {done: i + 1, total: todo.length}));
+    }
+  }
+  await syncMarks();
+  render();
+  if (DJ && !DJ.closed && todo.some(r => r.p === DJ.path)) djLoad(DJ);
+  const summary = t("autocue.bulk_done", {done, skipped});
+  if (failed) pt.fail(`${summary} ${t("dj.bulk_failed", {failed, error: lastError})}`);
+  else pt.done(summary, !done);
+}
+
+function autocueStatusText(data) {
+  switch (data.status) {
+    case "none": return t("autocue.status_none");
+    case "badgrid": return t("autocue.status_badgrid", {reason: (data.reasons || [])[0] || ""});
+    case "nogrid": return t("autocue.status_nogrid");
+    case "skipped": return t("autocue.status_skipped", {minutes: data.minutes});
+    case "unavailable": return t("settings.requires_autocue");
+    default: return String(data.status || "");
+  }
+}
+
+function autocueSourceText(data) {
+  return [(data.loaded || []).length ? t("autocue.loaded") : "", data.measured ? t("autocue.measured") : ""]
+    .filter(Boolean).join(" ");
 }
 
 // Erst den Stand speichern: das Speichern einer Bearbeitung sperrt sonst gleich wieder.
@@ -1868,6 +1974,28 @@ function djReleaseJump(ed) {
   clearTimeout(ed.jumpHudTimer);
   const hud = document.getElementById("djJumpHud");
   if (hud) hud.classList.remove("on");
+}
+
+// Loop-Groesse: dieselbe Anzeige wie beim Beatjump, aber ohne Taste halten -- sie blendet nach kurzer Zeit von selbst aus.
+function djFlashLoopHud(ed, label) {
+  if (ed.closed) return;
+  clearTimeout(ed.jumpHudTimer);
+  let hud = document.getElementById("djJumpHud");
+  if (!hud) {
+    hud = document.createElement("div");
+    hud.id = "djJumpHud";
+    hud.className = "dj-jumphud";
+    hud.setAttribute("aria-hidden", "true");
+    document.body.appendChild(hud);
+  }
+  const side = document.querySelector(".sidebar-body").getBoundingClientRect();
+  hud.style.left = `${side.left + 8}px`;
+  hud.style.width = `${Math.max(side.width - 16, 190)}px`;
+  hud.innerHTML = `<div class="dj-jumphud-main"><b>${esc(label)}</b></div>
+    <div class="dj-jumphud-unit">${esc(t("dj.loop_hud_beats"))}</div>`;
+  hud.classList.add("on");
+  clearTimeout(ed.loopHudTimer);
+  ed.loopHudTimer = setTimeout(() => { if (!ed.jumpHeld) hud.classList.remove("on"); }, 900);
 }
 
 function djPulseJumpHud(dir) {
@@ -2562,6 +2690,38 @@ function djDrawTempoBadges(ctx, ed, start, span, w, top, bottom, small) {
   ctx.restore();
 }
 
+// Cue "am Abspielkopf": von einem Schlag davor bis einen Takt danach. Steht der Kopf
+// zwischen zwei Cues, gilt der naehere; Cues an derselben Stelle (Hot + Memory) zusammen.
+function djNearCueWindow(ed, pos) {
+  const bpm = ed.segs.length ? ed.segs[djSegIndexAt(ed, pos)].bpm : 0;
+  const beat = bpm > 0 ? 60 / bpm : 0.5;
+  return {before: beat, after: 4 * beat};
+}
+function djNearCueIds(ed, pos) {
+  const win = djNearCueWindow(ed, pos);
+  let best = null, bestDist = Infinity;
+  for (const c of ed.cues) {
+    const d = pos - c.position_s;
+    if (d < -win.before || d > win.after) continue;
+    if (Math.abs(d) < bestDist) { best = c; bestDist = Math.abs(d); }
+  }
+  if (!best) return [];
+  return ed.cues.filter(c => Math.abs(c.position_s - best.position_s) < 0.01).map(c => String(c.id));
+}
+// Laeuft je Bild mit, fasst das DOM aber nur bei einem Wechsel an (Seitenleiste wird
+// sonst per innerHTML neu gebaut und verloere den Fokus eines Namensfelds).
+function djUpdateNearCue(ed, pos) {
+  const ids = djNearCueIds(ed, pos), key = ids.join(",");
+  if (key === ed.nearKey) return;
+  ed.nearKey = key;
+  ed.nearCues = new Set(ids);
+  const host = ed.root && ed.root.querySelector(".dj-sidebody");
+  if (!host) return;
+  for (const row of host.querySelectorAll(".dj-row[data-id]")) {
+    row.classList.toggle("near", ed.nearCues.has(row.dataset.id));
+  }
+}
+
 function djBarsToNextCue(ed, pos) {
   let best = null;
   for (const c of ed.cues) {
@@ -2587,6 +2747,7 @@ function djPaintZoom(ctx, w, h, entry) {
   djDrawEdgeGrip(ctx, ed, start, span, w, waveTop, h - lay.lane, h, true);
   djDrawCues(ctx, ed, start, span, w, h - lay.lane, lay.top, true);
   djDrawTempoBadges(ctx, ed, start, span, w, waveTop, waveTop + waveH, false);
+  djUpdateNearCue(ed, pos);
   // Abspielkopf
   const mid = Math.round(w / 2);
   ctx.fillStyle = th.head;

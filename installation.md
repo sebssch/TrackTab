@@ -60,6 +60,7 @@ Nach einer neuen Version des Quellcodes einfach `./build_app.sh` erneut ausführ
 - Optional: `libsonare` für die BPM-/Tonart-Analyse (kommt über `requirements.txt` automatisch mit; das PyPI-Wheel gibt es nur für Apple Silicon — auf einem Intel-Mac läuft TrackTab ohne diese Funktion)
 - Optional: `onnxruntime` und die Essentia-Modelle für Genre, Stimmung und Energie. `onnxruntime` kommt über `requirements.txt` mit (nur Apple Silicon, macOS 14+), die Modelle (~21 MB) lädt einmalig `./fetch_models.sh` nach `vendor/models/essentia/`; `./build_app.sh` erledigt das selbst. Ohne beides läuft TrackTab ohne diese Funktion.
 - Optional: das Demucs-Modell für die Stem-Trennung (Acapella/Instrumental, ~170 MB, nutzt dasselbe `onnxruntime`). Es wird in den Einstellungen unter „Stems“ geladen (Ablage in `models/demucs/` im Datenordner, nicht im Bundle); ein vorhandenes `vendor/models/demucs/` wird im Entwicklungsbetrieb weiter genutzt. Ohne das Modell sind die Stem-Funktionen ausgeblendet.
+- Optional: die Auto-Cue-Modelle in `vendor/models/autocue/` (~3 MB, nur numpy, kein onnxruntime nötig). Sie liegen nicht im Repository und werden beim Bauen mit in die App gepackt, wenn sie vorhanden sind. Ohne sie ist Auto Cue ausgeblendet. Neu trainiert werden sie mit `./run.command autocue-train` (siehe „Auto Cue neu trainieren“).
 - Optional: das Phrasenmodell `vendor/models/phrases/phrases.onnx` für „Beatgrid & Phrasen“ (nutzt dasselbe `onnxruntime`). Es liegt nicht im Repository (`vendor/` ist ausgeschlossen) und wird beim Bauen mit in die App gepackt, wenn die Datei dort vorhanden ist. Ohne das Modell ist die Funktion ausgeblendet.
 - `osascript` (in macOS bereits enthalten; wird für Papierkorb, Finder-Integration, externe Programme und Dialoge genutzt)
 
@@ -106,7 +107,33 @@ Alle Befehle laufen über `./run.command <Befehl>`:
 | `backup create` | Backup der Analysedaten jetzt erstellen |
 | `backup list` | Vorhandene automatische Backups anzeigen |
 | `backup restore <Datei>` | Analysedaten aus einem Backup wiederherstellen (der bisherige Stand wird davor selbst gesichert) |
+| `autocue-train` | Auto Cue neu trainieren (siehe unten) |
+| `autocue-eval` | Auto-Cue-Modelle auf der Prüfliste bewerten, ohne zu trainieren |
 
 Beenden der Weboberfläche: `Strg+C` im Terminal, oder der Button **Beenden** rechts oben in der Oberfläche.
+
+### Auto Cue neu trainieren
+
+Das Training läuft im Entwicklungsordner, kann aber mit den Daten jeder TrackTab-Instanz arbeiten, auch mit denen der installierten App. Es braucht einmalig LightGBM im `.venv` (kommt nie in die App):
+
+```bash
+.venv/bin/pip install -r requirements-train.txt
+```
+
+Dann die Vorlage kopieren und anpassen (die eigene Datei wird nicht eingecheckt):
+
+```bash
+cp autocue-train.example.yaml autocue-train.yaml
+```
+
+Darin stehen der Datenordner der TrackTab-Instanz, deren Tracks und Hand-Cues gelernt werden (`installed` für die installierte App, `dev` für den Entwicklungsordner oder ein Pfad), die Playlist **Training** (daraus wird gelernt, je mehr Tracks, desto besser) und die Playlist **Prüfliste** (daran wird gemessen, nie gelernt). Beides sind normale TrackTab-Playlisten dieser Instanz und dürfen keinen Track gemeinsam haben. Unter `targets` steht, wohin das neue Modell kommt: `vendor` (geht mit der nächsten `.dmg` mit) und/oder `instance` (dort sofort aktiv). Dann:
+
+```bash
+./run.command autocue-train
+```
+
+Gelernt wird aus den von Hand gesetzten Hot Cues A und C und den Memory Cues (aus der DJ-Ansicht bzw. aus Rekordbox nach „Rekordbox abgleichen“ → Laden), auf TrackTabs Beatgrid und Phrasen. Fehlt ein eigenes Beatgrid, übernimmt der Lauf das aus Rekordbox in die Datenbank der Instanz. Cues im Ausklang am Trackende zählen nicht.
+
+Der erste Lauf über rund 4.000 Tracks dauert etwa eine Stunde; Protokoll, Modell und ZIP jedes Laufs liegen im Entwicklungsordner unter `autocue-training/runs/<zeit>/`, Datensatz und Zwischenstände in `autocue-training/` im Datenordner der Instanz; beides ist von git ausgeschlossen. Danach rechnet der Export nur Geändertes neu. Am Ende stehen neues und aktives Modell auf der Prüfliste nebeneinander; zusätzlich entsteht `autocue-modell-<zeit>.zip`, die sich in jeder TrackTab-App unter Einstellungen → Auto Cue → **Modell laden …** einspielen lässt. Installiert wird nach Rückfrage (das alte Modell wird gesichert). `./run.command autocue-train --probe` prüft schon mit wenigen Tracks (ab 3), ob alles durchläuft, und installiert nie. `./run.command autocue-eval` bewertet nur, ohne zu trainieren. Weitere Schalter zeigt `./run.command autocue-train --help`.
 
 Für die Bedeutung der Analyseergebnisse und eine Erklärung der Weboberfläche siehe das [Handbuch](handbuch.md).

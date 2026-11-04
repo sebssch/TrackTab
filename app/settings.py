@@ -541,6 +541,43 @@ GROUPS = [
         ],
     },
     {
+        "id": "autocue", "title": "Auto Cue",
+        "note": "Auto Cue setzt Cues aus dem Beatgrid und den Phrasen von TrackTab "
+                "(fehlen sie, aus Rekordbox, sonst wird vorher gemessen). Die Cues "
+                "ersetzen die bisherigen des Tracks; nach Rekordbox gehen sie erst "
+                "mit „Rekordbox Update“.",
+        "fields": [
+            {"key": "autocue_use_phrases", "type": "bool", "requires": "autocue",
+             "label": "Phrasen als Hinweis nutzen",
+             "help": "Phrasengrenzen fließen als Gewicht ein, nie als feste Position. "
+                     "Ohne Phrasen arbeitet Auto Cue nur mit dem Klang."},
+            {"key": "autocue_max_memory", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 10, "step": 1, "label": "Memory Cues höchstens",
+             "help": "Rekordbox erlaubt bis zu 10. Reicht der Platz nicht, setzt Auto Cue "
+                     "die automatischen Zwischenpunkte in größerem Abstand (64 statt 32 Beats)."},
+            {"key": "autocue_conf_drop2", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Drop 2", "break": True,
+             "help": "Lieber keine Cue als eine falsche: Unter dieser Sicherheit "
+                     "(0 bis 1) wird die Rolle nicht gesetzt. Die Vorgaben sind an "
+                     "den Modellen kalibriert."},
+            {"key": "autocue_conf_setup", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Build vor Drop 2"},
+            {"key": "autocue_conf_drop1", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Drop 1"},
+            {"key": "autocue_conf_break1", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Break 1"},
+            {"key": "autocue_conf_break2", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Break 2"},
+            {"key": "autocue_conf_intro_1", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Intro"},
+            {"key": "autocue_conf_outro_start", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Outro"},
+            {"key": "autocue_conf_default", "type": "number", "width": "half", "requires": "autocue",
+             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz übrige Cues",
+             "help": "Gilt für eigene Regeln (z. B. „8 Takte vor Drop 2“)."},
+        ],
+    },
+    {
         "id": "rekordbox", "title": "Rekordbox",
         "fields": [
             {"key": "external_rekordbox", "type": "app", "appList": "rekordboxes",
@@ -643,7 +680,8 @@ def current(cfg: dict | None = None) -> dict:
 
 
 def describe() -> dict:
-    from . import bpmkey, genremood, media, phrases, stems
+    from . import autocue, bpmkey, genremood, media, phrases, rekordbox, stems
+    from .autocue import slots as autocue_slots
     ensure_apple_music_column_view()
     defaults = current(_defaults_cfg())
     detected = media.find_audio_editor()
@@ -673,6 +711,16 @@ def describe() -> dict:
             "genremood_installed": genremood.available(),
             # onnxruntime + Phrasenmodell vorhanden? Sonst Aktion ausblenden.
             "phrases_available": phrases.available(),
+            # Modelle in vendor/models/autocue/ vorhanden? Sonst Auto Cue ausblenden.
+            "autocue_available": autocue.available(),
+            # Welches Modell gilt (mitgeliefert oder geladen) und wie es auf der
+            # Pruefliste abschnitt; trainiert wird nur im Entwicklungsordner.
+            "autocue_model": _autocue_model_info(),
+            "autocue_slots": cfgmod.load().get("autocue_slots") or autocue_slots.defaults(),
+            "autocue_slots_default": autocue_slots.defaults(),
+            "autocue_choices": {"roles": list(autocue_slots.ROLES), "anchors": list(autocue_slots.ANCHORS),
+                                "offsets": list(autocue_slots.OFFSETS)},
+            "cue_palettes": rekordbox.cue_palettes(),
             # Kein UI-Feld (kein Setting zum Editieren, nur Anzeige im
             # Backup-Block) -- deshalb hier separat statt ueber _FIELDS/current().
             "backup_keep": int(cfgmod.load().get("backup_keep", 10)),
@@ -1225,6 +1273,33 @@ def save_column_assign(view_id: str, column_view_id: str) -> dict:
         assign.pop(view, None)
     _write_local({"column_view_assign": assign})
     return assign
+
+
+def validate_autocue_slots(raw) -> dict:
+    """Slot-Belegung von Auto Cue pruefen (Einstellungsseite, eigener Speichern-Knopf).
+    Farben nur aus Rekordbox' Paletten, siehe autocue/slots.py."""
+    from . import rekordbox
+    from .autocue import slots
+    return slots.validate(raw, rekordbox.cue_palettes())
+
+
+def _autocue_model_info() -> dict:
+    """Geltendes Modell (ohne die Pfadliste der Pruefliste) und ob ein geladenes da ist."""
+    import os
+    from . import autocue
+    info = dict(autocue.model_info())
+    gold = info.get("gold")
+    if isinstance(gold, dict):
+        info["gold"] = {k: v for k, v in gold.items() if k != "paths"}
+    info.pop("oof", None)
+    info["has_loaded"] = os.path.isdir(autocue.trained_dir())
+    return info
+
+
+def save_autocue_slots(raw) -> dict:
+    clean = validate_autocue_slots(raw)
+    _write_local({"autocue_slots": clean})
+    return clean
 
 
 def save_shops(items: list) -> list[dict]:

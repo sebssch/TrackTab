@@ -1,6 +1,9 @@
 # Persoenliche Daten (Bibliotheksinhalte, Pfade, Backups) - nicht committen
 data/
 backup/
+# Auto-Cue-Training: Datensatz und Laeufe (app/autocue/training/)
+autocue-training/
+autocue-train.yaml
 logs/
 config.local.yaml
 

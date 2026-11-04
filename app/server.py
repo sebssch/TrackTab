@@ -22,7 +22,6 @@ Bitrate — und auch dort wandert das Original erst in den Papierkorb.
 """
 from __future__ import annotations
 
-import bisect
 import gzip
 import hashlib
 import json
@@ -46,7 +45,14 @@ from . import audit_log
 from . import backup as backup_mod
 from . import bpmkey as bpmkey_mod
 from . import genremood as genremood_mod
+from . import gridstore
+from .gridstore import (beats_with_tempo as _dj_beats_with_tempo, dj_hash as _dj_hash,
+                        phrases_from_first_beat as _phrases_from_first_beat,
+                        segment_tempo as _dj_segment_tempo, snap_phrases as _snap_phrases)
 from . import phrases as phrases_mod
+from . import autocue as autocue_mod
+from .autocue import package as autocue_package
+from .autocue import sources as autocue_sources
 from . import probe as probe_mod
 from . import wavedetail as wavedetail_mod
 from . import config as cfgmod
@@ -76,6 +82,7 @@ _AUDIO_TYPES = {
 }
 
 SCAN = jobs.ScanJob()
+GRID_SEED = gridstore.SeedJob()
 
 # Der laufende Server, damit ihn /api/quit und die App-Huelle (macapp.py) von
 # aussen anhalten koennen. serve() setzt ihn, request_stop() haelt ihn an.
@@ -608,10 +615,6 @@ def _wave_color_json(data: bytes, style: str) -> dict:
             "mid": [round(c[1] / 255, 4) for c in col], "high": [round(c[2] / 255, 4) for c in col]}
 
 
-def _dj_hash(value) -> str:
-    return hashlib.md5(json.dumps(value, sort_keys=True).encode("utf-8")).hexdigest()
-
-
 def _rb_snapshot_sync(snap: dict | None, state: dict, take: list = (), seen: list = ()) -> dict:
     """Festgehaltenen Stand fortschreiben. Leere Felder werden aus Rekordbox gefuellt, was
     schon da ist bleibt. take: Felder, die neu aus Rekordbox gelten sollen (Knopf, eigenes
@@ -627,6 +630,28 @@ def _rb_snapshot_sync(snap: dict | None, state: dict, take: list = (), seen: lis
             out["seen"][f] = digest
     out["changed"] = [f for f in db_mod.DJ_TRACK_FIELDS
                       if out[f] is not None and out["seen"].get(f) != _dj_hash(state[f])]
+    return out
+
+
+def _rb_stamp(rb_stamp: str | None) -> str | None:
+    """Stempel eines festgehaltenen Stands: Aenderungsstand in Rekordbox plus Lesart."""
+    return None if rb_stamp is None else f"{rb_stamp}#r{rekordbox_mod.READER_VERSION}"
+
+
+def _rb_snapshot_reread(snap: dict | None, state: dict, rb_stamp: str | None) -> dict | None:
+    """Neuen Stand, wenn sich seit dem Festhalten nur die Lesart geaendert hat, nicht
+    Rekordbox: dann gilt das Gelesene von heute still, ohne "geaendert". Felder mit einer
+    offenen Abweichung (snap["changed"]) bleiben, die entscheidet der Nutzer. None =
+    nichts zu tun (gleiche Lesart oder Rekordbox selbst hat sich geaendert)."""
+    if not snap or rb_stamp is None or not snap.get("stamp") or not state.get("present"):
+        return None
+    old = str(snap["stamp"])
+    if old == _rb_stamp(rb_stamp) or old.split("#r")[0] != rb_stamp:
+        return None
+    take = [f for f in db_mod.DJ_TRACK_FIELDS if snap[f] is not None and f not in (snap.get("changed") or [])]
+    out = _rb_snapshot_sync(snap, state, take=take)
+    out["stamp"] = _rb_stamp(rb_stamp)
+    out["reread"] = True                   # nur fuer den Aufrufer, wird nicht gespeichert
     return out
 
 
@@ -661,38 +686,6 @@ def _dj_rb_diff(path: str, edits: dict, base: dict) -> list:
     return result
 
 
-def _dj_segment_tempo(segments: list, sec: float) -> float:
-    tempo = segments[0]["bpm"]
-    for seg in segments:
-        if seg["t"] <= sec + 1e-6:
-            tempo = seg["bpm"]
-    return tempo
-
-
-def _dj_beats_with_tempo(beats: list, segments: list, lead: float, bpm: float = 0) -> list:
-    """[[ms, Nummer]] auf eigener Achse -> [[ms, Nummer, BPM]] auf Rekordbox' Achse.
-    Ohne Abschnitte (reine Analyse) kommt das Tempo aus dem Abstand ueber je 8 Schlaege;
-    bei gleichmaessigem Raster ein festes Tempo, die Rundung auf ms schwankte sonst je
-    Schlag. bpm: gemessenes Tempo, gilt, wenn es zum Abstand passt."""
-    out = []
-    n = len(beats)
-    if not segments and n > 1:
-        gaps = [b[0] - a[0] for a, b in zip(beats, beats[1:])]
-        if max(gaps) - min(gaps) <= 5:
-            step = (beats[-1][0] - beats[0][0]) / (n - 1)
-            fixed = bpm if bpm and step > 0 and abs(60000 / step - bpm) < 0.5 else (round(60000 / step, 2) if step > 0 else 120.0)
-            return [[int(round(ms + lead * 1000)), num, fixed] for ms, num in beats]
-    for i, (ms, num) in enumerate(beats):
-        if segments:
-            bpm = _dj_segment_tempo(segments, ms / 1000)
-        else:
-            a, b = max(0, i - 4), min(n - 1, i + 4)
-            span = beats[b][0] - beats[a][0]
-            bpm = round(60000 * (b - a) / span, 2) if span > 0 else 120.0
-        out.append([int(round(ms + lead * 1000)), num, bpm])
-    return out
-
-
 def _dj_tempo_lookup(grid, stored):
     """sec -> BPM an dieser Stelle, fuer BeatLoopSize. 0 = unbekannt."""
     segments = (grid or {}).get("segments") or []
@@ -702,55 +695,9 @@ def _dj_tempo_lookup(grid, stored):
     return lambda _sec: bpm
 
 
-def _phrases_from_first_beat(phrases: list, beats: list) -> list:
-    """Keine Phrase vor dem ersten Schlag (wie in Rekordbox, davor liegt meist Stille):
-    fruehere Grenzen ruecken auf ihn, was dabei zu kurz wird, faellt weg. Gilt auch fuer
-    alte Messungen und Bearbeitungen, die noch beim Trackanfang beginnen."""
-    if not phrases or not beats:
-        return phrases
-    first = beats[0][0] / 1000
-    if phrases[0]["start"] >= first:
-        return phrases
-    out = []
-    for p in phrases:
-        start, end = max(p["start"], first), max(p["end"], first)
-        if end - start >= 0.05:
-            out.append({**p, "start": round(start, 4), "end": round(end, 4)})
-    return out
-
-
-def _snap_phrases(phrases: list, beats: list, bars_only: bool) -> list:
-    """Phrasengrenzen auf den naechsten Schlag bzw. Taktanfang. Der Anfang rueckt auf den
-    ersten Schlag, das Trackende bleibt, so kurz geratene Phrasen fallen weg und der
-    Nachbar schliesst an."""
-    times = [b[0] / 1000 for b in beats if not bars_only or b[1] == 1] or [b[0] / 1000 for b in beats]
-    if not times or not phrases:
-        return phrases
-
-    def nearest(sec: float) -> float:
-        i = bisect.bisect_left(times, sec)
-        if i == 0:
-            return times[0]
-        if i == len(times):
-            return times[-1]
-        return times[i - 1] if sec - times[i - 1] <= times[i] - sec else times[i]
-
-    out: list = []
-    start = phrases[0]["start"]
-    for i, p in enumerate(phrases):
-        last = i == len(phrases) - 1
-        end = p["end"] if last else round(nearest(p["end"]), 4)
-        if end - start < 0.05:
-            if last and out:
-                out[-1]["end"] = end
-            continue
-        out.append({**p, "start": start, "end": end})
-        start = end
-    return _phrases_from_first_beat(out, beats)
-
-
-_PHRASE_RESULT_GRID = ("mode", "used", "bpm", "confidence", "first_beat", "downbeat", "changes", "beats")
-_PHRASE_RESULT_PHRASES = ("phrases", "mood")
+_PHRASE_RESULT_GRID = ("mode", "used", "bpm", "confidence", "first_beat", "downbeat", "changes", "beats",
+                       "grid_origin")
+_PHRASE_RESULT_PHRASES = ("phrases", "mood", "phrases_origin")
 
 
 def _merge_phrase_result(stored: dict | None, result: dict, wanted: set) -> dict:
@@ -1330,6 +1277,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json(settings_mod.describe())
         elif route == "/api/scan/status":
             self._json({"ok": True, **SCAN.state})
+        elif route == "/api/grid-seed/status":
+            self._json({"ok": True, **GRID_SEED.status()})
         elif route == "/api/stems/status":
             self._get_stems_status()
         elif route == "/api/stems/download":
@@ -2197,6 +2146,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_orphan_cleanup()
         elif route == "/api/rekordbox-import":
             self._post_rekordbox_import()
+        elif route == "/api/grid-seed":
+            # Nach dem Abgleich: Rekordbox-Grids als eigene uebernehmen (gridstore.SeedJob).
+            self._json({"ok": True, "started": GRID_SEED.start(cfgmod.load(), self.lock), **GRID_SEED.status()})
+        elif route == "/api/grid-seed/cancel":
+            GRID_SEED.cancel()
+            self._json({"ok": True})
         elif route == "/api/open-file-pick":
             self._post_open_file_pick()
         elif route == "/api/analyse-path":
@@ -2230,6 +2185,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_genremood()
         elif route == "/api/phrases":
             self._post_phrases()
+        elif route == "/api/autocue":
+            self._post_autocue()
         elif route == "/api/dj-track":
             self._post_dj_track()
         elif route == "/api/dj-tempo":
@@ -2312,6 +2269,12 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_settings()
         elif route == "/api/shops":
             self._post_shops()
+        elif route == "/api/autocue-slots":
+            self._post_autocue_slots()
+        elif route == "/api/autocue/model-import":
+            self._post_autocue_model_import()
+        elif route == "/api/autocue/model-remove":
+            self._post_autocue_model_remove()
         elif route == "/api/columns":
             self._post_columns()
         elif route == "/api/column-views":
@@ -2326,6 +2289,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_playlist()
         elif route == "/api/playlist-items":
             self._post_playlist_items()
+        elif route == "/api/playlist-import":
+            self._post_playlist_import()
         elif route == "/api/settings/reset":
             self._post_settings_reset()
         elif route == "/api/reclassify":
@@ -3481,12 +3446,19 @@ class _Handler(BaseHTTPRequestHandler):
             conn.close()
         imported, changed, updates = 0, 0, []
         for path, snap in todo:
-            stamp = rekordbox_mod.track_stamp(path)
+            rb_stamp = rekordbox_mod.track_stamp(path)
+            stamp = _rb_stamp(rb_stamp)
             if stamp is None or (snap and snap["stamp"] == stamp):
                 changed += bool(snap and snap["changed"])
                 continue
             state = rekordbox_mod.track_state(path)
             if not state["available"] or not state["present"]:
+                continue
+            reread = _rb_snapshot_reread(snap, state, rb_stamp)
+            if reread is not None:
+                # Nur die Lesart ist neu: still nachziehen, auch eine fruehere Uebernahme.
+                changed += bool(reread["changed"])
+                updates.append((path, reread))
                 continue
             before = {f: snap[f] is not None for f in db_mod.DJ_TRACK_FIELDS} if snap else {}
             out = _rb_snapshot_sync(snap, state)
@@ -3501,6 +3473,9 @@ class _Handler(BaseHTTPRequestHandler):
                     db_mod.save_rb_snapshot(conn, path, out)
             finally:
                 conn.close()
+        # Fruehere Uebernahmen dieser Tracks folgen der neuen Lesart -- im Hintergrundlauf
+        # nach dem Abgleich (je Track eine Dekodierung), nicht hier.
+        GRID_SEED.refresh_later(p for p, out in updates if out.get("reread"))
         self._json({"ok": True, "total": len(paths), "next": offset + len(todo),
                     "imported": imported, "changed": changed})
 
@@ -4490,6 +4465,26 @@ class _Handler(BaseHTTPRequestHandler):
         'changed' = in Rekordbox geaendert, seit zuletzt abgeglichen wurde,
         'pending' = eigene Bearbeitung noch nicht dorthin geschrieben."""
         source = str(cfg.get("beatgrid_source") or "fallback")
+        state = rekordbox_mod.track_state(path)
+        # Festgehaltener Stand mit alter Lesart, Rekordbox unveraendert: still nachlesen.
+        reread = None
+        if state.get("available") and state.get("present"):
+            conn = db_mod.connect(cfg)
+            try:
+                snap = db_mod.get_rb_snapshot(conn, path)
+            finally:
+                conn.close()
+            reread = _rb_snapshot_reread(snap, state, rekordbox_mod.track_stamp(path)) if snap else None
+            if reread is not None:
+                with self.lock:
+                    conn = db_mod.connect(cfg)
+                    try:
+                        db_mod.save_rb_snapshot(conn, path, reread)
+                    finally:
+                        conn.close()
+        # Fehlt der eigene Stand, gilt Rekordbox' Grid ab jetzt als TrackTabs (gridstore);
+        # eine fruehere Uebernahme folgt einer neuen Lesart.
+        gridstore.seed_from_rekordbox(cfg, path, self.lock, state, refresh=reread is not None)
         conn = db_mod.connect(cfg)
         try:
             edits = db_mod.get_dj_track(conn, path)
@@ -4499,7 +4494,6 @@ class _Handler(BaseHTTPRequestHandler):
             snap = db_mod.get_rb_snapshot(conn, path)
         finally:
             conn.close()
-        state = rekordbox_mod.track_state(path)
         use_rb = source != "tracktab"
 
         # Festgehaltener Stand vor dem Live-Stand: Aenderungen in Rekordbox kommen nur per Knopf.
@@ -4517,23 +4511,24 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception:                          # noqa: BLE001
                 lead = 0.0
 
-        def own_time(t):
-            return max(0.0, round(float(t) - lead, 4))
+        # Eigener Stand, der aus Rekordbox uebernommen ist, heisst "tracktab_rb": er muss
+        # beim Rekordbox-Update nicht zurueck (dj.js schreibt nur Bearbeitetes und "tracktab").
+        def own_source(origin):
+            return "tracktab_rb" if origin == gridstore.ORIGIN_REKORDBOX else "tracktab"
 
         beats, grid_source = [], None
         if rb_grid:
-            beats = [[max(0, int(round(b[0] - lead * 1000))), b[1]] for b in rb_grid]
+            beats = gridstore.beats_to_own(rb_grid, lead)
             grid_source = "rekordbox"
         elif stored and stored["beats"]:
-            beats, grid_source = stored["beats"], "tracktab"
+            beats, grid_source = stored["beats"], own_source(gridstore.grid_origin(stored))
         phrases, phrase_source = [], None
         if rb_phrases:
-            phrases = [{**p, "start": own_time(p["start"]), "end": own_time(p["end"])} for p in rb_phrases]
+            phrases = gridstore.phrases_to_own(rb_phrases, lead)
             phrase_source = "rekordbox"
         elif stored and stored["phrases"]:
-            phrases, phrase_source = stored["phrases"], "tracktab"
-        cues = [{**c, "position_s": own_time(c["position_s"]),
-                 "loop_s": own_time(c["loop_s"]) if c["loop_s"] is not None else None} for c in rb_cues]
+            phrases, phrase_source = stored["phrases"], own_source(gridstore.phrases_origin(stored))
+        cues = gridstore.cues_to_own(rb_cues, lead)
 
         grid_edit = edits["grid"]
         grid_beats = (grid_edit or {}).get("beats") or [] if grid_edit is not None else beats
@@ -4762,6 +4757,9 @@ class _Handler(BaseHTTPRequestHandler):
                 conn.close()
         if action == "add":
             self._rebuild(cfg)
+        if action == "load":
+            # Eine fruehere Uebernahme folgt dem neu geladenen Rekordbox-Stand.
+            gridstore.seed_from_rekordbox(cfg, path, self.lock, refresh=True)
         audit_log.log(f"rekordbox-dj-{action}", path, ",".join(result.get("written", names)))
         self._json({"ok": True, **result, **self._dj_track_payload(path, cfg)})
 
@@ -4858,33 +4856,35 @@ class _Handler(BaseHTTPRequestHandler):
         if not ok:
             self._reject_missing(path)
             return
-        cfg = cfgmod.load()
-        # what: was gemessen werden soll; Gesperrtes faellt heraus.
-        locks = self._analysis_locks(path, cfg)
-        what = str(payload.get("what") or "both")
-        wanted = {"grid", "phrases"} if what == "both" else {what} & {"grid", "phrases"}
-        wanted = {f for f in wanted if not locks[f]}
-        if not wanted:
-            self._json({"ok": True, "status": "locked", "path": path})
-            return
-        minutes = int(cfg.get("bpmkey_max_minutes") or 10)
-        mode = str(payload.get("mode") or cfg.get("phrase_grid_mode") or "auto")
         try:
-            result = phrases_mod.analyse(path, mode, minutes * 60)
-        except phrases_mod.TooLongError:
-            self._json({"ok": True, "status": "skipped", "reason": "too_long", "minutes": minutes})
-            return
+            result = self._measure_phrases(path, cfgmod.load(), str(payload.get("what") or "both"),
+                                           bool(payload.get("apply")), payload.get("mode"))
         except Exception as exc:                       # noqa: BLE001
             self._fail(f"Analyse fehlgeschlagen: {exc}", 500)
             return
+        self._json(result)
+
+    def _measure_phrases(self, path: str, cfg: dict, what: str, apply: bool, mode=None) -> dict:
+        """Kern von /api/phrases, auch fuer /api/autocue (Track ohne jedes Grid).
+        Antwort wie der Endpunkt; Messfehler gehen als Ausnahme an den Aufrufer."""
+        # what: was gemessen werden soll; Gesperrtes faellt heraus.
+        locks = self._analysis_locks(path, cfg)
+        wanted = {"grid", "phrases"} if what == "both" else {what} & {"grid", "phrases"}
+        wanted = {f for f in wanted if not locks[f]}
+        if not wanted:
+            return {"ok": True, "status": "locked", "path": path}
+        minutes = int(cfg.get("bpmkey_max_minutes") or 10)
+        mode = str(mode or cfg.get("phrase_grid_mode") or "auto")
+        try:
+            result = phrases_mod.analyse(path, mode, minutes * 60)
+        except phrases_mod.TooLongError:
+            return {"ok": True, "status": "skipped", "reason": "too_long", "minutes": minutes}
         if not result or ("phrases" in wanted and not result["phrases"]):
-            self._json({"ok": True, "status": "none", "path": path})
-            return
+            return {"ok": True, "status": "none", "path": path}
         # Grid und Phrasen gehoeren zusammen: neue Phrasen rasten auf dem bestehenden Grid
         # ein, ein neues Grid nimmt bestehende Phrasen mit, auch gesperrte. apply (DJ-Ansicht):
         # das Ergebnis gilt sofort als Stand des Tracks, ohne zu sperren.
         fields: dict = {}
-        apply = bool(payload.get("apply"))
         if apply or wanted != {"grid", "phrases"}:
             current = self._dj_track_payload(path, cfg)
             if "grid" not in wanted and current["grid"]["beats"]:
@@ -4907,7 +4907,92 @@ class _Handler(BaseHTTPRequestHandler):
                     db_mod.save_dj_track(conn, path, fields, base, auto_lock=False)
             finally:
                 conn.close()
-        self._json({"ok": True, "status": "done", "path": path, "uncertain": result["uncertain"]})
+        return {"ok": True, "status": "done", "path": path, "uncertain": result["uncertain"]}
+
+    def _autocue_inputs(self, path: str, cfg: dict) -> dict:
+        """Grid und Phrasen fuer Auto Cue: TrackTabs eigener Stand (Bearbeitung, dann
+        Tabelle 'phrases'), unabhaengig von beatgrid_source. Fehlt er, wird Rekordbox'
+        Stand vorher als eigener uebernommen (gridstore) -- dasselbe sieht das Training.
+        Rueckgabe: beats, segments, phrases, bpm, loaded (aus Rekordbox uebernommene Felder)."""
+        loaded = gridstore.seed_from_rekordbox(cfg, path, self.lock)
+        conn = db_mod.connect(cfg)
+        try:
+            own = gridstore.own_inputs(conn, path)
+        finally:
+            conn.close()
+        return {"beats": own["beats"], "segments": own["segments"], "phrases": own["phrases"],
+                "phrases_edited": own["phrases_origin"] == "edited", "bpm": own["bpm"], "loaded": loaded}
+
+    def _post_autocue(self) -> None:
+        """Auto Cue fuer EINEN Pfad (app/autocue/). apply: Ergebnis gleich als Cues des
+        Tracks speichern (Sammelaktion); ohne apply nur zurueckgeben, der DJ-Editor
+        uebernimmt es mit Rueckgaengig. Ersetzt die Cue-Liste komplett -- aber nur,
+        wenn Cues entstanden sind: eine leere Liste loeschte beim naechsten
+        Rekordbox-Update dort alle Cues. Fehlt jedes Grid, misst es vorher
+        (wie /api/phrases). dj_track steckt nicht im Report, also kein _rebuild().
+        Messen und Analyse laufen AUSSERHALB von self.lock."""
+        try:
+            payload = json.loads(self._body(100_000).decode("utf-8"))
+            path = str(payload["path"])
+            apply = bool(payload.get("apply"))
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if not autocue_mod.available():
+            self._json({"ok": True, "status": "unavailable"})
+            return
+        row, ok, path = self._authorize_or_relocate(path)
+        if not ok:
+            self._reject_missing(path)
+            return
+        cfg = cfgmod.load()
+        minutes = int(cfg.get("bpmkey_max_minutes") or 10)
+        measured = False
+        try:
+            inputs = self._autocue_inputs(path, cfg)
+            if not inputs["beats"] and phrases_mod.available():
+                done = self._measure_phrases(path, cfg, "both", True)
+                if done["status"] == "skipped":
+                    self._json({**done, "path": path})
+                    return
+                measured = done["status"] == "done"
+                inputs = self._autocue_inputs(path, cfg)
+            if not inputs["beats"]:
+                self._json({"ok": True, "status": "nogrid", "path": path, "measured": measured,
+                            "loaded": inputs["loaded"]})
+                return
+            beats = _dj_beats_with_tempo(inputs["beats"], inputs["segments"] or [], 0.0, inputs["bpm"])
+            duration = float((row["duration_s"] if row is not None else 0) or 0)
+            result = autocue_mod.analyse(path, beats, inputs["phrases"], duration, cfg, minutes * 60,
+                                         phrases_edited=inputs["phrases_edited"])
+        except autocue_sources.TooLongError:
+            self._json({"ok": True, "status": "skipped", "reason": "too_long", "minutes": minutes, "path": path})
+            return
+        except Exception as exc:                       # noqa: BLE001
+            self._fail(f"Auto Cue fehlgeschlagen: {exc}", 500)
+            return
+        out = {"ok": True, "path": path, "measured": measured, "loaded": inputs["loaded"], **result}
+        if result["status"] == "done":
+            # Herkunftsnachweis fuers Training, auch ohne apply (der Editor uebernimmt es meist).
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    db_mod.save_autocue_log(conn, path, result["cues"])
+                finally:
+                    conn.close()
+        if apply and result["status"] == "done":
+            hashes = _dj_rb_hashes(rekordbox_mod.track_state(path))
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    base = db_mod.get_dj_base(conn, path)
+                    base["rb"].setdefault("cues", hashes["cues"])
+                    db_mod.save_dj_track(conn, path, {"cues": _clean_dj_cues(result["cues"])}, base,
+                                         auto_lock=False)
+                finally:
+                    conn.close()
+            out["saved"] = True
+        self._json(out)
 
     def _post_genremood(self) -> None:
         """Genre-Vorschlaege, Stimmung und Energie messen (genremood.py) --
@@ -5863,6 +5948,46 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._json({"ok": True, "shops": shops})
 
+    def _post_autocue_slots(self) -> None:
+        """Slot-Belegung von Auto Cue speichern (Einstellungsseite, eigener Knopf)."""
+        try:
+            payload = json.loads(self._body(100_000).decode("utf-8"))
+            slots = settings_mod.save_autocue_slots(payload["slots"])
+        except ValueError as exc:
+            self._fail(str(exc))
+            return
+        except (KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        self._json({"ok": True, "slots": slots})
+
+    def _post_autocue_model_import(self) -> None:
+        """Auto-Cue-Modell als ZIP laden (Einstellungen -> Auto Cue, autocue/package.py).
+        Koerper = die ZIP-Datei. Es gilt, solange es juenger ist als das mitgelieferte."""
+        try:
+            data = self._body(160 * 1024 * 1024)
+            manifest = autocue_package.install(data, autocue_mod.trained_dir(),
+                                               str(cfgmod.resolve("backup") / "autocue-models" / "loaded"))
+        except ValueError as exc:                      # auch autocue_package.PackageError
+            self._fail(str(exc))
+            return
+        except OSError as exc:
+            self._fail(f"Modell konnte nicht gespeichert werden: {exc}", 500)
+            return
+        audit_log.log("autocue-model-import", autocue_mod.trained_dir(), str(manifest.get("trained_at")))
+        active = autocue_mod.model_dir() == autocue_mod.trained_dir()
+        self._json({"ok": True, "active": active, "model": settings_mod._autocue_model_info()})
+
+    def _post_autocue_model_remove(self) -> None:
+        """Geladenes Modell entfernen (gesichert); danach gilt das mitgelieferte."""
+        try:
+            removed = autocue_package.remove(autocue_mod.trained_dir(),
+                                             str(cfgmod.resolve("backup") / "autocue-models" / "loaded"))
+        except OSError as exc:
+            self._fail(f"Modell konnte nicht entfernt werden: {exc}", 500)
+            return
+        self._json({"ok": True, "removed": removed, "model": settings_mod._autocue_model_info()})
+
     def _post_playlist(self) -> None:
         """Einen Baumknoten anlegen, aendern, verschieben oder loeschen.
 
@@ -5875,7 +6000,7 @@ class _Handler(BaseHTTPRequestHandler):
         except (ValueError, KeyError, TypeError) as exc:
             self._fail(f"Ungültige Anfrage: {exc}")
             return
-        if op not in ("create", "update", "move", "delete", "reorder"):
+        if op not in ("create", "update", "move", "delete", "reorder", "lock"):
             self._fail("Unbekannte Aktion")
             return
 
@@ -5999,6 +6124,15 @@ class _Handler(BaseHTTPRequestHandler):
         # Lucide-Icon unbemerkt verworfen.
         return text[:48]
 
+    @staticmethod
+    def _check_parent_unlocked(conn, parent_id) -> None:
+        """Ein gesperrter Ordner nimmt nichts auf und gibt nichts her."""
+        if not parent_id:
+            return
+        parent = db_mod.playlist_by_id(conn, parent_id)
+        if parent and parent.get("locked"):
+            raise ValueError(f"Der Ordner „{parent['name']}“ ist gesperrt.")
+
     def _playlist_apply(self, conn, op: str, payload: dict) -> dict:
         """Der eigentliche Schreibvorgang -- ausgelagert, damit _post_playlist()
         nur noch Transport und Fehlerbehandlung macht. Wirft ValueError mit
@@ -6013,6 +6147,7 @@ class _Handler(BaseHTTPRequestHandler):
             parent = payload.get("parent_id") or None
             if parent and db_mod.playlist_by_id(conn, parent) is None:
                 raise ValueError("Der Zielordner existiert nicht mehr.")
+            self._check_parent_unlocked(conn, parent)
             # Undurchsichtige, zufaellige id statt eines aus dem Namen
             # abgeleiteten Slugs (wie bei den Shops): Playlisten werden oft
             # umbenannt, und eine id, die dann nicht mehr zum Namen passt,
@@ -6039,6 +6174,7 @@ class _Handler(BaseHTTPRequestHandler):
             # seq-Werte zu setzen waere fehleranfaellig (Luecken, Dubletten);
             # der Client kennt die gewuenschte Reihenfolge ohnehin vollstaendig.
             parent = payload.get("parent_id") or None
+            self._check_parent_unlocked(conn, parent)
             ids = [str(x) for x in (payload.get("ids") or [])]
             for seq, pid in enumerate(ids):
                 node = db_mod.playlist_by_id(conn, pid)
@@ -6060,11 +6196,27 @@ class _Handler(BaseHTTPRequestHandler):
         if current.get("system") and op in ("update", "delete"):
             raise ValueError("Feste Listen lassen sich nicht umbenennen oder löschen.")
 
+        if op == "lock":
+            current["locked"] = 1 if payload.get("locked") else 0
+            return {"node": db_mod.save_playlist(conn, current)}
+
+        # Gesperrt heisst: weder umbenennen noch verschieben noch loeschen
+        # (und bei Ordnern: nichts hinein, nichts heraus). Aufheben geht nur
+        # ueber op 'lock'.
+        if current.get("locked"):
+            raise ValueError("Diese Liste ist gesperrt. Zum Ändern zuerst entsperren.")
+        self._check_parent_unlocked(conn, current.get("parent_id"))
+
         if op == "delete":
+            for nid in db_mod.playlist_descendants(conn, node_id):
+                sub = db_mod.playlist_by_id(conn, nid)
+                if sub and sub.get("locked"):
+                    raise ValueError(f"„{sub['name']}“ ist gesperrt und liegt in dieser Auswahl.")
             return {"deleted": db_mod.delete_playlist(conn, node_id)}
 
         if op == "move":
             parent = payload.get("parent_id") or None
+            self._check_parent_unlocked(conn, parent)
             if parent and db_mod.playlist_by_id(conn, parent) is None:
                 raise ValueError("Der Zielordner existiert nicht mehr.")
             if not db_mod.playlist_can_reparent(conn, node_id, parent):
@@ -6093,6 +6245,55 @@ class _Handler(BaseHTTPRequestHandler):
         if not current["name"]:
             raise ValueError("Die Liste braucht einen Namen.")
         return {"node": db_mod.save_playlist(conn, current)}
+
+    def _post_playlist_import(self) -> None:
+        """M3U/M3U8-Pfade als neue Playlist anlegen. Der Client liest und
+        zerlegt die Datei, hier werden die Pfade nur der Datenbank zugeordnet:
+        erst exakt, sonst ueber einen EINDEUTIGEN Dateinamen (M3U-Dateien von
+        anderen Rechnern haben andere Ordner). Nicht Gefundenes wird gemeldet."""
+        try:
+            payload = json.loads(self._body(5_000_000).decode("utf-8"))
+            name = str(payload.get("name") or "").strip()[:80]
+            paths = [str(x) for x in (payload.get("paths") or [])][:50_000]
+            parent = payload.get("parent_id") or None
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if not name:
+            self._fail("Die Liste braucht einen Namen.")
+            return
+        with self.lock:
+            conn = db_mod.connect(cfgmod.load())
+            try:
+                if parent and db_mod.playlist_by_id(conn, parent) is None:
+                    self._fail("Der Zielordner existiert nicht mehr.")
+                    return
+                try:
+                    self._check_parent_unlocked(conn, parent)
+                except ValueError as exc:
+                    self._fail(str(exc))
+                    return
+                by_name: dict[str, list[str]] = {}
+                for r in conn.execute("SELECT path FROM files"):
+                    by_name.setdefault(os.path.basename(r["path"]).lower(), []).append(r["path"])
+                found: list[str] = []
+                missing = 0
+                for p in paths:
+                    if db_mod.row_for_path(conn, p) is not None:
+                        found.append(p)
+                        continue
+                    cand = by_name.get(os.path.basename(p).lower(), [])
+                    if len(cand) == 1:
+                        found.append(cand[0])
+                    else:
+                        missing += 1
+                pid = "pl" + uuid.uuid4().hex[:10]
+                node = db_mod.save_playlist(conn, {
+                    "id": pid, "parent_id": parent, "kind": "playlist", "name": name})
+                db_mod.add_playlist_items(conn, pid, found)
+            finally:
+                conn.close()
+        self._json({"ok": True, "node": node, "added": len(found), "missing": missing})
 
     def _post_playlist_items(self) -> None:
         """Tracks einer Playlist zuordnen, entfernen oder komplett neu setzen.
@@ -6125,6 +6326,9 @@ class _Handler(BaseHTTPRequestHandler):
                 # Playlist (siehe db.PLAYLIST_KINDS).
                 if node["kind"] not in ("playlist", "generator"):
                     self._fail("Nur reguläre Playlisten nehmen Tracks auf.")
+                    return
+                if node.get("locked"):
+                    self._fail("Diese Playlist ist gesperrt. Zum Ändern zuerst entsperren.")
                     return
                 # Beim Entfernen nicht gegen 'files' pruefen: ein Eintrag darf
                 # auch dann heraus, wenn die Datei inzwischen weg ist.

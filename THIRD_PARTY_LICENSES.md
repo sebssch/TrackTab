@@ -32,6 +32,14 @@ Der mitgelieferte Build stammt aus Homebrew und ist mit `--enable-gpl --enable-v
 - GPL-3.0-Text: <https://www.gnu.org/licenses/gpl-3.0.html>
 - Quellcode zu diesem Build: am Release (siehe unten), Original <https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz>; Build-Rezept (Homebrew-Formel `ffmpeg`): <https://github.com/Homebrew/homebrew-core/blob/HEAD/Formula/f/ffmpeg.rb>
 
+### LAME 4.0 (Programm `vendor/lame`) — **LGPL-2.0-oder-später**
+
+Der Konverter kodiert MP3 mit 320 kbit/s über das eigenständige Programm `lame` (eigener Prozess, unverändert aus der Homebrew-Formel `lame`, gleiche Version wie die in FFmpeg eingebundene `libmp3lame`). Es ist gegen die ohnehin mitgelieferte `libmpg123` gelinkt; im Programm selbst wurde nur der Ladepfad dieser Bibliothek auf `@executable_path/libs/` umgestellt, der Quellcode ist nicht verändert. *Dieses Produkt enthält LAME, ein MP3-Kodierer des LAME-Projekts: <https://lame.sourceforge.io>.*
+
+- Lizenztext: `licenses/ffmpeg-libs/lame/` (`COPYING` = LGPL, `LICENSE` = Hinweise des Projekts)
+- Quellcode: `lame-4.0.tar.gz` im `third-party-sources.zip` am Release, Original <https://downloads.sourceforge.net/project/lame/lame/4.0/lame-4.0.tar.gz>
+- Ohne `lame` kodiert TrackTab über ffmpeg weiter (mit festem Lowpass von etwa 20 kHz bei 320 kbit/s).
+
 Mitgelieferte Bibliotheken in `vendor/libs/` (Lizenzen laut Projektangaben):
 
 | Bibliothek | Lizenz | Quelle |
@@ -39,7 +47,7 @@ Mitgelieferte Bibliotheken in `vendor/libs/` (Lizenzen laut Projektangaben):
 | libavcodec, libavformat, libavutil, libavfilter, libavdevice, libswresample, libswscale | GPL-3.0+ (in diesem Build) | <https://ffmpeg.org> |
 | libx264 | GPL-2.0+ | <https://www.videolan.org/developers/x264.html> |
 | libx265 | GPL-2.0+ | <https://www.videolan.org/developers/x265.html> |
-| libmp3lame (LAME) | LGPL-2.0+ | <https://lame.sourceforge.io> |
+| libmp3lame (LAME), dazu das Programm `vendor/lame` (gleiche Version, Konverter) | LGPL-2.0+ | <https://lame.sourceforge.io> |
 | libmpg123 | LGPL-2.1 | <https://www.mpg123.de> |
 | libopus | BSD-3-Clause | <https://opus-codec.org> |
 | libvpx | BSD-3-Clause | <https://www.webmproject.org> |
@@ -74,6 +82,8 @@ Die Laufzeit des Pakets (CPython) steht unter der PSF-Lizenz 2.0; zum Bündeln d
 | Bestandteil | Lizenz | Quelle |
 |---|---|---|
 | Lucide-Icons (`app/webui/lucide-icons.js`) | ISC (Text in [licenses/ui/](licenses/ui/lucide-LICENSE.txt)) | <https://lucide.dev> · <https://github.com/lucide-icons/lucide/blob/main/LICENSE> |
+| Spektralmerkmale für Auto Cue (`app/autocue/dsp.py`), Nachbau von Funktionen aus librosa 0.11 (STFT, Spektralform, Onset, Mel, Chroma mit Stimmungsschätzung); librosa selbst ist nicht gebündelt | ISC (Text in [licenses/ui/](licenses/ui/librosa-LICENSE.md)) | <https://github.com/librosa/librosa> |
+| LightGBM — nur zum Neu-Trainieren von Auto Cue im Entwicklungsordner (`requirements-train.txt`), nicht gebündelt (`tracktab.spec`: `excludes`); die App wertet die Bäume selbst aus (`app/autocue/trees.py`) | MIT | <https://github.com/microsoft/LightGBM> |
 | Beatgrid-Analyse (`app/beatgrid.py`) und Rekordbox-Analysedateien (`app/anlzwrite.py`), Python-Nachbauten von `crates/rbl-analysis` und `crates/rbl-anlz` aus rbxport | GPL-2.0-oder-später | <https://github.com/chrisle/rbxport> |
 
 ## 5. Hinweise

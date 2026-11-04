@@ -1,0 +1,4 @@
+# Nur fuer das Neu-Trainieren von Auto Cue (./run.command autocue-train), nicht
+# fuer die App und nie im Bundle (tracktab.spec: excludes). Einmalig:
+#   .venv/bin/pip install -r requirements-train.txt
+lightgbm>=4.5

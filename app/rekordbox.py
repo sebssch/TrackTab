@@ -702,6 +702,14 @@ def _track_cues(db, content) -> list[dict]:
     return cues
 
 
+# Lesart von Beatgrid, Phrasen und Cues (_track_grid(), _phrase_kind(), _track_cues()).
+# ERHOEHEN, sobald sich aendert, WIE gelesen wird (z. B. die Nummer einer Up-Phrase):
+# Der beim Abgleich festgehaltene Stand (rb_snapshot) traegt sie im Stempel und wird
+# dann still nachgelesen, statt jeden Track als "in Rekordbox geaendert" zu melden
+# (server._rb_snapshot_reread()). 2 = Up-Nummer aus k2/k3 (Up 2 = finaler Aufbau).
+READER_VERSION = 2
+
+
 def track_state(path: str) -> dict:
     """Was Rekordbox gerade zu einem Track weiss. Zeiten auf SEINER Zeitachse.
     {"available": False} = Rekordbox nicht lesbar; "present" = in der Sammlung,
@@ -878,7 +886,9 @@ def _set_pqt2(anlz, beats: list[list]) -> None:
     content = tag.struct.content
     for entry, (ms, num, bpm) in zip(content.bpm, (beats[0], beats[-1])):
         entry.beat, entry.tempo, entry.time = int(num), int(round(bpm * 100)), int(ms)
-    old = list(content.entries or [])
+    # Hat Rekordbox das PQT2 leer angelegt (entry_count 0), fehlt der Schluessel
+    # "entries" ganz -- content.entries wirft dann AttributeError.
+    old = list(content.get("entries") or [])
     filler = old[-1] if old else Container(beat=0, unkown=0)
     content.entries = (old + [filler] * len(beats))[:len(beats)]
     content.entry_count = len(beats)

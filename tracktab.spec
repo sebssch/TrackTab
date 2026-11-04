@@ -67,7 +67,9 @@ a = Analysis(
                    "app.macapp", "app.bpmkey", "app.genremood", "app.stems", "app.stemjob"]
                   + _encodings + _sonare_hidden + _ort_hidden,
     hookspath=[],
-    excludes=["tkinter", "matplotlib", "pytest", "PyInstaller"],
+    # lightgbm: nur fuers Training (requirements-train.txt), die App wertet die Baeume
+    # selbst aus (app/autocue/trees.py).
+    excludes=["tkinter", "matplotlib", "pytest", "PyInstaller", "lightgbm", "sklearn", "scipy"],
     noarchive=False,
 )
 # Die Demucs-Gewichte duerfen nicht mit der App ausgeliefert werden (Lizenz, siehe

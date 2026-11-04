@@ -75,8 +75,24 @@ def is_installed_location() -> bool:
     return any(root in exe.parents for root in installed_roots)
 
 
+# Nur fuer Entwicklerbefehle (cli.py, z. B. autocue-train): mit den Daten einer anderen
+# Instanz arbeiten, etwa der installierten App. Die App selbst setzt das nie.
+_BASE_OVERRIDE: Path | None = None
+
+
+def use_base_dir(path) -> None:
+    """Datenordner dieses Prozesses umstellen (None = wieder der eigene) und die
+    Konfiguration neu laden: DB, config.local.yaml und Rekordbox-Pfad kommen danach
+    aus diesem Ordner."""
+    global _BASE_OVERRIDE
+    _BASE_OVERRIDE = Path(path).expanduser().resolve() if path is not None else None
+    load.cache_clear()
+
+
 def base_dir() -> Path:
     """Beschreibbarer Ort fuer Datenbank, Reports und lokale Konfiguration."""
+    if _BASE_OVERRIDE is not None:
+        return _BASE_OVERRIDE
     if is_frozen():
         installed = is_installed_location()
         name = APP_NAME if installed else _BUILD_APP_NAME
@@ -130,6 +146,12 @@ def resolve(path_value: str) -> Path:
 
 
 # ── Defaults ──────────────────────────────────────────────────────────────
+
+
+def _autocue_slot_defaults() -> dict:
+    # Spaeter Import: app.autocue importiert seinerseits app.config.
+    from .autocue.slots import defaults
+    return defaults()
 
 def defaults() -> dict:
     return {
@@ -480,6 +502,21 @@ def defaults() -> dict:
         # Woher Beatgrid und Phrasen kommen: fallback (Rekordbox, sonst TrackTab)
         # | rekordbox | tracktab.
         "beatgrid_source": "fallback",
+        # Auto Cue (app/autocue/, Modelle in vendor/models/autocue/): Phrasen als
+        # Hinweis, Memory-Budget (Rekordbox: max. 10), Konfidenz-Schwellen je Rolle
+        # (an den Modellen kalibriert, Vorgaben aus dem Autocue-Projekt) und die
+        # Slot-Belegung (autocue/slots.py, Einstellungsseite "Auto Cue").
+        "autocue_use_phrases": True,
+        "autocue_max_memory": 10,
+        "autocue_conf_default": 0.25,
+        "autocue_conf_intro_1": 0.3,
+        "autocue_conf_break1": 0.3,
+        "autocue_conf_drop1": 0.3,
+        "autocue_conf_break2": 0.3,
+        "autocue_conf_setup": 0.4,
+        "autocue_conf_drop2": 0.18,
+        "autocue_conf_outro_start": 0.3,
+        "autocue_slots": _autocue_slot_defaults(),
         # Stimmungen als Mood-Tag schreiben (TXXX:MOOD / MOOD): no | tag.
         "genremood_write_mood": "no",
 

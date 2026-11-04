@@ -13,6 +13,7 @@
 # Die Versionen unten muessen zu vendor/ passen. Vor jedem Release pruefen:
 #   vendor/ffmpeg -version | head -1      (FFmpeg-Version)
 #   strings vendor/libs/libmp3lame.0.dylib | grep LAME
+#   vendor/lame --version | head -1       (Konverter-Programm, gleiche LAME-Version)
 #   strings vendor/libs/libmpg123.0.dylib | grep -m1 '1\.[0-9]*\.[0-9]'
 #   brew list --versions x264 x265        (x264/x265 tragen keine Version im Binary;
 #                                          Build-Nummer: libx264.165 / libx265.217)

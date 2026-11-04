@@ -626,7 +626,7 @@ Hat ein Track noch kein Grid, misst du es oder beginnst es an der Abspielpositio
 
 **Memory Cues**
 
-Der Reiter zeigt immer zehn Plätze, ein Klick auf einen freien setzt den Cue an der Abspielposition. Nach dem Löschen rückt der nächste nach, mit einem weiteren Klick auf dasselbe Kreuz ist auch er weg. Liegt ein Hot Cue an derselben Stelle, steht sein Buchstabe in der Zeile. Bei aktivem Loop entsteht ein Memory Loop: Vorgabe ist der Active Memory Loop (rot), ein Klick auf das Loop-Symbol wechselt zum normalen (orange) und zurück. Läuft der Track über den Beginn eines Active Memory Loop, greift dieser von selbst.
+Der Reiter zeigt immer zehn Plätze, ein Klick auf einen freien setzt den Cue an der Abspielposition. Nach dem Löschen rückt der nächste nach, mit einem weiteren Klick auf dasselbe Kreuz ist auch er weg. Liegt ein Hot Cue an derselben Stelle, steht sein Buchstabe in der Zeile. Bei aktivem Loop entsteht ein Memory Loop: Vorgabe ist der Active Memory Loop (rot), ein Klick auf das Loop-Symbol wechselt zum normalen (orange) und zurück. Läuft der Track über den Beginn eines Active Memory Loop, greift dieser von selbst. Steht die Abspielposition an einem Cue (ab einem Schlag davor bis einen Takt danach), bekommt sein Farbpunkt einen dunkleren Ring und die Zeit wird fett, im Reiter Hot Cue ebenso.
 
 **Phrasen**
 
@@ -647,9 +647,33 @@ Phrasen und Beatgrid bleiben aufeinander ausgerichtet: Neu gemessene Phrasen ras
 
 **Rekordbox abgleichen** (Datenbank-Symbol) lädt Beatgrid, Phrasen und Cues in TrackTab, soweit dort für den Track noch nichts steht. Der erste Lauf liest jeden Track und dauert etwas. Danach überschreibt nichts mehr von selbst: Ändert sich ein Track in Rekordbox, wird die Rekordbox-Spalte rot und der Editor fragt nach. Übernommen wird nur mit **Rekordbox laden**, in die andere Richtung nur mit **Rekordbox Update**.
 
-**Mehrere Tracks:** Markierst du in der DJ-Liste Tracks, stehen in der Leiste **Zu Rekordbox hinzufügen**, **Rekordbox laden**, **Rekordbox Update**, **Beatgrid-Analyse**, **Phrasen-Analyse** und **Beatgrid + Phrasen** (beides in einem Durchgang). Die Analysen überspringen Gesperrtes. Laden verwirft die Bearbeitungen der markierten Tracks. Hinzufügen überspringt Tracks, die schon in Rekordbox stehen, und lässt sie dort unverändert. Laden und Update überspringen Tracks, die dort fehlen oder bei denen nichts zu übertragen ist.
+**Mehrere Tracks:** Markierst du in der DJ-Liste Tracks, stehen in der Leiste **Zu Rekordbox hinzufügen**, **Rekordbox laden**, **Rekordbox Update**, **Beatgrid-Analyse**, **Phrasen-Analyse**, **Beatgrid + Phrasen** (beides in einem Durchgang) und [**Auto Cue**](#auto-cue). Die Analysen überspringen Gesperrtes. Laden verwirft die Bearbeitungen der markierten Tracks. Hinzufügen überspringt Tracks, die schon in Rekordbox stehen, und lässt sie dort unverändert. Laden und Update überspringen Tracks, die dort fehlen oder bei denen nichts zu übertragen ist.
 
 **Rückgängig:** **Cmd+Z** und **Cmd+Shift+Z** gelten für alle Änderungen am offenen Track. Weitere Tastenkürzel stehen unter **Info**.
+
+### Auto Cue
+
+Auto Cue setzt die Cues eines Tracks selbst: Hot Cues auf Break 1, acht Takte vor dem letzten Drop und den letzten Drop, dazu Memory Cues auf Intro, Drop 1, Break 2 und Outro und dazwischen im 32-Beat-Raster. Welcher Cue wohin kommt, stellst du unter ⚙ Einstellungen → **Auto Cue** ein.
+
+- **Ein Track:** Im DJ-Editor unter **Cue/Loop** oder **Info** auf **Auto Cue** klicken. Die bisherigen Cues des Tracks werden ersetzt, mit **Cmd+Z** holst du sie zurück.
+- **Mehrere Tracks:** In der DJ-Liste markieren und in der Leiste **Auto Cue** wählen. Nach einer Rückfrage läuft ein Track nach dem anderen, je Track einige Sekunden. Auch hier ersetzen die neuen Cues die bisherigen.
+- **Grundlage:** Auto Cue nimmt das Beatgrid und die Phrasen von TrackTab. Hat TrackTab für einen Track noch keine, übernimmt es die aus Rekordbox in TrackTab (siehe unten), damit du im Editor damit weiterarbeiten kannst. Gibt es auch dort nichts, misst TrackTab vorher Beatgrid und Phrasen.
+- **Nach Rekordbox:** Die Cues liegen zunächst nur in TrackTab. Nach Rekordbox gehen sie erst mit **Rekordbox Update**, auch für mehrere Tracks über die Leiste.
+- **Ausklang am Trackende:** Läuft am Ende nur noch der Hall oder das Delay aus, setzt Auto Cue dort keinen Cue. Erkannt wird das an der Lautstärke. Hast du die Phrasen von Hand bearbeitet, beginnt der Ausklang genau an der Grenze der ersten leisen Phrase am Ende. Ein lautes Outro bleibt Outro und kann einen Memory Cue bekommen.
+- **Lieber keine Cue als eine falsche:** Ist sich Auto Cue bei einer Stelle nicht sicher genug, lässt es den Cue weg. Findet es gar nichts Sicheres oder passt das Beatgrid nicht (zu kurz, Takt springt, zu viele Tempowechsel), bleiben die bisherigen Cues stehen.
+
+**Einstellungen → Auto Cue:**
+
+- **Phrasen als Hinweis nutzen:** Die Phrasen fließen als Gewicht ein, nie als feste Position. An 50 von Hand gecueten Tracks lag Auto Cue mit Phrasen bei Break 1 öfter richtig, ohne Phrasen etwas öfter beim letzten Drop. Insgesamt nehmen sich beide nichts.
+- **Memory Cues höchstens:** bis zu 10. Reicht der Platz nicht, setzt Auto Cue die Zwischenpunkte weiter auseinander (64 statt 32 Beats).
+- **Konfidenz je Stelle:** Unter diesem Wert (0 bis 1) wird der Cue nicht gesetzt. Die Vorgaben sind abgestimmt, ändere sie nur, wenn dir zu viele oder zu wenige Cues fehlen.
+- **Slot-Belegung:** je Hot Cue (A bis H) und Memory Cue eine Zeile. **Rolle** legt eine erkannte Stelle direkt auf den Cue, **Regel** rechnet von einer Stelle aus (zum Beispiel 8 Takte vor Drop 2), **Automatisch** verteilt freie Memory Cues über den Abschnitt nach oder vor einer Stelle. Dazu Name und Farbe, die Farben sind die von Rekordbox. Gespeichert wird mit **Slot-Belegung speichern** oder mit dem **Speichern** unten im Dialog, **Standard wiederherstellen** holt die Vorgabe zurück.
+
+Auto Cue ist eine Einschätzung. Am besten trifft es den letzten Drop, Break 1 am seltensten. Bei Tracks ohne klaren Aufbau setzt es bewusst weniger oder keine Hot Cues.
+
+**Modell:** Auto Cue hat aus von Hand gesetzten Cues gelernt, wo Break 1, der letzte Drop und die übrigen Stellen liegen. Der Block **Modell** auf der Seite **Auto Cue** zeigt, welches Modell gilt (mitgeliefert oder geladen), von wann es ist, an wie vielen Tracks es gelernt hat und wie oft es auf seiner Prüfliste richtig lag. Mit **Modell laden …** holst du ein neueres Modell als ZIP-Datei herein, ohne TrackTab neu zu installieren; es gilt, solange es jünger ist als das mitgelieferte. **Geladenes Modell entfernen** stellt das mitgelieferte wieder her.
+
+**Beatgrid aus Rekordbox übernehmen:** Hat TrackTab für einen Track noch kein eigenes Beatgrid, übernimmt es das aus Rekordbox samt Phrasen als eigenes: beim Öffnen im DJ-Editor, vor Auto Cue und nach **Rekordbox abgleichen** → Laden für alle Tracks auf einmal im Hintergrund (Fortschritt unten rechts). Das ändert in Rekordbox nichts und sperrt nichts; misst du den Track später selbst, gilt deine Messung. Zeigst du unter „Beatgrid & Phrasen anzeigen aus“ nur TrackTab, steht bei solchen Tracks „aus Rekordbox übernommen“.
 
 ### Abgleich mit Rekordbox
 
@@ -763,7 +787,7 @@ Ist mindestens ein Track ausgewählt (Haupttabelle oder Einzelprüfung), erschei
 
 *Der Konverter mit Zielformat-Auswahl.*
 
-- **MP3 320 kbit/s CBR** — konstante Bitrate, maximale Encoder-Qualitätsstufe, Samplerate der Quelle.
+- **MP3 320 kbit/s** — jeder Frame hat 320 kbit/s (wie CBR), Samplerate der Quelle (Quellen mit 88,2/96 kHz und mehr werden auf 44,1 bzw. 48 kHz gebracht, MP3 kennt nur 32/44,1/48 kHz). Mit dem mitgelieferten `lame` bleibt dabei auch der Frequenzbereich über 20 kHz erhalten, ein normales 320er-CBR schneidet dort ab. Fehlt `lame`, kodiert TrackTab über ffmpeg (Lowpass bei etwa 20 kHz). In der Spektralanalyse hat eine solche Datei keine Kante und gleicht einer MP3 ohne Lowpass.
 - **AIFF** — verlustfrei, Samplerate und Bittiefe der Quelle bleiben erhalten.
 
 TrackTab verhindert dabei „Hochrechnen": eine Datei, die schon verlustbehaftet ist, lässt sich nicht zu AIFF konvertieren, und eine MP3 mit weniger als 320 kbit/s nicht zu 320 kbit/s hochkodieren. Solche Tracks werden übersprungen, ebenso Dateien, die bereits genau im Zielformat vorliegen (nichts zu gewinnen). Am Ende zeigt ein Bericht, wie viele Dateien konvertiert und wie viele aus welchem Grund übersprungen wurden.

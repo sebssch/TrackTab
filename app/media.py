@@ -72,6 +72,16 @@ def ffprobe_path() -> str:
     return tool_path("ffprobe")
 
 
+def lame_path() -> str | None:
+    """Pfad zum eigenstaendigen lame-Programm oder None. Optional: fehlt es,
+    kodiert der Converter ueber ffmpeg (libmp3lame) weiter -- dann allerdings
+    mit LAMEs festem Lowpass von ~20 kHz bei CBR 320."""
+    try:
+        return tool_path("lame")
+    except MediaToolMissing:
+        return None
+
+
 _ENCODER_LINE = re.compile(r"^\s*[VASFXBDTL.]{6}\s+(\S+)\s+\S")
 
 

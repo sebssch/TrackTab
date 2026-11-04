@@ -235,6 +235,25 @@ phrase_grid_mode: auto
 # Woher Beatgrid und Phrasen kommen: fallback (Rekordbox, sonst TrackTab) |
 # rekordbox | tracktab.
 beatgrid_source: fallback
+
+# Auto Cue (app/autocue/): setzt Cues aus Beatgrid, Phrasen und Klang.
+# Phrasen als Hinweis nutzen (nie als feste Position):
+autocue_use_phrases: true
+# Hoechstens so viele Memory Cues (Rekordbox: 10):
+autocue_max_memory: 10
+# Konfidenz-Schwellen 0..1 je Rolle -- darunter wird die Rolle nicht gesetzt.
+# An den Modellen kalibriert (Autocue-Projekt, config.yaml Stand Okt. 2026).
+# default gilt fuer eigene Regeln ("8 Takte vor Drop 2") und alles Uebrige.
+autocue_conf_default: 0.25
+autocue_conf_intro_1: 0.3
+autocue_conf_break1: 0.3
+autocue_conf_drop1: 0.3
+autocue_conf_break2: 0.3
+autocue_conf_setup: 0.4
+autocue_conf_drop2: 0.18
+autocue_conf_outro_start: 0.3
+# Die Slot-Belegung (autocue_slots) steht in config.defaults() bzw.
+# autocue/slots.py und wird nur ueber die Einstellungsseite geaendert.
 # Stimmungen als Mood-Tag schreiben (TXXX:MOOD bzw. MOOD): no | tag.
 genremood_write_mood: "no"
 

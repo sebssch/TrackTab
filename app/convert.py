@@ -136,7 +136,7 @@ def convert_format(path: str, target: str, cfg: dict,
     tmp = src.with_name(f".{src.stem}.aqc-{uuid.uuid4().hex[:8]}{target_suffix}")
     try:
         if target == TARGET_MP3_320:
-            _encode_mp3_320(src, tmp)
+            _encode_mp3_320(src, tmp, orig_probe.sample_rate)
         else:
             bit_depth = probe_mod.source_bit_depth(str(src))
             _encode_aiff(src, tmp, bit_depth)
@@ -175,7 +175,22 @@ def _unique_target(folder: Path, stem: str, suffix: str) -> Path:
     return candidate
 
 
-def _encode_mp3_320(src: Path, dst: Path) -> None:
+def _encode_mp3_320(src: Path, dst: Path, sample_rate: int = 0) -> None:
+    """MP3 mit durchgehend 320 kbit/s. Bevorzugt ueber das eigene lame-
+    Programm, sonst (oder bei einem Fehler dort) ueber ffmpeg."""
+    lame = media.lame_path()
+    if lame:
+        try:
+            _encode_mp3_lame(lame, src, dst, sample_rate)
+            return
+        except ConvertError:
+            _cleanup(dst)
+    _encode_mp3_ffmpeg(src, dst)
+
+
+def _encode_mp3_ffmpeg(src: Path, dst: Path) -> None:
+    # Rueckfall: libmp3lame ueber ffmpeg. Bei CBR 320 setzt LAME den Lowpass
+    # fest auf ~20 kHz, `-cutoff` darueber wird ignoriert.
     cmd = [
         media.ffmpeg_path(), "-v", "error", "-y", "-nostdin",
         "-i", str(src),
@@ -185,6 +200,66 @@ def _encode_mp3_320(src: Path, dst: Path) -> None:
         str(dst),
     ]
     _run(cmd, dst)
+
+
+def _mp3_rate(sample_rate: int) -> int:
+    """Samplerate, die MP3 kennt (32/44,1/48 kHz): die Quelle, falls erlaubt,
+    sonst die naechste passende Familie (Vielfache von 44,1 kHz -> 44,1 kHz,
+    alles andere -> 48 kHz). Ohne das waehlt lame die Zielrate selbst."""
+    if sample_rate in (32000, 44100, 48000):
+        return sample_rate
+    return 44100 if sample_rate and sample_rate % 44100 == 0 else 48000
+
+
+def _encode_mp3_lame(lame: str, src: Path, dst: Path, sample_rate: int) -> None:
+    """VBR V0 mit Mindest- UND Hoechstbitrate 320: jeder Frame hat 320 kbit/s
+    (praktisch CBR), aber LAME wendet den VBR-Lowpass an und behaelt das
+    Spektrum bis zur Nyquist-Frequenz (ffmpeg/CBR schneidet bei ~20 kHz ab).
+    Danach steht im Kopf `Info` statt `Xing`, damit Player die Datei als CBR
+    sehen. ffmpeg dekodiert, lame bekommt WAV ueber die Pipe."""
+    dec = [
+        media.ffmpeg_path(), "-v", "error", "-nostdin",
+        "-i", str(src), "-map", "0:a:0", "-map_metadata", "-1",
+        "-ac", "2", "-ar", str(_mp3_rate(sample_rate)),
+        "-c:a", "pcm_s24le", "-f", "wav", "-",
+    ]
+    enc = [lame, "--quiet", "-V0", "-q", "0", "-b", "320", "-B", "320",
+           "-", str(dst)]
+    dec_proc = subprocess.Popen(dec, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    try:
+        enc_proc = subprocess.Popen(enc, stdin=dec_proc.stdout,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        dec_proc.stdout.close()      # lame bekommt EOF, sobald ffmpeg fertig ist
+        try:
+            _, enc_err = enc_proc.communicate(timeout=_ENCODE_TIMEOUT_S)
+            dec_err = dec_proc.stderr.read()
+            dec_proc.wait(timeout=30)
+        except subprocess.TimeoutExpired:
+            enc_proc.kill()
+            raise ConvertError("lame hat nicht rechtzeitig geantwortet.")
+    finally:
+        dec_proc.kill()
+        dec_proc.wait()
+    if enc_proc.returncode != 0 or not dst.is_file():
+        raise ConvertError(
+            enc_err.decode("utf-8", "replace").strip()[:300]
+            or "lame konnte die Datei nicht kodieren.")
+    if dec_proc.returncode != 0:
+        raise ConvertError(
+            dec_err.decode("utf-8", "replace").strip()[:300]
+            or "ffmpeg konnte die Quelle nicht dekodieren.")
+    _mark_cbr(dst)
+
+
+def _mark_cbr(dst: Path) -> None:
+    """Setzt das Kopf-Kennzeichen von `Xing` (VBR) auf `Info` (CBR). Der
+    Audiostrom bleibt unveraendert; alle Frames haben ohnehin 320 kbit/s."""
+    with open(dst, "r+b") as fh:
+        head = fh.read(512)
+        pos = head.find(b"Xing")
+        if 0 < pos < 64:
+            fh.seek(pos)
+            fh.write(b"Info")
 
 
 def _encode_aiff(src: Path, dst: Path, bit_depth: int) -> None:
