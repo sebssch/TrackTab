@@ -57,7 +57,7 @@ def rewrite_bitrate(path: str, target_kbps: int, cfg: dict) -> dict:
         raise RewriteError("Ziel-Bitrate muss zwischen 32 und 320 kbps liegen.")
 
     codec = ("libmp3lame" if orig_probe.codec_family == "lossy_mp3"
-             else media.resolved_aac_encoder(cfg))
+             else media.resolved_aac_encoder())
 
     original_tags = _load_tags(src)
     _strip_junk_comment(original_tags)
@@ -128,6 +128,12 @@ def _strip_junk_comment(tags_obj) -> None:
 
 
 def _encode(src: Path, dst: Path, kbps: int, codec: str = "libmp3lame") -> None:
+    if codec != "libmp3lame":
+        try:
+            media.encode_aac(src, dst, kbps, timeout=_ENCODE_TIMEOUT_S)
+        except media.EncodeError as exc:
+            raise RewriteError(str(exc)) from exc
+        return
     cmd = [
         media.ffmpeg_path(), "-v", "error", "-y", "-nostdin",
         "-i", str(src),

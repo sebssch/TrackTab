@@ -91,9 +91,17 @@ edge_mixed_min_hz: 1000.0      # Mindestabstand der Gruppen fuer den Hinweis "me
 # denselben Tiefpass und sind spektral nicht unterscheidbar.
 # Nachmessen jederzeit mit: ./run.command calibrate
 #
-# aac: PLATZHALTER, noch nicht an echtem Material kalibriert. Erst
-# verwenden, nachdem ./run.command calibrate mit AAC-Referenztracks lief
-# und diese Werte bei Bedarf angepasst wurden.
+# aac: gemessen an Apples Encoder (afconvert = Music.app, wie aac_at in
+# media.encode_aac()), 23 verlustfreie Quellen, CBR und VBR, 44,1 und 48 kHz
+# (2026-11-07). Tiefpass je Stufe (min-max):
+#     96 → 15.67-15.71 · 128 → 17.54-18.73 · 160 → 18.37-19.15
+#    192 → 19.39-19.61 · 256 → keine harte Kante bei 44,1 kHz (Inhalt bis
+#    ~22 kHz), 21.84-21.89 bei 48 kHz, ~20.1 hinter einer LAME-320-Quelle
+# Apple setzt den Tiefpass je nach Material verschieden (128 kbps streut ueber
+# 1,2 kHz), deshalb keine 160er-Klasse: 128 und 160 ueberlappen sich. Eine
+# Zweitkodierung auf 256 kbps laesst die Kante der ersten Stufe unveraendert
+# stehen (Abweichung < 0,05 kHz) -- solange ohne Clipping kodiert wurde,
+# siehe media.resolved_aac_encoder().
 cutoff_classes:
   mp3:
     - {min_khz: 19.85, kbps: 320}
@@ -102,9 +110,9 @@ cutoff_classes:
     - {min_khz: 15.50, kbps: 128}
     - {min_khz: 0.0,   kbps: 64}
   aac:
-    - {min_khz: 19.50, kbps: 256}
-    - {min_khz: 18.50, kbps: 192}
-    - {min_khz: 17.00, kbps: 128}
+    - {min_khz: 19.80, kbps: 256}
+    - {min_khz: 19.25, kbps: 192}
+    - {min_khz: 16.60, kbps: 128}
     - {min_khz: 0.0,   kbps: 96}
 
 # Verdikt: Wie viele Klassen darf die Messung unter der Deklaration liegen?
@@ -136,12 +144,6 @@ lossless_min_steepness_db: 10.0
 # ~320 kbps Quelle exportiert". An echtem Material: AIFF-Mashups mit Kanten bei
 # 19,7-20,5 kHz (LAME 320 = 20,2 kHz). Aendert das Verdikt nicht.
 lossless_source_max_khz: 21.0
-
-# Encoder fuer AAC-Neukodierung (calibrate, Bitrate-Korrektur). "aac" ist
-# ffmpegs eingebauter Encoder und ueberall verfuegbar. "libfdk_aac" klingt
-# besser, ist aber nicht in jedem ffmpeg-Build enthalten -- bei fehlender
-# Verfuegbarkeit faellt das Tool automatisch auf "aac" zurueck.
-aac_encoder: "aac"
 
 # --- Lautheit (EBU R128 / ITU-R BS.1770 ueber ffmpeg 'loudnorm') ---
 # Reiner Hinweis, kein Verdikt: anders als der Encoder-Tiefpass hat Lautheit
@@ -237,23 +239,29 @@ phrase_grid_mode: auto
 beatgrid_source: fallback
 
 # Auto Cue (app/autocue/): setzt Cues aus Beatgrid, Phrasen und Klang.
-# Phrasen als Hinweis nutzen (nie als feste Position):
+# Automatisch gemessene Phrasen als Hinweis nutzen (nie als feste Position).
+# Von Hand bearbeitete Phrasen gelten immer: die Cues rasten auf ihren Grenzen ein.
 autocue_use_phrases: true
-# Hoechstens so viele Memory Cues (Rekordbox: 10):
-autocue_max_memory: 10
-# Konfidenz-Schwellen 0..1 je Rolle -- darunter wird die Rolle nicht gesetzt.
-# An den Modellen kalibriert (Autocue-Projekt, config.yaml Stand Okt. 2026).
-# default gilt fuer eigene Regeln ("8 Takte vor Drop 2") und alles Uebrige.
-autocue_conf_default: 0.25
-autocue_conf_intro_1: 0.3
-autocue_conf_break1: 0.3
-autocue_conf_drop1: 0.3
-autocue_conf_break2: 0.3
-autocue_conf_setup: 0.4
-autocue_conf_drop2: 0.18
-autocue_conf_outro_start: 0.3
+# Memory Cues: fest hoechstens 10 (Rekordbox), keine Einstellung.
+
+# Konfidenz je Rolle als Stufe: very_safe | safe | normal | risky | very_risky.
+# Darunter wird die Rolle nicht gesetzt. "normal" = an den Modellen kalibrierter
+# Wert je Rolle (Drop 2 0,18, Build vor Drop 2 0,4, uebrige 0,3, default 0,25;
+# autocue/slots.py: CONFIDENCE_CALIBRATED). default gilt fuer eigene Regeln
+# ("8 Takte vor Drop 2") und alles Uebrige.
+autocue_conf_default: normal
+autocue_conf_intro_1: normal
+autocue_conf_break1: normal
+autocue_conf_drop1: normal
+autocue_conf_break2: normal
+autocue_conf_setup: normal
+autocue_conf_drop2: normal
+autocue_conf_outro_start: normal
 # Die Slot-Belegung (autocue_slots) steht in config.defaults() bzw.
 # autocue/slots.py und wird nur ueber die Einstellungsseite geaendert.
+# Ebenso das geltende Modell (autocue_model): die id eines eigenen Modells der
+# Bibliothek (Einstellungen -> Auto Cue -> Modelle). Ein mitgeliefertes Modell
+# gibt es nicht -- jede Installation trainiert nach ihren eigenen Cues.
 # Stimmungen als Mood-Tag schreiben (TXXX:MOOD bzw. MOOD): no | tag.
 genremood_write_mood: "no"
 

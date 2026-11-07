@@ -18,6 +18,11 @@ from . import media
 
 _SR = 22050
 _CACHE_MAX = 8
+# Der Versatz allein ist eine Zahl: eigener, grosser Zwischenspeicher, damit eine
+# Sammelaktion ueber viele Tracks (Rekordbox Update) nicht je Track neu dekodiert --
+# der Wellenform-Speicher oben haelt nur _CACHE_MAX ganze Wellenformen.
+_LEAD_MAX = 20000
+_lead_cache: OrderedDict = OrderedDict()
 
 # Die Werte sind an Rekordbox' PWV5/PWV7 von 5 Tracks angeglichen. So sieht ein Track
 # ohne Rekordbox-Analyse aus wie einer mit, ein Wechsel der Quelle aendert kaum etwas.
@@ -99,14 +104,23 @@ def overview(path: str, mtime: float, style: str) -> bytes:
     return out.tobytes()
 
 
-def lead(path: str, mtime: float, lead_fn) -> float:
+def lead(path: str, mtime: float, lead_fn, stamp: str = "") -> float:
     """Versatz zu Rekordbox in s. lead_fn(mono, sr) -> Samples misst ihn, solange die
-    Dekodierung ohnehin im Speicher liegt."""
-    return _entry(path, mtime, lead_fn)[0]
+    Dekodierung ohnehin im Speicher liegt. stamp = Stand der Gegenseite
+    (rekordbox.lead_stamp(), Pruefsumme der PWV3-Wellenform): analysiert Rekordbox
+    den Track neu, passt der gemerkte Wert nicht mehr und es wird neu gemessen."""
+    key = (path, mtime, stamp)
+    if lead_fn is not None:
+        with _lock:
+            hit = _lead_cache.get(key)
+            if hit is not None:
+                _lead_cache.move_to_end(key)
+                return hit
+    return _entry(path, mtime, lead_fn, stamp)[0]
 
 
-def _entry(path: str, mtime: float, lead_fn) -> tuple:
-    key = (path, mtime, lead_fn is not None)
+def _entry(path: str, mtime: float, lead_fn, stamp: str = "") -> tuple:
+    key = (path, mtime, lead_fn is not None, stamp if lead_fn is not None else "")
     with _lock:
         hit = _cache.get(key)
         if hit is not None:
@@ -116,14 +130,22 @@ def _entry(path: str, mtime: float, lead_fn) -> tuple:
     offset = float(lead_fn(x, _SR)) / _SR if lead_fn is not None else 0.0
     result = (offset, _styled(x))
     with _lock:
+        if lead_fn is not None:
+            _lead_cache[(path, mtime, stamp)] = offset
+            while len(_lead_cache) > _LEAD_MAX:
+                _lead_cache.popitem(last=False)
         _cache[key] = result
         while len(_cache) > _CACHE_MAX:
             _cache.popitem(last=False)
     return result
 
 
-def forget(path: str) -> None:
-    """Wirft die Eintraege eines Pfads aus dem Zwischenspeicher."""
+def forget(path: str, keep_lead: bool = False) -> None:
+    """Wirft die Eintraege eines Pfads aus dem Zwischenspeicher. keep_lead: nur die
+    Wellenformen, der (kleine) gemessene Versatz bleibt."""
     with _lock:
         for key in [k for k in _cache if k[0] == path]:
             del _cache[key]
+        if not keep_lead:
+            for key in [k for k in _lead_cache if k[0] == path]:
+                del _lead_cache[key]

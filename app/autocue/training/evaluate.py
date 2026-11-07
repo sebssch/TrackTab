@@ -3,12 +3,14 @@ Bewertung auf der Pruefliste (Gold-Set): die volle Kette (autocue.analyse) gegen
 
 Je Modellordner dieselben Tracks mit denselben Eingaben (TrackTabs Grid und Phrasen,
 wie zur Laufzeit), damit alt und neu nebeneinander stehen. Gezaehlt wird, was der
-Nutzer sieht -- die gesetzten Cues nach der Standard-Slot-Belegung (slots.defaults():
-Hot A Break 1, Hot B 8 Takte vor Drop 2, Hot C Drop 2), damit Ergebnisse zwischen
-Laeufen vergleichbar bleiben, auch wenn die eigene Belegung sich aendert:
+Nutzer sieht -- die gesetzten Cues nach der Slot-Belegung, die zur Cue-Konvention
+des Trainings gehoert (slots.for_label_slots(); bei der Vorgabe slots.defaults():
+Hot A Break 1, Hot B 8 Takte vor Drop 2, Hot C Drop 2). Nie die eigene Belegung
+der Instanz, sonst waeren Laeufe nicht vergleichbar:
 
-  Hot A/B/C   gesetzter Cue hoechstens 2 (bzw. 8) Schlaege neben dem Hand-Cue;
-              fehlt er, zaehlt das als Fehlgriff
+  Hot X       je belegtem Hot Cue der Belegung: gesetzter Cue hoechstens 2 (bzw. 8)
+              Schlaege neben dem Hand-Cue desselben Slots; fehlt er, zaehlt das
+              als Fehlgriff
   Memory      Anteil gesetzter Memory Cues, die auf einem Hand-Memory-Cue liegen
               (+-2 Schlaege), wie "auf Memory" im Original (eval_golden.py)
 """
@@ -18,6 +20,15 @@ import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
 HOT = ((1, "A"), (2, "B"), (3, "C"))
+_LETTERS = "ABCDEFGH"
+
+
+def hot_of(slot_plan: dict | None) -> tuple:
+    """((Slot, Buchstabe), ...) der belegten Hot Cues einer Slot-Belegung."""
+    if not slot_plan:
+        return HOT
+    return tuple((i + 1, _LETTERS[i]) for i, s in enumerate(slot_plan.get("hot") or [])
+                 if (s or {}).get("mode", "off") != "off")
 
 
 def _eval_one(task: dict) -> dict:
@@ -25,7 +36,7 @@ def _eval_one(task: dict) -> dict:
     from app import autocue as autocue_mod
     from app.autocue.slots import defaults as slot_defaults
     from app.autocue.sources import TooLongError
-    cfg = {**task["cfg"], "autocue_slots": slot_defaults()}
+    cfg = {**task["cfg"], "autocue_slots": task.get("slot_plan") or slot_defaults()}
     out = {"path": task["path"], "models": {}}
     for name, folder in task["models"].items():
         try:
@@ -43,10 +54,10 @@ def _eval_one(task: dict) -> dict:
     return out
 
 
-def score(truth: dict, cues: list, beat_s: float) -> dict:
-    """Je Hot A/B/C Abstand in Schlaegen (None = nicht gesetzt), Memory auf Hand-Memory."""
+def score(truth: dict, cues: list, beat_s: float, hot: tuple = HOT) -> dict:
+    """Je belegtem Hot Cue Abstand in Schlaegen (None = nicht gesetzt), Memory auf Hand-Memory."""
     out = {}
-    for slot, label in HOT:
+    for slot, label in hot:
         hand = truth["hot"].get(slot)
         if hand is None:
             continue
@@ -58,12 +69,16 @@ def score(truth: dict, cues: list, beat_s: float) -> dict:
     return out
 
 
-def evaluate(tasks: list[dict], models: dict[str, str], workers: int, progress=None) -> dict:
+def evaluate(tasks: list[dict], models: dict[str, str], workers: int, progress=None,
+             slot_plan: dict | None = None, cancel=None) -> dict:
     """tasks: je Gold-Track {path, beats, phrases, duration, truth, beat_s, cfg, max_seconds}.
-    Rueckgabe {Modellname: {"A": {...}, "B": ..., "C": ..., "memory": ..., "n": Tracks}}."""
+    slot_plan: Belegung, nach der Cues gesetzt und gezaehlt werden (None = Vorgabe).
+    Rueckgabe {Modellname: {"A": {...}, "C": ..., "memory": ..., "n": Tracks}}."""
     from app import config as cfgmod
+    from app.autocue.training.base import Cancelled
     from app.autocue.training.dataset import _init_worker
-    results = {name: {label: {"n": 0, "hit2": 0, "hit8": 0, "found": 0} for _, label in HOT}
+    hot = hot_of(slot_plan)
+    results = {name: {label: {"n": 0, "hit2": 0, "hit8": 0, "found": 0} for _, label in hot}
                | {"memory": {"on": 0, "set": 0}, "n": 0, "done": 0}
                for name in models}
     if not tasks:
@@ -71,8 +86,12 @@ def evaluate(tasks: list[dict], models: dict[str, str], workers: int, progress=N
     by_path = {t["path"]: t for t in tasks}
     with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker,
                              initargs=(str(cfgmod.base_dir()),)) as ex:
-        futures = [ex.submit(_eval_one, {**t, "models": models}) for t in tasks]
+        futures = [ex.submit(_eval_one, {**t, "models": models, "slot_plan": slot_plan}) for t in tasks]
         for i, f in enumerate(as_completed(futures), 1):
+            if cancel is not None and cancel():
+                for fut in futures:
+                    fut.cancel()
+                raise Cancelled()
             res = f.result()
             task = by_path[res["path"]]
             for name, r in res["models"].items():
@@ -80,8 +99,8 @@ def evaluate(tasks: list[dict], models: dict[str, str], workers: int, progress=N
                 agg["n"] += 1
                 if r["status"] == "done":
                     agg["done"] += 1
-                s = score(task["truth"], r.get("cues") or [], task["beat_s"])
-                for _, label in HOT:
+                s = score(task["truth"], r.get("cues") or [], task["beat_s"], hot)
+                for _, label in hot:
                     if label not in s:
                         continue
                     agg[label]["n"] += 1
@@ -97,10 +116,15 @@ def evaluate(tasks: list[dict], models: dict[str, str], workers: int, progress=N
     return results
 
 
+def _labels(results: dict) -> list[str]:
+    first = next(iter(results.values()), {})
+    return [k for k in first if len(k) == 1 and k in _LETTERS]
+
+
 def table(results: dict, log=print) -> None:
     names = list(results)
     log(f"  {'':<14}" + "".join(f"{n:>22}" for n in names))
-    for _, label in HOT:
+    for label in _labels(results):
         row = f"  Hot {label} ±2 / ±8 "
         for n in names:
             a = results[n][label]
@@ -119,7 +143,7 @@ def table(results: dict, log=print) -> None:
 
 def hits(results: dict, name: str) -> int:
     """Summe der Hot-Treffer +-2 Schlaege -- der eine Wert fuer "besser oder schlechter"."""
-    return sum(results[name][label]["hit2"] for _, label in HOT)
+    return sum(results[name][label]["hit2"] for label in _labels(results))
 
 
 def model_paths(folder: str) -> bool:

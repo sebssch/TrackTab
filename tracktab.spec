@@ -58,6 +58,22 @@ try:
 except Exception:
     print("HINWEIS: onnxruntime nicht installiert -- Bundle ohne Genre-/Stimmungs-Analyse.")
 
+# LightGBM (Auto-Cue-Training in der App, app/autocue/training/) -- nur im Training
+# importiert, Auto Cue selbst wertet die Baeume ohne LightGBM aus (trees.py). Den
+# Rest (lib_lightgbm.dylib, libomp ueber dessen rpath) sammelt der Hook aus
+# pyinstaller-hooks-contrib. libomp und scipy-Wheels haben ein eigenes Mindest-macOS
+# (Homebrew-libomp = das des Bau-Rechners, scipy arm64 = 14): darunter meldet die
+# App "Training nicht verfuegbar" (boost.available() laedt wirklich), der Rest
+# laeuft weiter. Von scipy braucht LightGBM nur scipy.sparse.
+_lgb_hidden = []
+try:
+    import lightgbm  # noqa: F401
+    _lgb_hidden = collect_submodules("app.autocue.training")
+except Exception:
+    print("HINWEIS: lightgbm nicht installiert -- Bundle ohne Auto-Cue-Training.")
+_SCIPY_UNUSED = ["scipy." + m for m in ("signal", "optimize", "stats", "interpolate", "integrate", "ndimage",
+                                         "spatial", "io", "odr", "cluster", "datasets", "misc", "differentiate")]
+
 a = Analysis(
     ["desktop_main.py"],
     pathex=[],
@@ -65,11 +81,10 @@ a = Analysis(
     datas=datas,
     hiddenimports=["app.analyzer", "app.classify", "app.spectral", "app.probe",
                    "app.macapp", "app.bpmkey", "app.genremood", "app.stems", "app.stemjob"]
-                  + _encodings + _sonare_hidden + _ort_hidden,
+                  + _encodings + _sonare_hidden + _ort_hidden + _lgb_hidden,
     hookspath=[],
-    # lightgbm: nur fuers Training (requirements-train.txt), die App wertet die Baeume
-    # selbst aus (app/autocue/trees.py).
-    excludes=["tkinter", "matplotlib", "pytest", "PyInstaller", "lightgbm", "sklearn", "scipy"],
+    # sklearn/pandas: optionale Extras von LightGBM, fuers Training nicht noetig.
+    excludes=["tkinter", "matplotlib", "pytest", "PyInstaller", "sklearn", "pandas"] + _SCIPY_UNUSED,
     noarchive=False,
 )
 # Die Demucs-Gewichte duerfen nicht mit der App ausgeliefert werden (Lizenz, siehe

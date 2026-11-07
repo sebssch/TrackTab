@@ -77,7 +77,7 @@ def is_stale(cfg: dict, conn: sqlite3.Connection) -> bool:
         return True
     if _max_event_ts(conn) > covers.get("max_event_ts", 0.0):
         return True
-    if cfg.get("rekordbox_playlist"):
+    if cfg.get("external_rekordbox"):
         if (rekordbox_mod.master_db_mtime() or 0.0) != covers.get("rekordbox_db_mtime", 0.0):
             return True
     return False
@@ -243,12 +243,12 @@ def _top_grouped(raw_plays: list[tuple[str, float]], meta: dict[str, dict],
 
 def _iter_rekordbox_plays(cfg: dict) -> list[dict]:
     """Rekordbox' eigene History (siehe rekordbox.read_history_plays()) --
-    NUR wenn eine Rekordbox-Playlist in den Einstellungen verknuepft ist
-    (dieselbe Bedingung, die im Rest der App schon alle Rekordbox-Knoepfe
-    gated). Ohne Verknuepfung wird master.db erst gar nicht angefasst.
+    NUR wenn Rekordbox in den Einstellungen ausgewaehlt ist (dieselbe
+    Bedingung, die im Rest der App die Rekordbox-Integration schaltet). Ohne
+    Auswahl wird master.db erst gar nicht angefasst.
     Jeder Fehler (pyrekordbox fehlt, master.db nicht gefunden/kaputt) ist
     fuer den Rest der Statistik nicht fatal -- leere Liste statt Absturz."""
-    if not cfg.get("rekordbox_playlist"):
+    if not cfg.get("external_rekordbox"):
         return []
     try:
         return rekordbox_mod.read_history_plays()
@@ -361,7 +361,7 @@ def build(cfg: dict, conn: sqlite3.Connection) -> dict:
             "newest_log_mtime": _newest_log_mtime(cfg),
             "max_event_ts": _max_event_ts(conn),
             "rekordbox_db_mtime": (rekordbox_mod.master_db_mtime() or 0.0)
-                                  if cfg.get("rekordbox_playlist") else 0.0,
+                                  if cfg.get("external_rekordbox") else 0.0,
         },
         "available_years": sorted(out_years.keys(), reverse=True),
         "years": out_years,

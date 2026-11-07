@@ -1,10 +1,9 @@
 """
 Ein Auto-Cue-Modell als ZIP: schreiben (Training) und in die App laden (Einstellungen).
 
-So kommt ein neues Modell in eine installierte App, ohne eine neue DMG zu bauen.
-Geladen wird nach <base_dir>/models/autocue/ (autocue.trained_dir()), wie das
-Stem-Modell; es gilt, solange es juenger ist als das mitgelieferte
-(autocue.model_dir()).
+So kommt ein Modell von einem Rechner auf einen anderen, ohne eine neue DMG zu
+bauen. Ein Import legt einen neuen Eintrag der Modellbibliothek an (library.py);
+gelten wird er erst, wenn er ausgewaehlt ist (config["autocue_model"]).
 
 Die Datei kommt von aussen, deshalb streng: nur die bekannten Dateinamen, keine
 Ordner, Groessen gedeckelt, jede .npz als Baumpaket ladbar, Merkmalsversion wie
@@ -15,16 +14,13 @@ from __future__ import annotations
 import io
 import json
 import os
-import shutil
-import time
 import zipfile
 
-from app.autocue import MANIFEST, _MODEL_FILES
+from app.autocue import _CHAIN_MODEL_FILES, MANIFEST, _MODEL_FILES
 
-ALLOWED = set(_MODEL_FILES) | {"chain_outro.npz", MANIFEST}
+ALLOWED = set(_MODEL_FILES) | set(_CHAIN_MODEL_FILES) | {MANIFEST}
 _MAX_FILE = 64 * 1024 * 1024
 _MAX_TOTAL = 160 * 1024 * 1024
-KEEP_BACKUPS = 3
 
 
 class PackageError(ValueError):
@@ -95,32 +91,20 @@ def check(data: bytes) -> tuple[dict[str, bytes], dict]:
     return files, manifest
 
 
-def install(data: bytes, target: str, backup_root: str) -> dict:
-    """Pruefen, alten Stand sichern, ersetzen. Rueckgabe: Manifest des neuen Modells."""
+def install(data: bytes, name: str = "") -> tuple[str, dict]:
+    """Pruefen und als neuen Eintrag der Modellbibliothek ablegen (library.py).
+    Rueckgabe (id, Manifest). Aktiv wird er erst durch die Auswahl
+    (ausser es ist das erste Modell, library.add_files())."""
+    from app.autocue import library
     files, manifest = check(data)
-    if os.path.isdir(target) and os.listdir(target):
-        dest = os.path.join(backup_root, time.strftime("%Y%m%d-%H%M%S"))
-        shutil.copytree(target, dest, dirs_exist_ok=True)
-        old = sorted(p for p in os.listdir(backup_root) if os.path.isdir(os.path.join(backup_root, p)))
-        for p in old[:-KEEP_BACKUPS]:
-            shutil.rmtree(os.path.join(backup_root, p), ignore_errors=True)
-    tmp = target + ".neu"
-    shutil.rmtree(tmp, ignore_errors=True)
-    os.makedirs(tmp)
-    for name, raw in files.items():
-        with open(os.path.join(tmp, name), "wb") as fh:
-            fh.write(raw)
-    if os.path.isdir(target):
-        shutil.rmtree(target)
-    os.rename(tmp, target)
-    return manifest
+    model_id = library.add_files(files, name, "imported")
+    return model_id, manifest
 
 
-def remove(target: str, backup_root: str) -> bool:
-    """Eigenes Modell entfernen (gesichert); danach gilt wieder das mitgelieferte."""
-    if not os.path.isdir(target):
-        return False
-    dest = os.path.join(backup_root, time.strftime("%Y%m%d-%H%M%S"))
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    shutil.move(target, dest)
-    return True
+def export(model_id: str, dest: str) -> str:
+    """ZIP eines Bibliothekseintrags schreiben."""
+    from app.autocue import library
+    folder = library.folder_of(model_id)
+    if folder is None:
+        raise PackageError("Dieses Modell gibt es nicht mehr.")
+    return write_zip(folder, dest)

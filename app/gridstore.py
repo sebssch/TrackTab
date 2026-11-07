@@ -124,7 +124,8 @@ def beats_with_tempo(beats: list, segments: list, lead: float, bpm: float = 0) -
 def rekordbox_lead(path: str) -> float:
     """Versatz zu Rekordbox in s (wavedetail.lead() mit rekordbox.playback_lead())."""
     return wavedetail_mod.lead(path, os.path.getmtime(path),
-                               lambda mono, sr: rekordbox_mod.playback_lead(path, mono, sr))
+                               lambda mono, sr: rekordbox_mod.playback_lead(path, mono, sr),
+                               rekordbox_mod.lead_stamp(path))
 
 
 def beats_to_own(rb_beats: list, lead: float) -> list:
@@ -350,7 +351,9 @@ class SeedJob:
                 if self._cancel.is_set():
                     break
                 took = seed_from_rekordbox(cfg, path, server_lock, refresh=again)
-                wavedetail_mod.forget(path)        # Zwischenspeicher nicht mit tausenden Tracks fuellen
+                # Wellenformen nicht mit tausenden Tracks fuellen, der Versatz bleibt
+                # (spaeteres Rekordbox Update misst dann nicht erneut).
+                wavedetail_mod.forget(path, keep_lead=True)
                 with self._lock:
                     self.state["done"] += 1
                     self.state["seeded"] += bool(took)

@@ -149,6 +149,7 @@
       <span class="plhead-icon" id="plHeadIcon"></span>
       <span class="plhead-name" id="plHeadName"></span>
       <span class="plhead-count" id="plHeadCount"></span>
+      <span class="plhead-link" id="plHeadLink" hidden></span>
       <span class="plhead-actions">
         <button type="button" class="act small" id="plHeadMergeToggle" hidden
                 data-i18n-title="genres.merge_toggle_title" title="Zusammenführungs-Vorschläge">
@@ -219,6 +220,7 @@
       </tr></thead>
       <tbody id="tb"></tbody>
     </table>
+    <div id="bootSkel" class="bootskel" aria-hidden="true"><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div><div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i><div class="bsk-txt"><i></i><i></i></div><i class="bsk-pill"></i><i class="bsk-pill s"></i><i class="bsk-bar"></i></div></div>
   </div>
   <div class="foot" id="more"></div>
 </div>
@@ -269,16 +271,6 @@
       <input type="checkbox" id="updateIgnore"> <span data-i18n="update.ignore_version">Diese Version ignorieren</span></label>
     <div class="confirmbtns">
       <button class="act" id="updateCheckClose" data-i18n="action.close">Schließen</button>
-    </div>
-  </div>
-</div>
-
-<div id="rbPlaylistOverlay" class="overlay">
-  <div class="confirmbox settingsbox">
-    <h3 data-i18n="settings.rbpicker_title">Rekordbox-Playlist auswählen</h3>
-    <div id="rbPlaylistList" class="rbplaylistlist"></div>
-    <div class="confirmbtns">
-      <button class="act" id="rbPlaylistCancel" data-i18n="action.cancel">Abbrechen</button>
     </div>
   </div>
 </div>
@@ -372,6 +364,7 @@
     <div class="confirmfile" id="convertFile"></div>
     <div class="convertswitch">
       <button type="button" class="csbtn" id="convertTargetMp3" data-i18n="convert.target_mp3">MP3 320 kbit/s CBR</button>
+      <button type="button" class="csbtn" id="convertTargetAac" data-i18n="convert.target_aac">AAC 256 kbit/s</button>
       <button type="button" class="csbtn" id="convertTargetAiff" data-i18n="convert.target_aiff">AIFF</button>
     </div>
     <div class="optlist">
@@ -406,6 +399,56 @@
     <div id="convertResultGroups"></div>
     <div class="confirmbtns">
       <button class="act" id="convertResultClose" data-i18n="action.close">Schließen</button>
+    </div>
+  </div>
+</div>
+
+<!-- Verknuepfung einer TrackTab-Liste mit Music.app/Rekordbox (openLinkDialog()). -->
+<div id="linkOverlay" class="overlay">
+  <div class="confirmbox linkbox">
+    <h3 id="linkTitle"></h3>
+    <p class="confirmnote" data-i18n="link.note">Verknüpfte Playlisten halten denselben Inhalt: Was du in einer davon hinzufügst oder entfernst, gilt beim nächsten Abgleich überall. Die Reihenfolge bestimmt TrackTab.</p>
+    <p class="confirmnote" id="linkSmartNote" data-i18n="link.smart_note" hidden>Smarte Liste: Der Inhalt kommt aus ihren Regeln und geht nur nach außen. Änderungen in Music oder Rekordbox werden beim Abgleich überschrieben.</p>
+    <!-- Knopf je Quelle, oeffnet die Baum-Auswahl (pickPlaylistFromTree()). -->
+    <div class="setfield" id="linkMusicField"><span data-i18n="tree.root_music">Music App</span>
+      <button type="button" class="linkpick" id="linkMusic"></button></div>
+    <div class="setfield" id="linkRekordboxField"><span data-i18n="tree.root_rekordbox">Rekordbox</span>
+      <button type="button" class="linkpick" id="linkRekordbox"></button></div>
+    <div class="confirmbtns">
+      <button class="act" id="linkNo" data-i18n="action.cancel">Abbrechen</button>
+      <button class="act" id="linkYes" data-i18n="link.save">Speichern</button>
+    </div>
+  </div>
+</div>
+
+<!-- Baum-Auswahl einer fremden Playlist (pickPlaylistFromTree() in app.js):
+     Rekordbox-Playlist in den Einstellungen, Ziele im Verknuepfen-Dialog. Steht
+     nach #linkOverlay, damit es ueber diesem liegt. -->
+<div id="treePickOverlay" class="overlay">
+  <div class="confirmbox settingsbox">
+    <h3 id="treePickTitle"></h3>
+    <div id="treePickList" class="treepicklist"></div>
+    <div class="confirmbtns">
+      <button class="act" id="treePickCancel" data-i18n="action.cancel">Abbrechen</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tracks, die schon in Rekordbox stehen: welche bekommen TrackTabs Fassung
+     (askRekordboxOverwrite() in app.js). -->
+<div id="rbPushOverlay" class="overlay">
+  <div class="confirmbox rbpushbox">
+    <h3 id="rbPushTitle"></h3>
+    <p class="confirmnote" data-i18n="rbpush.note">Diese Tracks stehen schon in Rekordbox. Angehakte bekommen Beatgrid, Phrasen und Cues aus TrackTab, die übrigen werden nur in die Playlist eingetragen.</p>
+    <div class="rbpushtools">
+      <button class="act small" id="rbPushAll" data-i18n="rbpush.all">Alle</button>
+      <button class="act small" id="rbPushNone" data-i18n="rbpush.none">Keine</button>
+      <button class="act small" id="rbPushDiff" data-i18n="rbpush.diff">Nur abweichende</button>
+    </div>
+    <div class="rbpushlist" id="rbPushList"></div>
+    <div class="confirmbtns">
+      <button class="act" id="rbPushNo" data-i18n="action.cancel">Abbrechen</button>
+      <button class="act" id="rbPushYes" data-i18n="rbpush.go">Übertragen</button>
     </div>
   </div>
 </div>
@@ -495,7 +538,7 @@
           <div class="opthelp" data-i18n="scanopts.loudness_help">Misst zusätzlich Lautheit, Spitzenpegel und
             Dynamikumfang (LUFS/dBTP/LRA) — rein informativ, ohne Einfluss auf das Verdikt.</div>
         </div>
-        <label class="toggle"><input id="scanOptLoudness" type="checkbox" checked>
+        <label class="toggle"><input id="scanOptLoudness" type="checkbox">
           <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
       </div>
       <div class="optrow">
@@ -504,7 +547,7 @@
           <div class="opthelp" data-i18n="scanopts.cutoff_help">Ermittelt die Tiefpasskante und damit das
             Qualitäts-Verdikt. Aus → die Datei bekommt nur Metadaten, das Verdikt bleibt "unbekannt".</div>
         </div>
-        <label class="toggle"><input id="scanOptCutoff" type="checkbox" checked>
+        <label class="toggle"><input id="scanOptCutoff" type="checkbox">
           <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
       </div>
       <div class="optrow" id="scanOptGenreMoodRow">

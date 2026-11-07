@@ -28,6 +28,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -50,6 +51,7 @@ from .gridstore import (beats_with_tempo as _dj_beats_with_tempo, dj_hash as _dj
                         phrases_from_first_beat as _phrases_from_first_beat,
                         segment_tempo as _dj_segment_tempo, snap_phrases as _snap_phrases)
 from . import phrases as phrases_mod
+from . import playlistsync
 from . import autocue as autocue_mod
 from .autocue import package as autocue_package
 from .autocue import sources as autocue_sources
@@ -1259,6 +1261,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_dj_wave()
         elif route == "/api/wave-color":
             self._get_wave_color()
+        elif route == "/api/wave-phrases":
+            self._get_wave_phrases()
         elif route == "/api/music-added":
             self._get_music_added()
         elif route == "/api/merge-dismissed":
@@ -1285,6 +1289,18 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_stems_download()
         elif route == "/api/stems/model":
             self._json({"ok": True, **self._stems_model_info()})
+        elif route == "/api/autocue/models":
+            self._json({"ok": True, "models": settings_mod.autocue_models_info()})
+        elif route == "/api/autocue/model-export":
+            self._get_autocue_model_export()
+        elif route == "/api/autocue/train-status":
+            from .autocue.training import job as autocue_job
+            try:
+                since = int(self._query().get("from", "0"))
+            except ValueError:
+                since = 0
+            self._json({"ok": True, **autocue_job.JOB.state(since)})
+
         elif route == "/api/backups":
             self._get_backups()
         elif route == "/api/stats":
@@ -1295,6 +1311,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_cover()
         elif route == "/api/playlists":
             self._get_playlists()
+        elif route == "/api/playlist-links":
+            self._get_playlist_links()
         elif route == "/api/music-playlists":
             self._get_music_playlists()
         elif route == "/api/music-playlist":
@@ -1473,13 +1491,21 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:                  # noqa: BLE001
             self._json({"ok": False, "error": str(exc)[:300]})
             return
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                known = {r["path"] for r in conn.execute("SELECT path FROM files")}
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            meta = playlistsync.file_meta(conn)
+        finally:
+            conn.close()
+        known = set(meta)
+        cloud = playlistsync.cloud_matcher(meta)
         for tr in tracks:
+            # Eigener Track, den Music nur noch als Cloud-Eintrag fuehrt (z. B. nach
+            # einer Aenderung am iPhone): ueber Titel/Interpret/Groesse zuordnen.
+            if not tr.get("path"):
+                hit = cloud(tr)
+                if hit:
+                    tr["path"] = hit
+                    tr["cloud"] = True
             # Music.app und unsere Datenbank koennen denselben Pfad in
             # unterschiedlicher Unicode-Normalform fuehren (macOS liefert
             # Umlaute je nach Quelle als NFD oder NFC) -- ohne den Abgleich
@@ -2205,6 +2231,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_rekordbox_add_playlist()
         elif route == "/api/rekordbox-remove-entries":
             self._post_rekordbox_remove_entries()
+        elif route == "/api/playlist-links":
+            self._post_playlist_links()
+        elif route == "/api/playlist-link-sync":
+            self._post_playlist_link_sync()
+        elif route == "/api/dj-rekordbox-batch":
+            self._post_dj_rekordbox_batch()
+        elif route == "/api/rekordbox-playlist-edit":
+            self._post_rekordbox_playlist_edit()
+        elif route == "/api/music-playlist-edit":
+            self._post_music_playlist_edit()
+        elif route == "/api/music-playlist-add":
+            self._post_music_playlist_add()
+        elif route == "/api/music-playlist-remove":
+            self._post_music_playlist_remove()
         elif route == "/api/rekordbox-reorder":
             self._post_rekordbox_reorder()
         elif route == "/api/rekordbox-remove-collection":
@@ -2273,8 +2313,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_autocue_slots()
         elif route == "/api/autocue/model-import":
             self._post_autocue_model_import()
-        elif route == "/api/autocue/model-remove":
-            self._post_autocue_model_remove()
+        elif route == "/api/autocue/model-select":
+            self._post_autocue_model_select()
+        elif route == "/api/autocue/model-rename":
+            self._post_autocue_model_rename()
+        elif route == "/api/autocue/model-delete":
+            self._post_autocue_model_delete()
+        elif route == "/api/autocue/train-check":
+            self._post_autocue_train(check_only=True)
+        elif route == "/api/autocue/train":
+            self._post_autocue_train()
+        elif route == "/api/autocue/train-cancel":
+            from .autocue.training import job as autocue_job
+            autocue_job.JOB.cancel()
+            self._json({"ok": True})
         elif route == "/api/columns":
             self._post_columns()
         elif route == "/api/column-views":
@@ -2763,7 +2815,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
 
         rb_blocked = False
-        if cfg.get("rekordbox_playlist") and any(p in in_rekordbox for p in paths):
+        if cfg.get("external_rekordbox") and any(p in in_rekordbox for p in paths):
             try:
                 rb_blocked = rekordbox_mod.is_running() or rekordbox_mod.agent_running()
             except Exception:                            # noqa: BLE001
@@ -3232,6 +3284,7 @@ class _Handler(BaseHTTPRequestHandler):
             raw = payload.get("paths")
             paths = [str(p) for p in raw] if raw is not None else [str(payload["path"])]
             playlist_id = str(payload.get("playlist_id") or "")
+            session = str(payload.get("session") or "")
         except (ValueError, KeyError, TypeError) as exc:
             self._fail(f"Ungültige Anfrage: {exc}")
             return
@@ -3248,9 +3301,27 @@ class _Handler(BaseHTTPRequestHandler):
                 self._reject_missing(p)
                 return
             metadata[p] = row
-
         cfg = cfgmod.load()
-        playlist_name = str(cfg.get("rekordbox_playlist") or "")
+        try:
+            result = self._rekordbox_push(paths, metadata, playlist_id, session, cfg)
+        except rekordbox_mod.RekordboxRunning as exc:
+            self._json({"ok": False, "error": str(exc), "sticky": True}, 500)
+            return
+        except Exception as exc:                     # noqa: BLE001
+            self._fail(str(exc), 500)
+            return
+        self._json({"ok": True, **result})
+
+    def _rekordbox_push(self, paths: list[str], metadata: dict, playlist_id: str,
+                        session: str, cfg: dict) -> dict:
+        """Kern von /api/rekordbox-add-playlist, auch fuer verknuepfte Playlisten
+        (playlistsync.write_rekordbox()): Tracks in eine bestehende Rekordbox-Playlist,
+        neue mit TrackTabs Grid/Phrasen/Cues, My Tags nach Einstellung, danach dieselbe
+        Nacharbeit wie nach dem DJ-Knopf. metadata = DB-Zeile je Pfad. Wirft bei
+        Fehlern (RekordboxRunning, wenn Rekordbox laeuft)."""
+        # Ziel nur noch ueber die ID (Drag & Drop, verknuepfte Playlisten); die
+        # fruehere feste Ziel-Playlist aus den Einstellungen gibt es nicht mehr.
+        playlist_name = ""
         # My Tags: erkannte Stimmungen (dieselbe Regel wie die Tags-Spalte,
         # genremood.mood_names()) und eigene Tags je Pfad. None = Einstellung
         # aus, die My Tags in Rekordbox bleiben dann unberuehrt.
@@ -3265,32 +3336,271 @@ class _Handler(BaseHTTPRequestHandler):
                     conn.close()
             mytags = {p: genremood_mod.mood_names((moods.get(p) or {}).get("m") or {})
                          + user_tags.get(p, []) for p in paths}
+        # Tracks, die Rekordbox noch nicht kennt, kommen wie ueber den DJ-Knopf
+        # "Zu Rekordbox hinzufuegen" mit TrackTabs Beatgrid, Phrasen und Cues an
+        # (ein Weg nach Rekordbox). Vorbereiten misst (ffmpeg), also ohne Lock.
+        prepared: dict = {}
         try:
-            # Die beiden Locks NACHEINANDER, nicht ineinander (siehe
-            # Reihenfolge-Regel bei _rekordbox_lock): der Rekordbox-Schreib-
-            # zugriff braucht die Oberflaeche nicht anzuhalten, und zwischen
-            # den beiden Abschnitten liegt nichts, was zusammenhaengen muss --
-            # mark_rekordbox_present() ist ein reiner Praesenz-Cache.
-            with self._rekordbox_lock:
-                result = rekordbox_mod.add_tracks_to_playlist(
-                    paths, playlist_name, metadata, playlist_id or None,
-                    mytags, str(cfg.get("rekordbox_mytag_category") or "").strip() or "TrackTab")
-            if result["added"]:
-                with self.lock:
-                    conn = db_mod.connect(cfg)
-                    try:
-                        db_mod.mark_rekordbox_present(conn, result["added"])
-                    finally:
-                        conn.close()
-        except rekordbox_mod.RekordboxRunning as exc:
-            self._json({"ok": False, "error": str(exc), "sticky": True}, 500)
-            return
-        except Exception as exc:                     # noqa: BLE001
-            self._fail(str(exc), 500)
-            return
+            known = rekordbox_mod.resolve_content_ids(paths)
+        except Exception:                            # noqa: BLE001
+            known = {p: "" for p in paths}           # im Zweifel nur Tags, wie bisher
+        for p in paths:
+            if p in known:
+                continue
+            try:
+                prepared[p] = self._dj_rb_prepare(p, "add", list(db_mod.DJ_TRACK_FIELDS), metadata[p], cfg)
+            except Exception:                        # noqa: BLE001
+                pass                                 # ohne eigene Daten: nur Tags
+        # Die beiden Locks NACHEINANDER, nicht ineinander (siehe
+        # Reihenfolge-Regel bei _rekordbox_lock): der Rekordbox-Schreib-
+        # zugriff braucht die Oberflaeche nicht anzuhalten, und zwischen
+        # den beiden Abschnitten liegt nichts, was zusammenhaengen muss --
+        # mark_rekordbox_present() ist ein reiner Praesenz-Cache.
+        with rekordbox_mod.backup_session(session), self._rekordbox_lock:
+            result = rekordbox_mod.add_tracks_to_playlist(
+                paths, playlist_name, metadata, playlist_id or None,
+                mytags, str(cfg.get("rekordbox_mytag_category") or "").strip() or "TrackTab",
+                prepared=prepared)
+        if result["added"]:
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    db_mod.mark_rekordbox_present(conn, result["added"])
+                finally:
+                    conn.close()
+        names = list(db_mod.DJ_TRACK_FIELDS)
+        for p, fields in (result.get("written") or {}).items():
+            # Wie nach dem DJ-Knopf: Pruefsummen, Sperren, Praesenz.
+            try:
+                self._dj_rb_after(p, "add", names, {"written": fields}, cfg)
+            except Exception as exc:                 # noqa: BLE001
+                import sys
+                print(f"Rekordbox-Nacharbeit fuer {p}: {exc}", file=sys.stderr)
+        if result.get("created"):
+            self._rebuild(cfg)
         for p in result["added"]:
             audit_log.log("rekordbox", p, f"zu „{result.get('playlist') or playlist_name}\"")
-        self._json({"ok": True, **result})
+        return result
+
+    # ── Verknuepfte Playlisten (playlistsync.py) ──────────────────────────────
+    _link_sync_locks: dict = {}
+    _link_sync_guard = threading.Lock()
+
+    def _get_playlist_links(self) -> None:
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            links = db_mod.playlist_links(conn)
+        finally:
+            conn.close()
+        self._json({"ok": True, "links": links})
+
+    def _post_playlist_links(self) -> None:
+        """Verknuepfen/Trennen: {playlist_id, music, rekordbox} mit je einer fremden
+        Playlist-ID, "new" (mit dem TrackTab-Namen anlegen) oder null (trennen);
+        ein fehlender Schluessel laesst die Seite unveraendert. Nur normale und
+        smarte TrackTab-Listen, nur normale fremde Playlisten."""
+        payload = self._json_payload()
+        if payload is None:
+            return
+        pid = str(payload.get("playlist_id") or "")
+        cfg = cfgmod.load()
+        conn = db_mod.connect(cfg)
+        try:
+            node = conn.execute("SELECT id, kind, name FROM playlists WHERE id = ?", (pid,)).fetchone()
+        finally:
+            conn.close()
+        if node is None or node["kind"] not in ("playlist", "smart"):
+            self._fail("Nur normale und smarte Playlisten lassen sich verknüpfen")
+            return
+        changes: dict = {}
+        for source in db_mod.LINK_SOURCES:
+            if source not in payload:
+                continue
+            want = payload.get(source)
+            if want in (None, ""):
+                changes[source] = (None, "")
+                continue
+            want = str(want)
+            try:
+                if source == "music":
+                    if not cfg.get("external_music"):
+                        raise ValueError("Keine Music App in den Einstellungen ausgewählt")
+                    if want == "new":
+                        ext_id, ext_name = media.music_create_playlist(node["name"], "", False), node["name"]
+                    else:
+                        hit = next((n for n in media.music_playlists() if n["id"] == want), None)
+                        if hit is None or hit["kind"] != "playlist":
+                            raise ValueError("Nur normale Music-Playlisten lassen sich verknüpfen")
+                        ext_id, ext_name = want, hit["name"]
+                else:
+                    if want == "new":
+                        with self._rekordbox_lock:
+                            made = rekordbox_mod.create_playlist(node["name"])
+                        ext_id, ext_name = made["id"], made["name"]
+                    else:
+                        hit = next((n for n in rekordbox_mod.playlists() if n["id"] == want), None)
+                        if hit is None or hit["kind"] != "playlist":
+                            raise ValueError("Nur normale Rekordbox-Playlisten lassen sich verknüpfen")
+                        ext_id, ext_name = want, hit["name"]
+            except rekordbox_mod.RekordboxRunning as exc:
+                self._json({"ok": False, "error": str(exc), "sticky": True}, 409)
+                return
+            except Exception as exc:                 # noqa: BLE001
+                self._fail(str(exc)[:300], 500)
+                return
+            changes[source] = (ext_id, ext_name)
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                for source, (ext_id, ext_name) in changes.items():
+                    db_mod.set_playlist_link(conn, pid, source, ext_id, ext_name)
+                links = db_mod.playlist_links(conn)
+            finally:
+                conn.close()
+        for source, (ext_id, ext_name) in changes.items():
+            audit_log.log("playlist-link", "", f"{node['name']} -> {source}: {ext_name or 'getrennt'}")
+        self._json({"ok": True, "links": links})
+
+    def _post_playlist_link_sync(self) -> None:
+        """Abgleich einer verknuepften Liste (Regel: playlistsync.merge()).
+        {playlist_id, paths (nur smarte Listen: Inhalt aus dem Browser), apply,
+        allow_guard, skip_import: [pfade], session}. Ohne apply nur der Plan (fuer
+        Rueckfragen: guard, needs_import). Music/Rekordbox lesen und schreiben
+        ausserhalb von self.lock; Rekordbox, wenn es laeuft, als "pending" auslassen."""
+        payload = self._json_payload()
+        if payload is None:
+            return
+        pid = str(payload.get("playlist_id") or "")
+        apply = bool(payload.get("apply"))
+        with self._link_sync_guard:
+            plock = self._link_sync_locks.setdefault(pid, threading.Lock())
+        if not plock.acquire(blocking=False):
+            self._json({"ok": True, "busy": True})
+            return
+        try:
+            self._link_sync(pid, payload, apply)
+        finally:
+            plock.release()
+
+    def _link_sync(self, pid: str, payload: dict, apply: bool) -> None:
+        cfg = cfgmod.load()
+        conn = db_mod.connect(cfg)
+        try:
+            node = conn.execute("SELECT id, kind, name FROM playlists WHERE id = ?", (pid,)).fetchone()
+            links = db_mod.playlist_links(conn, pid)
+            base = db_mod.link_baselines(conn, pid)
+            items = db_mod.playlist_items_map(conn).get(pid, [])
+            meta = playlistsync.file_meta(conn)
+            music_lib = set(db_mod.music_added_map(conn))
+        finally:
+            conn.close()
+        if node is None or not links:
+            self._fail("Keine verknüpfte Playlist")
+            return
+        known = set(meta)
+        kind = "smart" if node["kind"] == "smart" else "playlist"
+        if kind == "smart":
+            tracktab = [str(p) for p in (payload.get("paths") or []) if str(p) in known]
+        else:
+            tracktab = list(items)
+        resolve = playlistsync.resolver(known)
+        reads: dict = {}
+        status: dict = {}
+        for link in links:
+            src, ext_id = link["source"], link["ext_id"]
+            try:
+                if src == "rekordbox":
+                    if rekordbox_mod.is_running() or rekordbox_mod.agent_running():
+                        status[src] = "pending"
+                        continue
+                    reads[src] = playlistsync.read_rekordbox(ext_id, resolve)
+                else:
+                    if not cfg.get("external_music"):
+                        status[src] = "error"
+                        continue
+                    reads[src] = playlistsync.read_music(ext_id, resolve, playlistsync.cloud_matcher(meta))
+                status[src] = "ok"
+            except playlistsync.LinkBroken:
+                status[src] = "broken"
+            except Exception as exc:                 # noqa: BLE001
+                status[src] = "error"
+                reads.pop(src, None)
+                status[f"{src}_error"] = str(exc)[:200]
+        first = {link["source"]: link["synced_ts"] is None for link in links}
+        plan = playlistsync.merge(kind, tracktab, {s: r["paths"] for s, r in reads.items()}, base, first)
+        needs_import = [p for p in plan.get("music", {}).get("add", []) if p not in music_lib] if "music" in reads else []
+        summary = {s: {"add": len(plan[s]["add"]), "remove": len(plan[s]["remove"])}
+                   for s in ("tracktab", *reads) if s in plan}
+        response = {"ok": True, "kind": kind, "summary": summary, "guard": plan["guard"],
+                    "needs_import": needs_import, "status": status}
+        if not apply or (plan["guard"] and not payload.get("allow_guard")):
+            # Stand der fremden Seiten trotzdem festhalten (pending/broken/error).
+            self._link_store(pid, links, status, {}, None, cfg)
+            self._json({**response, "applied": False})
+            return
+        skip = {str(p) for p in (payload.get("skip_import") or [])}
+        session = str(payload.get("session") or "") or uuid.uuid4().hex
+        results: dict = {}
+        new_base: dict = {}
+        changed_items = False
+        if kind != "smart" and plan["items"] != tracktab:
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    db_mod.set_playlist_items(conn, pid, plan["items"])
+                finally:
+                    conn.close()
+            changed_items = True
+        ext = {link["source"]: link["ext_id"] for link in links}
+        if "music" in reads:
+            try:
+                w = playlistsync.write_music(ext["music"], plan["music"], reads["music"], meta, skip)
+                results["music"] = {k: v for k, v in w.items() if k != "state"}
+                new_base["music"] = w["state"]
+            except Exception as exc:                 # noqa: BLE001
+                status["music"] = "error"
+                status["music_error"] = str(exc)[:200]
+        if "rekordbox" in reads:
+            def push(paths):
+                rows = {p: self._known_file(p) for p in paths}
+                rows = {p: r for p, r in rows.items() if r is not None}
+                return self._rekordbox_push(list(rows), rows, ext["rekordbox"], session, cfg)
+            try:
+                with rekordbox_mod.backup_session(session):
+                    w = playlistsync.write_rekordbox(ext["rekordbox"], plan["rekordbox"], reads["rekordbox"],
+                                                     plan["items"], push, self._rekordbox_lock)
+                results["rekordbox"] = {k: v for k, v in w.items() if k != "state"}
+                new_base["rekordbox"] = w["state"]
+            except rekordbox_mod.RekordboxRunning:
+                status["rekordbox"] = "pending"
+            except Exception as exc:                 # noqa: BLE001
+                status["rekordbox"] = "error"
+                status["rekordbox_error"] = str(exc)[:200]
+        new_base["tracktab"] = set(plan["items"])
+        links_now = self._link_store(pid, links, status, new_base, plan, cfg)
+        if changed_items:
+            self._rebuild(cfg)
+        audit_log.log("playlist-sync", "", f"{node['name']}: " + ", ".join(
+            f"{s} +{len(plan[s]['add'])}/-{len(plan[s]['remove'])}" for s in summary))
+        self._json({**response, "applied": True, "items": plan["items"], "results": results,
+                    "links": links_now})
+
+    def _link_store(self, pid: str, links: list, status: dict, new_base: dict, plan, cfg: dict) -> list:
+        """Baselines und Status unter self.lock festhalten. Eine Seite bekommt nur dann
+        eine neue Baseline, wenn in sie geschrieben wurde."""
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                for side, paths in new_base.items():
+                    db_mod.set_link_baseline(conn, pid, side, paths)
+                for link in links:
+                    src = link["source"]
+                    state = status.get(src, "ok")
+                    db_mod.set_link_state(conn, pid, src, "ok" if state == "ok" else state,
+                                          status.get(f"{src}_error"), synced=src in new_base)
+                return db_mod.playlist_links(conn, None)
+            finally:
+                conn.close()
 
     def _rekordbox_write(self, fn) -> dict | None:
         """Gemeinsamer Rahmen der Rekordbox-Bearbeitungen: eigener Lock (nicht
@@ -3335,6 +3645,129 @@ class _Handler(BaseHTTPRequestHandler):
             return
         audit_log.log("rekordbox", "", f"{len(result['removed'])} aus „{result['playlist']}\" entfernt")
         self._json({"ok": True, **result})
+
+    def _post_rekordbox_playlist_edit(self) -> None:
+        """Playlisten-Baum in Rekordbox bearbeiten: op "create" (name, parent_id,
+        folder), "rename" (id, name), "delete" (id, weich wie Rekordbox selbst, siehe
+        rekordbox.delete_playlist()). Rekordbox muss geschlossen sein."""
+        payload = self._json_payload()
+        if payload is None:
+            return
+        op = str(payload.get("op") or "")
+        node_id = str(payload.get("id") or "")
+        name = str(payload.get("name") or "").strip()
+        if op == "create":
+            parent = str(payload.get("parent_id") or "") or None
+            folder = bool(payload.get("folder"))
+            fn = lambda: rekordbox_mod.create_playlist(name, parent, folder)   # noqa: E731
+        elif op == "rename" and node_id:
+            fn = lambda: rekordbox_mod.rename_playlist(node_id, name)          # noqa: E731
+        elif op == "delete" and node_id:
+            fn = lambda: rekordbox_mod.delete_playlist(node_id)                # noqa: E731
+        elif op == "move" and node_id:
+            parent = str(payload.get("parent_id") or "") or None
+            before = str(payload.get("before_id") or "") or None
+            fn = lambda: rekordbox_mod.move_playlist(node_id, parent, before)   # noqa: E731
+        else:
+            self._fail("Ungültige Anfrage")
+            return
+        if op in ("create", "rename") and not name:
+            self._fail("Kein Name angegeben")
+            return
+        result = self._rekordbox_write(fn)
+        if result is None:
+            return
+        audit_log.log("rekordbox", "", f"Playlist {op}: „{result.get('name') or name}\"")
+        self._json({"ok": True, **result})
+
+    def _music_call(self, fn, *args):
+        """AppleScript an Music.app ausserhalb von self.lock; Fehler als Antwort.
+        Liefert (True, Ergebnis) oder (False, None) -- dann ist die Antwort raus."""
+        try:
+            return True, fn(*args)
+        except Exception as exc:                     # noqa: BLE001
+            self._json({"ok": False, "error": str(exc)[:300]}, 500)
+            return False, None
+
+    def _post_music_playlist_edit(self) -> None:
+        """Playlisten-Baum in Music.app bearbeiten: op "create" (name, parent_id,
+        folder), "rename" (id, name), "delete" (id)."""
+        payload = self._json_payload()
+        if payload is None or not self._require_music(cfgmod.load()):
+            return
+        op = str(payload.get("op") or "")
+        node_id = str(payload.get("id") or "")
+        name = str(payload.get("name") or "").strip()
+        if op in ("create", "rename") and not name:
+            self._fail("Kein Name angegeben")
+            return
+        if op == "create":
+            ok, new_id = self._music_call(media.music_create_playlist, name,
+                                          str(payload.get("parent_id") or ""), bool(payload.get("folder")))
+            result = {"id": new_id, "name": name}
+        elif op == "rename" and node_id:
+            ok, _ = self._music_call(media.music_rename_playlist, node_id, name)
+            result = {"id": node_id, "name": name}
+        elif op == "delete" and node_id:
+            ok, _ = self._music_call(media.music_delete_playlist, node_id)
+            result = {"id": node_id}
+        elif op == "move" and node_id:
+            parent = str(payload.get("parent_id") or "")
+            ok, _ = self._music_call(media.music_move_playlist, node_id, parent)
+            result = {"id": node_id, "parent": parent or None}
+        else:
+            self._fail("Ungültige Anfrage")
+            return
+        if not ok:
+            return
+        audit_log.log("music", "", f"Playlist {op}: „{name or node_id}\"")
+        self._json({"ok": True, **result})
+
+    def _post_music_playlist_add(self) -> None:
+        """Bibliothekstracks einer Music.app-Playlist hinzufuegen. Nur Pfade mit
+        DB-Zeile; was Music.app nicht in seiner Mediathek findet, steht in
+        "missing" (der Client importiert solche Tracks vorher)."""
+        payload = self._json_payload()
+        if payload is None or not self._require_music(cfgmod.load()):
+            return
+        pid = str(payload.get("playlist_id") or "")
+        paths = [str(p) for p in (payload.get("paths") or []) if p]
+        if not pid or not paths:
+            self._fail("Keine Playlist oder keine Tracks angegeben")
+            return
+        items = []
+        for p in paths:
+            row = self._known_file(p)
+            if row is None:
+                self._reject_missing(p)
+                return
+            # Interpret/Groesse/Dauer fuer Eintraege, die Music nur noch in der Cloud fuehrt.
+            items.append((p, row["title"] or Path(p).stem, row["artist"] or "",
+                          int(row["size"] or 0), float(row["duration_s"] or 0)))
+        ok, flags = self._music_call(media.music_add_to_playlist, pid, items)
+        if not ok:
+            return
+        added = [p for p, hit in zip(paths, flags) if hit]
+        missing = [p for p, hit in zip(paths, flags) if not hit]
+        audit_log.log("music", "", f"{len(added)} zu Playlist {pid} hinzugefügt")
+        self._json({"ok": True, "added": added, "missing": missing})
+
+    def _post_music_playlist_remove(self) -> None:
+        """Tracks (persistent IDs) aus einer Music.app-Playlist entfernen, nicht aus
+        der Mediathek."""
+        payload = self._json_payload()
+        if payload is None or not self._require_music(cfgmod.load()):
+            return
+        pid = str(payload.get("playlist_id") or "")
+        ids = [str(i) for i in (payload.get("track_ids") or []) if i]
+        if not pid or not ids:
+            self._fail("Keine Playlist oder keine Tracks angegeben")
+            return
+        ok, removed = self._music_call(media.music_remove_from_playlist, pid, ids)
+        if not ok:
+            return
+        audit_log.log("music", "", f"{removed} aus Playlist {pid} entfernt")
+        self._json({"ok": True, "removed": removed})
 
     def _post_rekordbox_reorder(self) -> None:
         """Neue Gesamtreihenfolge einer Rekordbox-Playlist (Eintrags-IDs)."""
@@ -4405,7 +4838,8 @@ class _Handler(BaseHTTPRequestHandler):
                 if data:
                     source = "rekordbox"
                     lead = wavedetail_mod.lead(
-                        path, mtime, lambda mono, sr: rekordbox_mod.playback_lead(path, mono, sr))
+                        path, mtime, lambda mono, sr: rekordbox_mod.playback_lead(path, mono, sr),
+                        rekordbox_mod.lead_stamp(path))
             if not data:
                 data = wavedetail_mod.styled(path, mtime, columns)
         except Exception as exc:                       # noqa: BLE001
@@ -4414,6 +4848,25 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(200, data, "application/octet-stream",
                    {"X-Wave-Rate": str(wavedetail_mod.STYLED_RATE), "X-Wave-Lead": f"{lead:.4f}",
                     "X-Wave-Source": source, "X-Wave-Style": style, "X-Wave-Wanted": wanted})
+
+    def _get_wave_phrases(self) -> None:
+        """Phrasen fuer die Phrasen-Leiste der kleinen Wellenformen (Playlist-
+        Generator): nur TrackTabs eigener Stand -- Bearbeitung vor eigener Messung
+        bzw. Uebernahme (gridstore.own_inputs(), dieselbe Quelle wie Auto Cue).
+        Liest nur, uebernimmt nichts aus Rekordbox und misst nichts nach, darf
+        also fuer viele Tracks hintereinander laufen. Zeiten in Sekunden auf der
+        eigenen Zeitachse, wie die Cues mit cues_own."""
+        path = unquote(self._query().get("path", ""))
+        if not path or not self._authorize_fast(path):
+            self._reject_missing(path)
+            return
+        cfg = cfgmod.load()
+        conn = db_mod.connect(cfg)
+        try:
+            own = gridstore.own_inputs(conn, path)
+        finally:
+            conn.close()
+        self._json({"phrases": own["phrases"] or []})
 
     def _get_wave_color(self) -> None:
         """Farbige Gesamtansicht fuer Bearbeiten und Player nach waveform_style, immer
@@ -4451,10 +4904,11 @@ class _Handler(BaseHTTPRequestHandler):
     @staticmethod
     def _wave_lead(path: str, cfg: dict) -> float:
         """Versatz zu Rekordbox in s, siehe wavedetail.lead()."""
-        lead_fn = None
+        lead_fn, stamp = None, ""
         if str(cfg.get("beatgrid_source") or "fallback") != "tracktab":
             lead_fn = lambda mono, sr: rekordbox_mod.playback_lead(path, mono, sr)
-        return wavedetail_mod.lead(path, os.path.getmtime(path), lead_fn)
+            stamp = rekordbox_mod.lead_stamp(path)
+        return wavedetail_mod.lead(path, os.path.getmtime(path), lead_fn, stamp)
 
     def _dj_track_payload(self, path: str, cfg: dict) -> dict:
         """Was der DJ-Editor je Track braucht, alles auf der eigenen Zeitachse:
@@ -4697,6 +5151,7 @@ class _Handler(BaseHTTPRequestHandler):
             payload = json.loads(self._body(100_000).decode("utf-8"))
             path, action = str(payload["path"]), str(payload["action"])
             names = [f for f in (payload.get("fields") or db_mod.DJ_TRACK_FIELDS) if f in db_mod.DJ_TRACK_FIELDS]
+            session = str(payload.get("session") or "")
         except (ValueError, KeyError, TypeError) as exc:
             self._fail(f"Ungültige Anfrage: {exc}")
             return
@@ -4711,13 +5166,27 @@ class _Handler(BaseHTTPRequestHandler):
             # schreiben, auch keine Sicherung der master.db.
             result = {"added": False, "written": [], "skipped": []}
         elif action in ("update", "add"):
-            done = self._dj_write_rekordbox(path, action, names, row, cfg)
+            with rekordbox_mod.backup_session(session):
+                done = self._dj_write_rekordbox(path, action, names, row, cfg)
             if done is None:
                 return                    # Antwort ist schon raus
             result = done
         elif action not in ("load", "keep"):
             self._fail("Unbekannte Aktion")
             return
+        self._dj_rb_after(path, action, names, result, cfg)
+        if action == "add":
+            self._rebuild(cfg)
+        if action == "load":
+            # Eine fruehere Uebernahme folgt dem neu geladenen Rekordbox-Stand.
+            gridstore.seed_from_rekordbox(cfg, path, self.lock, refresh=True)
+        audit_log.log(f"rekordbox-dj-{action}", path, ",".join(result.get("written", names)))
+        self._json({"ok": True, **result, **self._dj_track_payload(path, cfg)})
+
+    def _dj_rb_after(self, path: str, action: str, names: list, result: dict, cfg: dict) -> None:
+        """Nacharbeit nach einem Abgleich (load/keep/update/add): Pruefsummen in rb_base,
+        Analyse-Sperren, rb_snapshot, Praesenz-Cache. Gemeinsam fuer DJ-Knoepfe und
+        Playlist-Weg. Liest Rekordbox ohne Lock, schreibt unter self.lock."""
         state = rekordbox_mod.track_state(path)
         hashes = _dj_rb_hashes(state)
         with self.lock:
@@ -4755,39 +5224,139 @@ class _Handler(BaseHTTPRequestHandler):
                     db_mod.mark_rekordbox_present(conn, [path])
             finally:
                 conn.close()
-        if action == "add":
-            self._rebuild(cfg)
-        if action == "load":
-            # Eine fruehere Uebernahme folgt dem neu geladenen Rekordbox-Stand.
-            gridstore.seed_from_rekordbox(cfg, path, self.lock, refresh=True)
-        audit_log.log(f"rekordbox-dj-{action}", path, ",".join(result.get("written", names)))
-        self._json({"ok": True, **result, **self._dj_track_payload(path, cfg)})
 
     def _dj_write_rekordbox(self, path: str, action: str, names: list, row, cfg: dict) -> dict | None:
         """Eigene Fassung auf Rekordbox' Zeitachse bringen und schreiben. None = die
         Fehlerantwort ist schon raus."""
+        try:
+            prep = self._dj_rb_prepare(path, action, names, row, cfg)
+        except Exception as exc:                       # noqa: BLE001
+            self._fail(f"Wellenform fehlgeschlagen: {exc}", 500)
+            return None
+        try:
+            with self._rekordbox_lock:
+                if action == "add":
+                    return rekordbox_mod.add_track(path, row, prep["cues"], beats=prep["beats"],
+                                                   phrases=prep["phrases"], lead=prep["lead"],
+                                                   audio_start_ms=prep["audio_start_ms"])
+                return rekordbox_mod.update_track(path, cues=prep["cues"], beats=prep["beats"],
+                                                  phrases=prep["phrases"],
+                                                  audio_start_ms=prep["audio_start_ms"])
+        except rekordbox_mod.RekordboxRunning as exc:
+            self._json({"ok": False, "error": str(exc), "sticky": True}, 409)
+        except Exception as exc:                       # noqa: BLE001
+            self._fail(str(exc), 500)
+        return None
+
+    def _rb_lead(self, path: str, cfg: dict) -> float:
+        """Versatz zu Rekordbox fuers Schreiben. Ein falscher Wert fuehrt hier zu
+        falschen Daten in Rekordbox. Frueher wurde deshalb vor jedem Schreiben neu
+        gemessen (ffmpeg, rund 0,4 s je Track); jetzt haengt der gemerkte Wert an
+        Rekordbox' Wellenform (rekordbox.lead_stamp() in _wave_lead()): hat Rekordbox
+        inzwischen analysiert, passt er nicht mehr und es wird neu gemessen. Derselbe
+        Zwischenspeicher wie beim Oeffnen im DJ-Editor."""
+        return self._wave_lead(path, cfg)
+
+    def _dj_update_fields(self, path: str, names: list, state: dict, cfg: dict) -> list:
+        """Welche Felder "Rekordbox Update" fuer einen Track schreibt: bearbeitete und
+        TrackTabs eigene Analyse, die angezeigt wird (Quelle "tracktab"). Dieselbe Regel
+        wie djRekordboxRun() mit /api/dj-track, nur ohne Wellenform/Versatz."""
+        source = str(cfg.get("beatgrid_source") or "fallback")
+        use_rb = source != "tracktab"
+        conn = db_mod.connect(cfg)
+        try:
+            edits = db_mod.get_dj_track(conn, path)
+            stored = db_mod.get_phrases(conn, path) if source != "rekordbox" else None
+            snap = db_mod.get_rb_snapshot(conn, path)
+        finally:
+            conn.close()
+
+        def rb_value(field):
+            if not use_rb:
+                return []
+            return snap[field] if snap and snap[field] is not None else state.get(field) or []
+
+        own = {
+            "grid": (not rb_value("grid") and bool(stored and stored["beats"])
+                     and gridstore.grid_origin(stored) != gridstore.ORIGIN_REKORDBOX),
+            "phrases": (not rb_value("phrases") and bool(stored and stored["phrases"])
+                        and gridstore.phrases_origin(stored) != gridstore.ORIGIN_REKORDBOX),
+            "cues": False,
+        }
+        return [f for f in names if edits[f] is not None or own.get(f)]
+
+    def _post_dj_rekordbox_batch(self) -> None:
+        """"Rekordbox Update" fuer viele Tracks in einem Aufruf: einmal oeffnen, einmal
+        sichern (backup_session), je Track eine Transaktion (rekordbox.update_tracks()).
+        Der Client schickt Abschnitte von einigen Tracks und dasselbe "session"-Token
+        fuer die ganze Aktion. Messen ohne Lock, Schreiben unter _rekordbox_lock."""
+        payload = self._json_payload()
+        if payload is None:
+            return
+        paths = [str(p) for p in (payload.get("paths") or []) if p]
+        session = str(payload.get("session") or "")
+        if not paths or len(paths) > 200:
+            self._fail("Keine oder zu viele Tracks angegeben")
+            return
+        cfg = cfgmod.load()
+        names = list(db_mod.DJ_TRACK_FIELDS)
+        items, skipped, errors = [], [], {}
+        for p in paths:
+            row = self._known_file(p)
+            if row is None:
+                errors[p] = "Datei unbekannt oder nicht mehr vorhanden"
+                continue
+            state = rekordbox_mod.track_state(p)
+            fields = self._dj_update_fields(p, names, state, cfg) if state.get("present") else []
+            if not fields:
+                skipped.append(p)
+                continue
+            try:
+                prep = self._dj_rb_prepare(p, "update", fields, row, cfg)
+            except Exception as exc:                 # noqa: BLE001
+                errors[p] = f"Wellenform fehlgeschlagen: {exc}"[:300]
+                continue
+            items.append({"path": p, **prep, "fields": fields})
+        result = {"results": {}, "errors": {}, "stopped": ""}
+        if items:
+            try:
+                with rekordbox_mod.backup_session(session), self._rekordbox_lock:
+                    result = rekordbox_mod.update_tracks(items)
+            except rekordbox_mod.RekordboxRunning as exc:
+                self._json({"ok": False, "error": str(exc), "sticky": True}, 409)
+                return
+            except Exception as exc:                 # noqa: BLE001
+                self._fail(str(exc), 500)
+                return
+        fields_of = {it["path"]: it["fields"] for it in items}
+        for p, res in result["results"].items():
+            self._dj_rb_after(p, "update", fields_of.get(p, names), res, cfg)
+            audit_log.log("rekordbox-dj-update", p, ",".join(res.get("written", [])))
+        done = [p for p, res in result["results"].items() if res.get("written")]
+        skipped += [p for p, res in result["results"].items() if not res.get("written")]
+        self._json({"ok": True, "done": done, "skipped": skipped,
+                    "errors": {**errors, **result["errors"]}, "stopped": result["stopped"]})
+
+    def _dj_rb_prepare(self, path: str, action: str, names: list, row, cfg: dict) -> dict:
+        """TrackTabs Fassung (Bearbeitung, sonst eigene Analyse) auf Rekordbox' Zeitachse:
+        {cues, beats, phrases, lead (Samples, nur bei "add"), audio_start_ms}. Ohne Lock,
+        misst den Versatz (ffmpeg). Gemeinsam fuer DJ-Knoepfe und Playlist-Weg
+        (_post_rekordbox_add_playlist()). Wirft bei einem Messfehler."""
         conn = db_mod.connect(cfg)
         try:
             edits = db_mod.get_dj_track(conn, path)
             stored = db_mod.get_phrases(conn, path)
         finally:
             conn.close()
-        # Frisch messen: Rekordbox kann den Track analysiert haben, seit der Versatz
-        # im Zwischenspeicher liegt, und hier fuehrt ein falscher Wert zu falschen Daten.
         # Beim Neuanlegen gibt es nichts zu messen, dort gilt die Regel aus dem Dateikopf.
-        wavedetail_mod.forget(path)
         lead_samples = None
-        try:
-            if action == "add":
-                info = row if row is not None else vars(probe_mod.probe(path))
-                lead_samples = anlzwrite_mod.lead_samples(path, info["codec_family"] or "")
-            if lead_samples is not None:
-                lead = lead_samples / (info["sample_rate"] or 44100)
-            else:
-                lead = self._wave_lead(path, cfg)
-        except Exception as exc:                       # noqa: BLE001
-            self._fail(f"Wellenform fehlgeschlagen: {exc}", 500)
-            return None
+        if action == "add":
+            info = row if row is not None else vars(probe_mod.probe(path))
+            lead_samples = anlzwrite_mod.lead_samples(path, info["codec_family"] or "")
+        if lead_samples is not None:
+            lead = lead_samples / (info["sample_rate"] or 44100)
+        else:
+            lead = self._rb_lead(path, cfg)
 
         def rb_time(t):
             return round(float(t) + lead, 4)
@@ -4824,18 +5393,8 @@ class _Handler(BaseHTTPRequestHandler):
             cue_items = [{**c, "position_s": cue_time(c["position_s"]),
                           "loop_s": rb_time(c["loop_s"]) if c.get("loop_s") is not None else None,
                           "bpm": bpm_at(c["position_s"])} for c in edits["cues"]]
-        try:
-            with self._rekordbox_lock:
-                if action == "add":
-                    return rekordbox_mod.add_track(path, row, cue_items, beats=beats, phrases=phrase_items,
-                                                   lead=lead_samples, audio_start_ms=int(round(lead * 1000)))
-                return rekordbox_mod.update_track(path, cues=cue_items, beats=beats, phrases=phrase_items,
-                                                  audio_start_ms=int(round(lead * 1000)))
-        except rekordbox_mod.RekordboxRunning as exc:
-            self._json({"ok": False, "error": str(exc), "sticky": True}, 409)
-        except Exception as exc:                       # noqa: BLE001
-            self._fail(str(exc), 500)
-        return None
+        return {"cues": cue_items, "beats": beats, "phrases": phrase_items,
+                "lead": lead_samples, "audio_start_ms": int(round(lead * 1000))}
 
     def _post_phrases(self) -> None:
         """Beatgrid und Phrasen messen (phrases.py) -- fuer EINEN Pfad, je Datei
@@ -4875,8 +5434,31 @@ class _Handler(BaseHTTPRequestHandler):
             return {"ok": True, "status": "locked", "path": path}
         minutes = int(cfg.get("bpmkey_max_minutes") or 10)
         mode = str(mode or cfg.get("phrase_grid_mode") or "auto")
+        current = None
+        # Nur Phrasen gewuenscht und ein Grid vorhanden: auf genau diesem messen, statt ein
+        # eigenes zu suchen und die Phrasen danach einrasten zu lassen. Findet
+        # beatgrid.analyse() kein Tempo (Uebergaenge, Tempowechsel), gibt es trotzdem
+        # Phrasen, sobald das Grid von Hand gesetzt ist. Ebenso, wenn Grid UND Phrasen
+        # gewuenscht waren, aber kein Tempo zu finden ist ("no_tempo" in der Antwort).
+        no_tempo = False
+
+        def on_grid(grid):
+            tempo = gridstore.beats_with_tempo(grid["beats"], grid.get("segments") or [], 0.0)
+            return phrases_mod.analyse_on_grid(path, tempo, minutes * 60)
+
         try:
-            result = phrases_mod.analyse(path, mode, minutes * 60)
+            result = None
+            if "grid" not in wanted:
+                current = self._dj_track_payload(path, cfg)
+                if current["grid"]["beats"]:
+                    result = on_grid(current["grid"])
+            if result is None:
+                result = phrases_mod.analyse(path, mode, minutes * 60)
+            if result is None and "phrases" in wanted:
+                current = current or self._dj_track_payload(path, cfg)
+                if current["grid"]["beats"]:
+                    result = on_grid(current["grid"])
+                    wanted, no_tempo = {"phrases"}, result is not None
         except phrases_mod.TooLongError:
             return {"ok": True, "status": "skipped", "reason": "too_long", "minutes": minutes}
         if not result or ("phrases" in wanted and not result["phrases"]):
@@ -4886,7 +5468,7 @@ class _Handler(BaseHTTPRequestHandler):
         # das Ergebnis gilt sofort als Stand des Tracks, ohne zu sperren.
         fields: dict = {}
         if apply or wanted != {"grid", "phrases"}:
-            current = self._dj_track_payload(path, cfg)
+            current = current or self._dj_track_payload(path, cfg)
             if "grid" not in wanted and current["grid"]["beats"]:
                 result = {**result, "phrases": _snap_phrases(result["phrases"], current["grid"]["beats"], True)}
             if apply:
@@ -4907,7 +5489,8 @@ class _Handler(BaseHTTPRequestHandler):
                     db_mod.save_dj_track(conn, path, fields, base, auto_lock=False)
             finally:
                 conn.close()
-        return {"ok": True, "status": "done", "path": path, "uncertain": result["uncertain"]}
+        return {"ok": True, "status": "done", "path": path, "uncertain": result["uncertain"],
+                "no_tempo": no_tempo}
 
     def _autocue_inputs(self, path: str, cfg: dict) -> dict:
         """Grid und Phrasen fuer Auto Cue: TrackTabs eigener Stand (Bearbeitung, dann
@@ -5961,32 +6544,147 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._json({"ok": True, "slots": slots})
 
+    def _autocue_models_reply(self, **extra) -> None:
+        self._json({"ok": True, "models": settings_mod.autocue_models_info(), **extra})
+
     def _post_autocue_model_import(self) -> None:
-        """Auto-Cue-Modell als ZIP laden (Einstellungen -> Auto Cue, autocue/package.py).
-        Koerper = die ZIP-Datei. Es gilt, solange es juenger ist als das mitgelieferte."""
+        """Auto-Cue-Modell als ZIP in die Modellbibliothek laden (autocue/package.py).
+        Koerper = die ZIP-Datei, Name optional per ?name=. Gilt erst nach Auswahl
+        (ausser es ist das erste Modell)."""
+        name = unquote(self._query().get("name", ""))
         try:
             data = self._body(160 * 1024 * 1024)
-            manifest = autocue_package.install(data, autocue_mod.trained_dir(),
-                                               str(cfgmod.resolve("backup") / "autocue-models" / "loaded"))
+            model_id, manifest = autocue_package.install(data, name)
         except ValueError as exc:                      # auch autocue_package.PackageError
             self._fail(str(exc))
             return
         except OSError as exc:
             self._fail(f"Modell konnte nicht gespeichert werden: {exc}", 500)
             return
-        audit_log.log("autocue-model-import", autocue_mod.trained_dir(), str(manifest.get("trained_at")))
-        active = autocue_mod.model_dir() == autocue_mod.trained_dir()
-        self._json({"ok": True, "active": active, "model": settings_mod._autocue_model_info()})
+        audit_log.log("autocue-model-import", model_id, str(manifest.get("trained_at")))
+        self._autocue_models_reply(id=model_id)
 
-    def _post_autocue_model_remove(self) -> None:
-        """Geladenes Modell entfernen (gesichert); danach gilt das mitgelieferte."""
+    def _autocue_model_payload(self) -> dict:
+        payload = json.loads(self._body(10_000).decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise ValueError("Ungültige Anfrage")
+        return payload
+
+    def _post_autocue_model_select(self) -> None:
+        """Geltendes Modell waehlen (id der Bibliothek)."""
         try:
-            removed = autocue_package.remove(autocue_mod.trained_dir(),
-                                             str(cfgmod.resolve("backup") / "autocue-models" / "loaded"))
-        except OSError as exc:
-            self._fail(f"Modell konnte nicht entfernt werden: {exc}", 500)
+            model_id = settings_mod.save_autocue_model(self._autocue_model_payload().get("id"))
+        except ValueError as exc:
+            self._fail(str(exc))
             return
-        self._json({"ok": True, "removed": removed, "model": settings_mod._autocue_model_info()})
+        self._autocue_models_reply(active=model_id)
+
+    def _post_autocue_model_rename(self) -> None:
+        from .autocue import library as autocue_library
+        try:
+            payload = self._autocue_model_payload()
+            autocue_library.rename(str(payload.get("id") or ""), payload.get("name"))
+        except ValueError as exc:
+            self._fail(str(exc))
+            return
+        except OSError as exc:
+            self._fail(f"Modell konnte nicht umbenannt werden: {exc}", 500)
+            return
+        self._autocue_models_reply()
+
+    def _post_autocue_model_delete(self) -> None:
+        """Eigenes Modell in die Sicherung verschieben; galt es, gilt danach der juengste verbliebene."""
+        from .autocue import library as autocue_library
+        try:
+            model_id = str(self._autocue_model_payload().get("id") or "")
+            autocue_library.delete(model_id, str(cfgmod.resolve("backup") / "autocue-models" / "deleted"))
+        except ValueError as exc:
+            self._fail(str(exc))
+            return
+        except OSError as exc:
+            self._fail(f"Modell konnte nicht gelöscht werden: {exc}", 500)
+            return
+        audit_log.log("autocue-model-delete", model_id, "")
+        self._autocue_models_reply()
+
+    def _post_autocue_train(self, check_only: bool = False) -> None:
+        """Training in der App (autocue/training/job.py). check_only: nur zaehlen, wie
+        viele Tracks taugen. Koerper {name, training, check (Anzeigenamen),
+        training_paths, check_paths}: die Pfade schickt der Client, weil nur er den
+        Inhalt smarter Playlisten kennt; genutzt wird davon nur, was als Track mit
+        Hand-Cues in der DB steht (dataset.candidates()), fremde Pfade sind wirkungslos.
+        Was woraus gelernt wird, kommt aus der gespeicherten Slot-Belegung. Laeuft im
+        Hintergrund, ohne self.lock."""
+        from .autocue.training import job as autocue_job
+
+        def path_list(raw):
+            if raw is None:
+                return None
+            if not isinstance(raw, list):
+                raise ValueError("Ungültige Trackliste")
+            return [str(p) for p in raw if isinstance(p, str) and p][:200_000]
+
+        try:
+            payload = json.loads(self._body(64 * 1024 * 1024).decode("utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("Ungültige Anfrage")
+            params = {"training": str(payload.get("training") or "")[:300],
+                      "check": str(payload.get("check") or "")[:300],
+                      "training_paths": path_list(payload.get("training_paths")),
+                      "check_paths": path_list(payload.get("check_paths")),
+                      "name": str(payload.get("name") or "")}
+        except ValueError as exc:
+            self._fail(str(exc))
+            return
+        cfg = cfgmod.load()
+        if check_only:
+            self._json(autocue_job.TrainJob.check(cfg, params))
+            return
+        try:
+            state = autocue_job.JOB.start(cfg, params)
+        except (autocue_job.JobError, ValueError) as exc:
+            self._fail(str(exc))
+            return
+        audit_log.log("autocue-train", params["training"], params["name"])
+        self._json({"ok": True, **state})
+
+    def _get_autocue_model_export(self) -> None:
+        """Ein Modell als ZIP herunterladen (zum Weitergeben, Import auf einem anderen Rechner)."""
+        from .autocue import library as autocue_library
+        model_id = unquote(self._query().get("id", ""))
+        entry = next((e for e in autocue_library.entries() if e["id"] == model_id), None)
+        if entry is None:
+            self._send(404, "Modell nicht gefunden".encode("utf-8"), "text/plain; charset=utf-8")
+            return
+        label = entry["name"] or "TrackTab"
+        stamp = (entry["trained_at"] or "")[:10]
+        safe = "".join(c for c in f"Auto-Cue-Modell {label} {stamp}".strip()
+                       if c not in ('\r', '\n', '"', "/", "\\", ":"))[:120] + ".zip"
+        ascii_name = safe.encode("ascii", "replace").decode("ascii").replace("?", "_")
+        fd, tmp_path = tempfile.mkstemp(suffix=".zip")
+        os.close(fd)
+        try:
+            autocue_package.export(model_id, tmp_path)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Length", str(os.path.getsize(tmp_path)))
+            self.send_header("Content-Disposition",
+                             f'attachment; filename="{ascii_name}"; '
+                             f"filename*=UTF-8''{quote(safe, safe='')}")
+            self._security_headers()
+            self.end_headers()
+            with open(tmp_path, "rb") as fh:
+                try:
+                    shutil.copyfileobj(fh, self.wfile, _CHUNK)
+                except (BrokenPipeError, ConnectionResetError):
+                    return
+        except (ValueError, OSError) as exc:
+            self._send(500, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
+        finally:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
 
     def _post_playlist(self) -> None:
         """Einen Baumknoten anlegen, aendern, verschieben oder loeschen.
@@ -6481,6 +7179,13 @@ class _Handler(BaseHTTPRequestHandler):
                             "error": "Es läuft noch ein Scan."}, 409)
                 return
             SCAN.cancel()
+        from .autocue.training import job as autocue_job
+        if autocue_job.JOB.is_running():
+            if not force:
+                self._json({"ok": False, "training_running": True,
+                            "error": "Es läuft noch ein Auto-Cue-Training."}, 409)
+                return
+            autocue_job.JOB.cancel()
 
         if not request_stop(delay=0.4):
             self._fail("Der Server läuft nicht über serve() und kann sich "

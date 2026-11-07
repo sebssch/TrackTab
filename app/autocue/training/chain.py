@@ -29,9 +29,12 @@ import time
 import numpy as np
 
 from app.autocue.learned import (CHAIN_FEATURE_VERSION, CHAIN_FILES, EVIDENCE_COLS, MIN_PROB,
-                                 OUTRO_MIN_LEVEL, build_design_matrix, chain_matrix, chain_window,
-                                 level_after, position_labels)
+                                 OUTRO_CANDIDATE_BARS, OUTRO_DEFAULT_BARS, OUTRO_FULL_RANGE, OUTRO_MIN_LEVEL,
+                                 build_design_matrix, chain_matrix, chain_window, level_after,
+                                 position_labels)
 from app.autocue.training import boost
+from app.autocue.training.base import Cancelled
+from app.autocue.training.labels import DEFAULT_LABEL_SLOTS
 
 LGB_PARAMS = {
     "objective": "binary",
@@ -56,7 +59,10 @@ BREAK1_MODE = "ensemble"     # Laufzeit: Break 1 aus Kette x Grundmodell
 
 
 class Track:
-    __slots__ = ("key", "X", "names", "rms", "n", "beats", "a", "c", "mem", "labels", "phrases")
+    # a/c: Break 1/Drop 2 als Bezug (Hand-Cues), a_label: Break 1, daraus lernt das
+    # Break-1-Kettenmodell.
+    __slots__ = ("key", "X", "names", "rms", "n", "beats", "a", "c", "mem", "labels", "phrases", "end",
+                 "a_label")
 
     def __init__(self, **kw):
         for k, v in kw.items():
@@ -68,27 +74,47 @@ class Track:
         return abs(int(self.beats[pred]) - int(self.beats[truth])) <= HIT_BEATS
 
 
-def load_tracks(files: list[str], seed: int, log=print) -> list[Track]:
+def load_tracks(files: list[str], seed: int, log=print, label_slots: dict | None = None,
+                cancel=None, memory_roles=None) -> list[Track]:
+    """label_slots: Hot-Cue-Zuordnung (labels.learn_plan()["hot"]), Drop 2 ist Pflicht
+    (der Bezug). Rollen der Kette mit eigenem Hot Cue (Drop 1, Break 2, Outro) nehmen
+    ihr Label aus diesem Slot, Rollen in memory_roles aus den Memory Cues
+    (position_labels()), alle uebrigen bekommen keines (None = wie frueher alle aus
+    den Memory Cues). Ein Track ohne Drop 2 faellt heraus."""
+    ls = label_slots or DEFAULT_LABEL_SLOTS
+    c_slot = ls["drop2"]
+    direct = {r: int(ls[r]) for r in ("drop1", "break2", "outro_start") if r in ls}
     rng = np.random.default_rng(seed)
     tracks: list[Track] = []
     base_names = None
     for path in files:
+        if cancel is not None and cancel():
+            raise Cancelled()
         try:
             with np.load(path) as d:
                 names = json.loads(str(d["names"]))
                 kinds, bars = d["hot_kinds"].tolist(), d["hot_bars"].tolist()
-                if 3 not in kinds or "rms" not in names:
+                if "rms" not in names:
                     continue
-                a = int(bars[kinds.index(1)]) if 1 in kinds else None
-                c = int(bars[kinds.index(3)])
+                if c_slot not in kinds:
+                    continue                       # Drop 2 fehlt hier: kein Bezug
+                hand = {r: int(bars[kinds.index(s)]) for r, s in ls.items() if s in kinds}
+                end = int(d["music_end"]) if "music_end" in d.files and int(d["music_end"]) >= 0 else None
+                curves = {k: d[k].copy() for k in EVIDENCE_COLS}
+                a, c = hand.get("break1"), hand["drop2"]
                 mem = {int(b) for b in d["mem_bars"]}
                 has = bool(d["has_phrases"])
-                curves = {k: d[k].copy() for k in EVIDENCE_COLS}
                 if has:
                     labels = position_labels(curves["ev_drop_hint"], curves["ev_break_hint"],
-                                             curves["ev_build_hint"], mem, a, c)
+                                             curves["ev_build_hint"], mem, a, c, end)
                 else:
-                    labels = position_labels(None, None, None, mem, a, c)
+                    labels = position_labels(None, None, None, mem, a, c, end)
+                for role in ("drop1", "break2", "outro_start"):
+                    if role in direct:
+                        slot = direct[role]
+                        labels[role] = int(bars[kinds.index(slot)]) if slot in kinds else None
+                    elif memory_roles is not None and role not in memory_roles:
+                        labels[role] = None
                 visible = has
                 if has and rng.random() < PHRASE_DROPOUT:
                     for k in curves:
@@ -102,14 +128,15 @@ def load_tracks(files: list[str], seed: int, log=print) -> list[Track]:
                 tracks.append(Track(key=os.path.basename(path), X=X, names=fn,
                                     rms=d["matrix"][:, names.index("rms")].astype(np.float64),
                                     n=int(X.shape[0]), beats=d["bar_start_beats"].astype(np.int64),
-                                    a=a, c=c, mem=mem, labels=labels, phrases=visible))
+                                    a=a, c=c, mem=mem, labels=labels, phrases=visible, end=end,
+                                    a_label=hand.get("break1")))
         except Exception as exc:                   # noqa: BLE001
             log(f"  uebersprungen {os.path.basename(path)}: {type(exc).__name__}: {exc}")
     return tracks
 
 
-def _rows(t: Track, role: str, d1, label):
-    win = chain_window(role, t.n, t.c, d1)
+def _rows(t: Track, role: str, d1, label, outro_bars: tuple = OUTRO_CANDIDATE_BARS):
+    win = chain_window(role, t.n, t.c, d1, outro_bars, t.end)
     if not win:
         return None
     Xc, cn = chain_matrix(role, t.X, t.names, t.c, d1, t.rms)
@@ -169,16 +196,54 @@ def _positive(items):
     return [it for it in items if it is not None and it[1].sum() > 0]
 
 
+def learned_outro(tracks: list[Track]) -> tuple[tuple, int]:
+    """Outro-Suchbereich und Abstand der Regel fuer ein eigenes Training: gesucht wird
+    im ganzen Bereich nach Drop 2 (OUTRO_FULL_RANGE, begrenzt durch den Ausklang je
+    Track), die Regel nimmt den Median der eigenen Outro-Labels (auf 8 Takte
+    gerundet). Unter 20 Labels bleibt es bei OUTRO_DEFAULT_BARS."""
+    offs = [t.labels["outro_start"] - t.c for t in tracks
+            if t.labels["outro_start"] is not None and t.labels["outro_start"] > t.c]
+    if len(offs) < 20:
+        return OUTRO_FULL_RANGE, OUTRO_DEFAULT_BARS
+    mid = float(np.median(offs))
+    return OUTRO_FULL_RANGE, int(min(OUTRO_FULL_RANGE, key=lambda k: abs(k - mid)))
+
+
 def train(files: list[str], out_dir: str, n_folds: int = 5, seed: int = 42, save: bool = True,
-          log=print, min_tracks: int = 20, min_labels: int = 10) -> dict:
+          log=print, min_tracks: int = 20, min_labels: int = 10, label_slots: dict | None = None,
+          progress=None, cancel=None, memory_roles=None) -> dict:
+    """label_slots/memory_roles: was woraus gelernt wird (labels.learn_plan());
+    progress(done, total) je Faltung und Endmodell; cancel() -> True bricht ab
+    (base.Cancelled). Rollen mit weniger als min_labels Beispielen bekommen kein
+    Modell (z. B. ohne Memory Cues) -- Auto Cue nimmt dann die Strukturanalyse."""
     t_start = time.time()
-    tracks = load_tracks(files, seed, log)
+    tracks = load_tracks(files, seed, log, label_slots, cancel, memory_roles)
+    # Outro: ganzer Bereich nach Drop 2 bis zum Ausklang, Abstand der Regel aus den
+    # eigenen Outro-Labels (frueher fest 8..32 Takte, Regel +16).
+    outro_bars, outro_default = learned_outro(tracks)
+    log(f"  Outro: gesucht +8..+{outro_bars[-1]} Takte nach Drop 2 bis zum Ausklang, "
+        f"Regel +{outro_default} Takte")
+    steps, step = 2 * n_folds + (4 if save else 0), 0
+
+    def tick() -> None:
+        nonlocal step
+        step += 1
+        if progress:
+            progress(step, steps)
+        if cancel is not None and cancel():
+            raise Cancelled()
     n_lab = {r: sum(1 for t in tracks if t.labels[r] is not None) for r in ("drop1", "break2", "outro_start")}
     log(f"\nAnker-Kette: {len(tracks)} Tracks mit Hot C; Labels: Drop 1 {n_lab['drop1']}, "
         f"Break 2 {n_lab['break2']}, Outro {n_lab['outro_start']}, "
         f"Hot A {sum(1 for t in tracks if t.a is not None)}")
-    if len(tracks) < min_tracks or min(n_lab.values()) < min_labels:
-        raise RuntimeError("zu wenige Tracks bzw. Labels fuer die Anker-Kette")
+    if len(tracks) < min_tracks:
+        raise RuntimeError("zu wenige Tracks fuer die Anker-Kette")
+    skipped = [r for r, n in n_lab.items() if n < max(1, min_labels)]
+    for role in skipped:
+        for t in tracks:
+            t.labels[role] = None
+        log(f"  {role}: {n_lab[role]} Beispiele -- kein eigenes Modell"
+            + (" (Outro per Regel)" if role == "outro_start" else " (Strukturanalyse)"))
 
     folds = boost.folds(len(tracks), n_folds, seed)
     best_iters: dict[str, list[int]] = {r: [] for r in CHAIN_FILES}
@@ -209,13 +274,14 @@ def train(files: list[str], out_dir: str, n_folds: int = 5, seed: int = 42, save
                 oof["drop1"].append((t, t.hit(bar, t.labels["drop1"]), p))
         log(f"  Faltung {fold}/{n_folds} Drop 1: {booster.best_iteration if booster else 0} Runden, "
             f"{time.time() - t0:.0f}s")
+        tick()
 
     # Drop 1 fuer Tracks ohne Label: der Memory Cue, den das Modell am hoechsten bewertet
     d1_train: dict[int, int] = {}
     for i, t in enumerate(tracks):
         if t.labels["drop1"] is not None:
             d1_train[i] = t.labels["drop1"]
-        elif t.a is not None and i in d1_curve:
+        elif t.a is not None and i in d1_curve and d1_curve[i][1] is not None:
             win, curve = d1_curve[i]
             cands = [(curve[j], b) for j, b in enumerate(win) if b in t.mem and b > t.a]
             if cands:
@@ -225,10 +291,10 @@ def train(files: list[str], out_dir: str, n_folds: int = 5, seed: int = 42, save
     rule_results = []
     for fold, (tr, va) in enumerate(folds, 1):
         t0 = time.time()
-        tr_items = _positive(_rows(tracks[i], "break1", d1_train[i], tracks[i].a)
-                             for i in tr if i in d1_train and tracks[i].a is not None)
-        va_items = {int(i): _rows(tracks[i], "break1", d1_pred.get(int(i)), tracks[i].a)
-                    for i in va if tracks[i].a is not None and d1_pred.get(int(i)) is not None}
+        tr_items = _positive(_rows(tracks[i], "break1", d1_train[i], tracks[i].a_label)
+                             for i in tr if i in d1_train and tracks[i].a_label is not None)
+        va_items = {int(i): _rows(tracks[i], "break1", d1_pred.get(int(i)), tracks[i].a_label)
+                    for i in va if tracks[i].a_label is not None and d1_pred.get(int(i)) is not None}
         booster = _train(tr_items, _positive(va_items.values()))
         if booster is not None:
             best_iters["break1"].append(boost.best_iteration(booster, N_ROUNDS))
@@ -236,11 +302,11 @@ def train(files: list[str], out_dir: str, n_folds: int = 5, seed: int = 42, save
             feature_names["break1"] = tr_items[0][4]
         for i in va:
             t = tracks[i]
-            if t.a is None:
+            if t.a_label is None:
                 continue
             it = va_items.get(int(i))
             bar, p, _ = _pick(booster, it) if it is not None else (None, 0.0, None)
-            oof["break1"].append((t, t.hit(bar, t.a), p))
+            oof["break1"].append((t, t.hit(bar, t.a_label), p))
 
         tr_items = _positive(_rows(tracks[i], "break2", tracks[i].labels["drop1"], tracks[i].labels["break2"])
                              for i in tr if tracks[i].labels["break2"] is not None)
@@ -259,10 +325,11 @@ def train(files: list[str], out_dir: str, n_folds: int = 5, seed: int = 42, save
             bar, p, _ = _pick(booster, it) if it is not None else (None, 0.0, None)
             oof["break2"].append((t, t.hit(bar, t.labels["break2"]), p))
 
-        tr_items = _positive(_rows(tracks[i], "outro_start", None, tracks[i].labels["outro_start"])
+        tr_items = _positive(_rows(tracks[i], "outro_start", None, tracks[i].labels["outro_start"], outro_bars)
                              for i in tr if tracks[i].labels["outro_start"] is not None)
         va_idx = [int(i) for i in va if tracks[i].labels["outro_start"] is not None]
-        va_items = {i: _rows(tracks[i], "outro_start", None, tracks[i].labels["outro_start"]) for i in va_idx}
+        va_items = {i: _rows(tracks[i], "outro_start", None, tracks[i].labels["outro_start"], outro_bars)
+                    for i in va_idx}
         booster = _train(tr_items, _positive(va_items.values()))
         if booster is not None:
             best_iters["outro_start"].append(boost.best_iteration(booster, N_ROUNDS))
@@ -272,13 +339,15 @@ def train(files: list[str], out_dir: str, n_folds: int = 5, seed: int = 42, save
             t = tracks[i]
             truth = t.labels["outro_start"]
             level = level_after(t.rms, t.c)
-            loud = [b for b in chain_window("outro_start", t.n, t.c) if level[b] >= OUTRO_MIN_LEVEL]
+            loud = [b for b in chain_window("outro_start", t.n, t.c, outro_bars=outro_bars, music_end=t.end)
+                    if level[b] >= OUTRO_MIN_LEVEL]
             it = va_items.get(i)
             bar, p, _ = _pick(booster, it, allowed=set(loud)) if it is not None else (None, 0.0, None)
             oof["outro_start"].append((t, t.hit(bar, truth), p))
-            rule = min(loud, key=lambda b: (abs(b - (t.c + 16)), b)) if loud else None
+            rule = min(loud, key=lambda b: (abs(b - (t.c + outro_default)), b)) if loud else None
             rule_results.append((t, t.hit(rule, truth)))
         log(f"  Faltung {fold}/{n_folds} Break 1 / Break 2 / Outro: {time.time() - t0:.0f}s")
+        tick()
 
     log(f"\nOut-of-Fold Kette ({n_folds} Faltungen, Treffer = ±{HIT_BEATS:g} Beats, {time.time() - t_start:.0f}s):")
     summary = {}
@@ -302,11 +371,11 @@ def train(files: list[str], out_dir: str, n_folds: int = 5, seed: int = 42, save
         idx = range(len(tracks))
         sets = {
             "drop1": [_rows(tracks[i], "drop1", None, tracks[i].labels["drop1"]) for i in idx],
-            "break1": [_rows(tracks[i], "break1", d1_train[i], tracks[i].a)
-                       for i in idx if i in d1_train and tracks[i].a is not None],
+            "break1": [_rows(tracks[i], "break1", d1_train[i], tracks[i].a_label)
+                       for i in idx if i in d1_train and tracks[i].a_label is not None],
             "break2": [_rows(tracks[i], "break2", tracks[i].labels["drop1"], tracks[i].labels["break2"])
                        for i in idx if tracks[i].labels["break2"] is not None],
-            "outro_start": [_rows(tracks[i], "outro_start", None, tracks[i].labels["outro_start"])
+            "outro_start": [_rows(tracks[i], "outro_start", None, tracks[i].labels["outro_start"], outro_bars)
                             for i in idx if tracks[i].labels["outro_start"] is not None],
         }
         for role, items in sets.items():
@@ -314,16 +383,21 @@ def train(files: list[str], out_dir: str, n_folds: int = 5, seed: int = 42, save
             if not items or not best_iters[role]:
                 log(f"  {role:<12} keine Beispiele -- kein Modell")
                 feature_names.pop(role, None)
+                tick()
                 continue
             rounds = max(50, int(np.median(best_iters[role])))
             t0 = time.time()
             booster = _train(items, rounds=rounds)
             boost.save(booster, os.path.join(out_dir, CHAIN_FILES[role]))
             log(f"  {role:<12} {len(items)} Tracks, {rounds} Runden, {time.time() - t0:.0f}s")
+            tick()
 
     meta = {"feature_version": CHAIN_FEATURE_VERSION, "trained_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "n_tracks": len(tracks), "labels": n_lab, "feature_names": feature_names,
             "best_iters": best_iters, "oof": summary, "outro_mode": outro_mode,
-            "outro_rule_hit": summary["outro_rule"].get("hit", 0.8), "break1_mode": BREAK1_MODE,
+            "outro_rule_hit": summary["outro_rule"].get("hit") or 0.8, "break1_mode": BREAK1_MODE,
+            "skipped": skipped,
             "params": LGB_PARAMS}
-    return {"meta": meta, "calibration": {r: c.to_json() for r, c in calibrators.items()}, "summary": summary}
+    meta["outro_candidates"], meta["outro_default"] = list(outro_bars), int(outro_default)
+    calibration = {r: c.to_json() for r, c in calibrators.items()}
+    return {"meta": meta, "calibration": calibration, "summary": summary}

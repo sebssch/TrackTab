@@ -27,6 +27,14 @@ _CLASS_KEYS_AAC = {"aac_class_256_khz": 256, "aac_class_192_khz": 192,
 # Ladder-Name (siehe cfg["cutoff_classes"]) je Key-Set
 _LADDER_KEYS = {"mp3": _CLASS_KEYS_MP3, "aac": _CLASS_KEYS_AAC}
 
+# Auto-Cue-Konfidenz als Stufe (autocue/slots.py: CONFIDENCE_LEVELS).
+_CONF_LEVELS = [{"value": "very_safe", "label": "Sehr sicher"},
+                          {"value": "safe", "label": "Sicher"},
+                          {"value": "normal", "label": "Normal"},
+                          {"value": "risky", "label": "Riskant"},
+                          {"value": "very_risky", "label": "Sehr riskant"}]
+
+
 GROUPS = [
     {
         "id": "library", "title": "Bibliothek",
@@ -375,8 +383,8 @@ GROUPS = [
     },
     {
         "id": "classes_aac", "parent": "analysis", "title": "Klassifikation (AAC)",
-        "note": "Wirkt sofort. Vorgabewerte sind ungeprüft — mit "
-                "./run.command calibrate an echtem Material nachmessen.",
+        "note": "Wirkt sofort. Vorgabewerte an Apples Encoder (wie Music.app) "
+                "gemessen — nachmessen mit ./run.command calibrate.",
         "fields": [
             {"key": "aac_class_256_khz", "type": "number", "label": "ab Klasse 256",
              "unit": "kHz", "min": 14, "max": 22.05, "step": 0.05},
@@ -439,13 +447,6 @@ GROUPS = [
                      "die Tags danach selbst, im Hintergrund. Ohne Auswahl hier "
                      "bleiben die zugehörigen Knöpfe komplett ausgeblendet, auch "
                      "wenn Mixed In Key installiert ist."},
-            {"key": "aac_encoder", "type": "text", "label": "AAC-Encoder", "width": "half",
-             "placeholder": "aac",
-             "help": "ffmpeg-Encodername für AAC-Neukodierung (calibrate, "
-                     "Bitrate-Korrektur). 'aac' ist immer verfügbar. "
-                     "'libfdk_aac' klingt besser, ist aber nicht in jedem "
-                     "ffmpeg-Build enthalten — bei Nichtverfügbarkeit wird "
-                     "automatisch auf 'aac' zurückgefallen."},
             {"key": "external_daw", "type": "app", "appList": "daws", "label": "DAW", "width": "half",
              "reload": True,
              "help": "Programm hinter „In DAW öffnen“ pro Zeile (z. B. Logic, "
@@ -548,32 +549,29 @@ GROUPS = [
                 "mit „Rekordbox Update“.",
         "fields": [
             {"key": "autocue_use_phrases", "type": "bool", "requires": "autocue",
-             "label": "Phrasen als Hinweis nutzen",
-             "help": "Phrasengrenzen fließen als Gewicht ein, nie als feste Position. "
-                     "Ohne Phrasen arbeitet Auto Cue nur mit dem Klang."},
-            {"key": "autocue_max_memory", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 10, "step": 1, "label": "Memory Cues höchstens",
-             "help": "Rekordbox erlaubt bis zu 10. Reicht der Platz nicht, setzt Auto Cue "
-                     "die automatischen Zwischenpunkte in größerem Abstand (64 statt 32 Beats)."},
-            {"key": "autocue_conf_drop2", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Drop 2", "break": True,
-             "help": "Lieber keine Cue als eine falsche: Unter dieser Sicherheit "
-                     "(0 bis 1) wird die Rolle nicht gesetzt. Die Vorgaben sind an "
-                     "den Modellen kalibriert."},
-            {"key": "autocue_conf_setup", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Build vor Drop 2"},
-            {"key": "autocue_conf_drop1", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Drop 1"},
-            {"key": "autocue_conf_break1", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Break 1"},
-            {"key": "autocue_conf_break2", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Break 2"},
-            {"key": "autocue_conf_intro_1", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Intro"},
-            {"key": "autocue_conf_outro_start", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz Outro"},
-            {"key": "autocue_conf_default", "type": "number", "width": "half", "requires": "autocue",
-             "min": 0, "max": 1, "step": 0.05, "label": "Konfidenz übrige Cues",
+             "label": "Automatische Phrasen als Hinweis nutzen",
+             "help": "Gemessene Phrasen fließen als Gewicht ein, nie als feste Position. "
+                     "Von Hand bearbeitete Phrasen gelten immer: Die Cues rasten auf ihren "
+                     "Grenzen ein."},
+            {"key": "autocue_conf_drop2", "type": "select", "width": "half", "requires": "autocue",
+             "label": "Sicherheit Drop 2", "options": _CONF_LEVELS, "break": True,
+             "help": "Lieber keine Cue als eine falsche. Sicher setzt eine Stelle nur, wenn Auto Cue "
+                     "sich sehr sicher ist, riskant setzt öfter, auch auf Verdacht. Normal ist "
+                     "an den Modellen abgestimmt."},
+            {"key": "autocue_conf_setup", "type": "select", "width": "half", "requires": "autocue",
+             "label": "Sicherheit Build vor Drop 2", "options": _CONF_LEVELS},
+            {"key": "autocue_conf_drop1", "type": "select", "width": "half", "requires": "autocue",
+             "label": "Sicherheit Drop 1", "options": _CONF_LEVELS},
+            {"key": "autocue_conf_break1", "type": "select", "width": "half", "requires": "autocue",
+             "label": "Sicherheit Break 1", "options": _CONF_LEVELS},
+            {"key": "autocue_conf_break2", "type": "select", "width": "half", "requires": "autocue",
+             "label": "Sicherheit Break 2", "options": _CONF_LEVELS},
+            {"key": "autocue_conf_intro_1", "type": "select", "width": "half", "requires": "autocue",
+             "label": "Sicherheit Intro", "options": _CONF_LEVELS},
+            {"key": "autocue_conf_outro_start", "type": "select", "width": "half", "requires": "autocue",
+             "label": "Sicherheit Outro", "options": _CONF_LEVELS},
+            {"key": "autocue_conf_default", "type": "select", "width": "half", "requires": "autocue",
+             "label": "Sicherheit Übrige Cues", "options": _CONF_LEVELS,
              "help": "Gilt für eigene Regeln (z. B. „8 Takte vor Drop 2“)."},
         ],
     },
@@ -590,18 +588,6 @@ GROUPS = [
                      "Cues) verwendet wird. Ohne Auswahl ist die Rekordbox-"
                      "Integration aus (Seitenbaum, Knöpfe, Abgleich) und die "
                      "Einstellungen darunter sind gesperrt."},
-            {"key": "rekordbox_playlist", "type": "text", "rbpick": True, "reload": True,
-             "requires": "rekordbox",
-             "label": "Rekordbox-Playlist",
-             "placeholder": "z.B. ##WORK/Neue Tracks",
-             "help": "Bereits bestehende Rekordbox-Playlist. Über den "
-                     "Rekordbox-Knopf hinzugefügte Tracks landen dort (per "
-                     "Drag & Drop auf eine Playlist im Baum lässt sich jede "
-                     "andere wählen) — die "
-                     "Playlist wird nicht automatisch angelegt, sie muss vorher "
-                     "in Rekordbox existieren. „Playlist auswählen“ lädt den "
-                     "aktuellen Playlist-Baum und geht nur bei geschlossenem "
-                     "Rekordbox. Leer lassen, dann bleibt der Knopf ausgeblendet."},
             {"key": "rekordbox_quality_check", "type": "bool", "width": "half",
              "requires": "rekordbox",
              "label": "Qualitätsprüfung beim Import",
@@ -711,11 +697,13 @@ def describe() -> dict:
             "genremood_installed": genremood.available(),
             # onnxruntime + Phrasenmodell vorhanden? Sonst Aktion ausblenden.
             "phrases_available": phrases.available(),
-            # Modelle in vendor/models/autocue/ vorhanden? Sonst Auto Cue ausblenden.
+            # Eigenes Modell gewaehlt? Sonst Auto Cue sperren (Training geht trotzdem).
             "autocue_available": autocue.available(),
-            # Welches Modell gilt (mitgeliefert oder geladen) und wie es auf der
-            # Pruefliste abschnitt; trainiert wird nur im Entwicklungsordner.
-            "autocue_model": _autocue_model_info(),
+            # Modellbibliothek (autocue/library.py): eigene Modelle, je mit
+            # Name, Datum und Ergebnis auf der Pruefliste; "active" = geltendes.
+            "autocue_models": autocue_models_info(),
+            # Training in der App moeglich (LightGBM importierbar)? Sonst Block aus.
+            "autocue_train_available": autocue_train_available(),
             "autocue_slots": cfgmod.load().get("autocue_slots") or autocue_slots.defaults(),
             "autocue_slots_default": autocue_slots.defaults(),
             "autocue_choices": {"roles": list(autocue_slots.ROLES), "anchors": list(autocue_slots.ANCHORS),
@@ -1283,17 +1271,27 @@ def validate_autocue_slots(raw) -> dict:
     return slots.validate(raw, rekordbox.cue_palettes())
 
 
-def _autocue_model_info() -> dict:
-    """Geltendes Modell (ohne die Pfadliste der Pruefliste) und ob ein geladenes da ist."""
-    import os
+def autocue_models_info() -> list[dict]:
+    """Eintraege der Modellbibliothek fuer die Einstellungsseite (ohne Pfadlisten)."""
+    from .autocue import library
+    return library.entries()
+
+
+def autocue_train_available() -> bool:
+    from .autocue.training import boost
+    return boost.available()
+
+
+def save_autocue_model(model_id) -> str:
+    """Geltendes Modell waehlen (id der Bibliothek)."""
     from . import autocue
-    info = dict(autocue.model_info())
-    gold = info.get("gold")
-    if isinstance(gold, dict):
-        info["gold"] = {k: v for k, v in gold.items() if k != "paths"}
-    info.pop("oof", None)
-    info["has_loaded"] = os.path.isdir(autocue.trained_dir())
-    return info
+    from .autocue import library
+    model_id = str(model_id or "")
+    folder = library.folder_of(model_id) if library.valid_id(model_id) else None
+    if folder is None or not autocue.complete(folder):
+        raise ValueError("Dieses Modell gibt es nicht (mehr).")
+    _write_local({"autocue_model": model_id})
+    return model_id
 
 
 def save_autocue_slots(raw) -> dict:

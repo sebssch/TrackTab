@@ -27,6 +27,13 @@ _STAGES_AAC = [96, 128, 192]       # AAC: hoch auf 256
 
 
 def _encode(src: Path, dst: Path, kbps: int, codec: str = "libmp3lame") -> bool:
+    if codec != "libmp3lame":
+        # AAC immer ueber media.encode_aac(): aac_at dort clip-frei ueber afconvert
+        try:
+            media.encode_aac(src, dst, kbps, timeout=300)
+        except (media.EncodeError, media.MediaToolMissing):
+            return False
+        return True
     cmd = [
         media.ffmpeg_path(), "-v", "error", "-nostdin", "-y",
         "-i", str(src),
@@ -227,7 +234,9 @@ def run(console, args) -> int:
     )
     console.print()
 
-    aac_encoder = media.resolved_aac_encoder(cfg)
+    aac_encoder = media.resolved_aac_encoder()
+    console.print(f"[dim]AAC-Encoder: {aac_encoder}"
+                  f"{' (Apple, über afconvert)' if aac_encoder == 'aac_at' else ''}[/dim]")
     aac_hits, aac_total = _run_lossy_chain(
         console, sources, cfg, work, args.keep,
         label="AAC", stages=_STAGES_AAC, final_kbps=256,

@@ -36,9 +36,13 @@ var GEN_ADV_OPEN;
 // die Liste wird bei jedem Abspielen/Umsortieren neu gebaut, ohne Cache
 // holte jeder Neuaufbau alle Waveforms erneut vom Server.
 var GEN_PEAKS;
-// Farbige Rekordbox-Waveform je Pfad (null = dort keine), gleicher Grund
-// wie GEN_PEAKS.
-var GEN_RBWAVE;
+// Je Pfad {waveform, cues, phrases} fuer die Slots: farbige Gesamtansicht nach
+// waveform_style (/api/wave-color), Hot/Memory Cues wie in Bearbeiten und
+// Player (/api/rekordbox-extras, eigene Bearbeitung vor Rekordbox) und
+// TrackTabs Phrasen (/api/wave-phrases). Gleicher Grund wie GEN_PEAKS;
+// geleert beim Oeffnen eines Generators (neuer Stand aus der DJ-Ansicht) und
+// von refreshWaveColors() (anderer Wellenform-Stil).
+var GEN_EXTRAS;
 // Slot-Nummer, die gerade gezogen wird (undefined/-1 = keiner).
 var GEN_DRAG_FROM;
 
@@ -193,6 +197,7 @@ function syncGeneratorPane() {
   // wuerde sonst ein laufendes Ziehen an Kurve oder Regler abbrechen.
   if (!GEN || GEN.id !== node.id) {
     if (GEN) genFlushSave();
+    GEN_EXTRAS = null;   // Cues/Phrasen koennen sich in der DJ-Ansicht geaendert haben
     const cfg = genParseConfig(node);
     GEN = {id: node.id, cfg, tracks: genTracksFromItems(node.id, cfg),
            seed: (Math.random() * 2 ** 31) >>> 0, saveTimer: null};
@@ -773,7 +778,7 @@ function genSlotsHtml() {
       <span class="gennr">${nr}</span>
       ${apiMode && r.cv ? `<img class="gencov" src="${coverUrl(r.p)}" alt="" loading="lazy">` : `<span class="gencov"></span>`}
       <span class="genmeta"><span class="gentitle">${esc(r.t || baseName(r.p))}</span><span class="gensub">${sub}</span></span>
-      ${apiMode ? `<canvas class="wave genwave" data-wave="${i}" height="34" title="${esc(t("action.seek"))}"></canvas>` : ""}
+      ${apiMode ? `<canvas class="wave genwave" data-wave="${i}" height="40" title="${esc(t("action.seek"))}"></canvas>` : ""}
       ${energyCell(r.eg)}${target}
       <span class="genacts">${roll}${pick}${remove}${del}</span>${lockBtn}
       <span class="genkey">${keyBubble(r.ky, r.kr)}</span>
@@ -844,7 +849,7 @@ function genPlay(i) {
 function genMountSlotWaves() {
   if (!GEN || !apiMode) return;
   if (!GEN_PEAKS) GEN_PEAKS = new Map();
-  if (!GEN_RBWAVE) GEN_RBWAVE = new Map();
+  if (!GEN_EXTRAS) GEN_EXTRAS = new Map();
   const jobs = [];
   jobs.push = (fn, canvas) => { jobs[jobs.length] = {fn, canvas}; };
   document.querySelectorAll("#genSlots canvas.genwave").forEach(canvas => {
@@ -853,19 +858,30 @@ function genMountSlotWaves() {
     if (!r) return;
     const isCurrent = () => !!(queueState.current && queueState.current.p === r.p);
     const entry = registerWaveEntry({
-      root: canvas.closest(".genslot"), canvas, r, half: true, peaks: null, cues: null, waveform: null,
+      root: canvas.closest(".genslot"), canvas, r, half: true, colorHalf: true, compactCues: true,
+      peaks: null, cues: null, waveform: null, phrases: null,
       sync() {
         const cur = isCurrent();
         this.currentTime = cur ? queueAudio.currentTime : 0;
         this.duration = cur ? queueAudio.duration : r.du;
       },
     });
-    const cached = GEN_PEAKS.get(r.p);
+    // refreshWaveColors() findet den Eintrag ueber colorPath.
+    entry.colorPath = r.p;
+    const cached = GEN_PEAKS.get(r.p), extras = GEN_EXTRAS.get(r.p);
     if (cached) setWaveData(entry, {peaks: cached});
-    else jobs.push(() => peaksForLibrary(r.p)
-      .then(p => { GEN_PEAKS.set(r.p, p); setWaveData(entry, {peaks: p}); })
-      .catch(() => setWaveData(entry, {peaks: []})), canvas);
-    // Halbe, einfarbige Huellkurve (entry.half) -- keine Rekordbox-Farben.
+    if (extras) setWaveData(entry, extras);
+    if (!cached || !extras) jobs.push(async () => {
+      if (!cached) {
+        try { const p = await peaksForLibrary(r.p); GEN_PEAKS.set(r.p, p); setWaveData(entry, {peaks: p}); }
+        catch (err) { setWaveData(entry, {peaks: []}); }
+      }
+      if (!extras) {
+        const ex = await genSlotExtras(r.p);
+        GEN_EXTRAS.set(r.p, ex);
+        setWaveData(entry, ex);
+      }
+    }, canvas);
     canvas.onclick = ev => {
       ev.stopPropagation();
       const rect = canvas.getBoundingClientRect();
@@ -881,6 +897,23 @@ function genMountSlotWaves() {
     };
   });
   genRunWaveJobs(jobs);
+}
+
+// Farbe, Cues und Phrasen eines Slots. Fehler lassen das jeweilige Teil weg
+// (graue Wellenform, keine Marker), nie den ganzen Slot.
+async function genSlotExtras(path) {
+  const q = encodeURIComponent(path);
+  const json = url => fetch(url).then(res => res.ok ? res.json() : null).catch(() => null);
+  const [color, extras, phr] = await Promise.all([
+    json("/api/wave-color?path=" + q),
+    rekordboxExtrasFor(path).catch(() => null),
+    json("/api/wave-phrases?path=" + q),
+  ]);
+  return {
+    waveform: (color && color.waveform) || null,
+    cues: extras && extras.available ? extras.cues || [] : [],
+    phrases: (phr && phr.phrases) || [],
+  };
 }
 
 // Waveform-Daten erst nachladen, wenn die Cover der Liste da sind, und dann

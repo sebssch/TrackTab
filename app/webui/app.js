@@ -476,10 +476,14 @@ state.columnsByLayout = {
   player: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: [], widths: {}},
 };
 
-// Die DJ-Ansicht hat eine feste Liste: Cover, "Titel - Interpret", Energie, Tags.
-// Nicht einstellbar und nicht gespeichert, das Spalten-Menue ist dort ausgeblendet
-// und saveColumns() tut nichts.
-const DJ_COLUMNS = ["cv", "t", "du", "ky", "bp", "eg", "mm", "rb"];
+// Die DJ-Ansicht hat eine feste Liste: "#", Cover, "Titel - Interpret", Laenge,
+// Tonart, BPM, Energie, Tags, Hinzugefuegt, Rekordbox. Nicht einstellbar und nicht
+// gespeichert, das Spalten-Menue ist dort ausgeblendet und saveColumns() tut nichts.
+const DJ_COLUMNS = ["po", "cv", "t", "du", "ky", "bp", "eg", "mm", "da", "rb"];
+// "#" nur in einer Liste mit Reihenfolge: eigene Playlist oder Fremdliste
+// (Music.app/Rekordbox, siehe listPositionMap()). Feste Listen, Smart-Listen und
+// Merklisten haben keine.
+const djListOpen = () => String(state.view || "").startsWith("pl:") || !!extSourceOfView(state.view);
 // Name der eingestellten Rekordbox-App, leer = keine. Steht hier oben, weil die feste
 // DJ-Liste schon beim ersten Zeichnen danach fragt.
 let REKORDBOX_NAME = "";
@@ -487,10 +491,11 @@ const DJ_COLUMN_STORE = {
   order: [...DJ_COLUMNS, ...OPTIONAL_COLUMNS.map(c => c.key).filter(k => !DJ_COLUMNS.includes(k))],
   // Die Spalte Rekordbox gibt es nur, wenn Rekordbox eingestellt ist.
   get hidden() {
-    return OPTIONAL_COLUMNS.map(c => c.key).filter(k => !DJ_COLUMNS.includes(k) || (k === "rb" && !REKORDBOX_NAME));
+    return OPTIONAL_COLUMNS.map(c => c.key).filter(k => !DJ_COLUMNS.includes(k)
+      || (k === "rb" && !REKORDBOX_NAME) || (k === "po" && !djListOpen()));
   },
   // "du" so breit, dass bei laufendem Track auch die zweite Zeit Platz hat.
-  widths: {cv: 76, du: 150, ky: 60, bp: 90, eg: 90, mm: 240, rb: 90},
+  widths: {po: 46, cv: 76, du: 150, ky: 60, bp: 90, eg: 90, mm: 240, da: 100, rb: 90},
 };
 
 // Eigener, flacher Spalten-Topf fuer die Einzelprueflungen (Drops) --
@@ -776,15 +781,11 @@ function applyLayout(next) {
       det.remove();
     });
   }
-  // Checkbox-Mehrfachauswahl ist bewusst je Layout eigenstaendig -- eine
-  // Auswahl aus "Bearbeiten" haette in "Player" keinen erkennbaren Bezug
-  // mehr (andere Spalten/Aktionen) und wuerde dort nur verwirren.
-  state.selected.clear();
+  // Die Checkbox-Auswahl bleibt beim Wechsel stehen (Nutzervorgabe): wer
+  // einen Track in Bearbeiten markiert, findet ihn in Player/DJ markiert vor.
+  // Die erste markierte Zeile wird nach dem Neuaufbau ins Bild geholt.
   state.layout = next;
   document.body.setAttribute("data-layout", state.layout);
-  // Die DJ-Ansicht zeigt nur TrackTabs eigene Listen. Eine offene fremde Liste
-  // (Music.app/Rekordbox) gibt es dort nicht, also zurueck auf die Bibliothek.
-  if (next === "dj" && extSourceOfView(state.view)) state.view = "all";
   state.shown = PAGE;
   syncLayoutSwitch();
   syncControls();
@@ -798,6 +799,17 @@ function applyLayout(next) {
   render();
   saveFilters();
   renderPlayerBar();
+  revealSelectedRow();
+}
+
+// Erste markierte Zeile der Haupttabelle ins Bild holen, falls sie gerade
+// ausserhalb liegt (nach einem Ansichtswechsel sind Zeilenhoehen anders).
+function revealSelectedRow() {
+  if (!state.selected.size) return;
+  const tr = [...document.querySelectorAll("#tb tr.row.picked")][0];
+  if (!tr) return;
+  const box = tr.getBoundingClientRect();
+  if (box.top < 0 || box.bottom > window.innerHeight) tr.scrollIntoView({block: "center"});
 }
 
 let pinScrollQueued = false;
@@ -1159,7 +1171,11 @@ const ICONS = {
   // geschieht so nur hier, nicht an jeder Verwendungsstelle.
   analyseBpmKey: SVG(LUCIDE_ICONS["clef-treble"]),
   analyseGenreMood: SVG(LUCIDE_ICONS["party-popper"]),
-  analysePhrases: SVG(LUCIDE_ICONS["rows-3"]),
+  // Beatgrid / Phrasen / beides (Nutzervorgabe): columns-2, rows-2, grid-2x2.
+  analysePhrases: SVG(LUCIDE_ICONS["rows-2"]),
+  analyseBoth: SVG(LUCIDE_ICONS["grid-2x2"]),
+  // "Track neu analysieren" (Nutzervorgabe, frueher pickaxe).
+  rescan: SVG(LUCIDE_ICONS["rotate-ccw-square"]),
   waveZoomIn: SVG(LUCIDE_ICONS["zoom-in"]),
   waveZoomOut: SVG(LUCIDE_ICONS["zoom-out"]),
   splitStems: SVG(LUCIDE_ICONS["split"]),
@@ -1205,12 +1221,20 @@ const ICONS = {
   // "aus der Liste").
   listPlus: SVG(LUCIDE_ICONS["list-plus"]),
   listX: SVG(LUCIDE_ICONS["list-x"]),
+  // Aus einer Music-Playlist entfernen -- eigenes Symbol, damit es sich von
+  // TrackTab-/Rekordbox-Listen (listX) abhebt (Vorschlag, Tausch nur hier).
+  listMinus: SVG(LUCIDE_ICONS["list-minus"]),
+  // Sammelleisten/Menues: Beatgrid-Analyse (dasselbe Raster wie in dj.js).
+  analyseGrid: SVG(LUCIDE_ICONS["columns-2"]),
+  // Verknuepfte Playlist (Vorschlag, Tausch nur hier).
+  link: SVG(LUCIDE_ICONS["link-2"]),
   volume: SVG(LUCIDE_ICONS["volume"]),
   volumeMid: SVG(LUCIDE_ICONS["volume-1"]),
   volumeHigh: SVG(LUCIDE_ICONS["volume-2"]),
   volumeMute: SVG(LUCIDE_ICONS["volume-x"]),
-  fix: SVG(LUCIDE_ICONS["waves-arrow-down"]),
-  convert: SVG(LUCIDE_ICONS["refresh-ccw-dot"]),
+  // Bitrate korrigieren / Format konvertieren (Nutzervorgabe).
+  fix: SVG(LUCIDE_ICONS["file-code-corner"]),
+  convert: SVG(LUCIDE_ICONS["file-music"]),
   reanalyse: SVG(LUCIDE_ICONS["rotate-ccw"]),
   // Eigenes Icon fuer "Neu analysieren" (Track neu messen), getrennt von
   // reanalyse oben -- das bleibt "rotate-ccw" fuer "Neu laden" bei fremden
@@ -1242,8 +1266,13 @@ const ICONS = {
   databaseArrowDown: SVG(LUCIDE_ICONS["database-arrow-down"]),
   databaseBackup: SVG(LUCIDE_ICONS["database-backup"]),
   bookDown: SVG(LUCIDE_ICONS["book-down"]),
+  // Einstellungen: "Zuruecksetzen" (Vorschlag, Tausch nur hier) und das ?
+  // hinter einem Feld-Label (kurzer Hinweis im Tooltip, siehe settingHelpBtn()).
+  resetDefault: SVG(LUCIDE_ICONS["rotate-ccw"]),
+  helpQ: SVG(LUCIDE_ICONS["circle-question-mark"]),
   // Auto-Cue-Modell laden (Einstellungen); Vorschlag, Tausch nur hier.
   modelLoad: SVG(LUCIDE_ICONS["file-up"]),
+  autocueTrain: SVG(LUCIDE_ICONS["graduation-cap"]),
   lock: SVG(LUCIDE_ICONS["lock"]),
   lockOpen: SVG(LUCIDE_ICONS["lock-open"]),
   fileUp: SVG(LUCIDE_ICONS["file-up"]),
@@ -1296,7 +1325,6 @@ const disabledAppIcon = (which, alt, title, id) =>
 // waehlbar statt an eine bestimmte App gebunden).
 const disabledToolBtn = title =>
   `<button class="iconbtn plain" disabled title="${esc(title)}">${ICONS.editor}</button>`;
-let REKORDBOX_MISSING_HINT = t("hint.rekordbox_missing");
 
 // ── Suche in den Shops ──────────────────────────────────────────────────────
 // Aus Tags oder Dateiname eine brauchbare Suchanfrage bauen. DJ-Pool-Zusätze
@@ -1445,7 +1473,7 @@ const isFixable = r => (r.v === "FAKE" || r.v === "VERDAECHTIG") && r.mk > 0 &&
 const AUTO_FIXABLE_TAG_ISSUE_CODES = new Set([
   "control_chars", "leading_trailing_ws", "id3_v1_only", "id3_v22",
   "unresolved_genre_code", "duplicate_frames", "nfc_nfd_mismatch",
-  "oversized_cover", "tempo_change_title",
+  "oversized_cover", "tempo_change_title", "key_notation",
 ]);
 // Tempowechsel im Beatgrid, der nicht im Titel steht. Kommt nicht aus der Datei wie die
 // uebrigen Auffaelligkeiten, sondern aus der gemerkten Tempo-Folge (r.gridSeq), die der
@@ -1469,9 +1497,14 @@ const titleWithTempo = r => {
   const base = (r.t || baseName(r.p).replace(/\.[^.]+$/, "")).replace(TITLE_TEMPO_RE, "").trim();
   return `${base} (${tempoSequence(r).map(v => Math.round(v)).join(" → ")} BPM)`;
 };
+// Tonart-Schreibweise weicht von key_notation ab (gestrichelter Rahmen in der
+// Tonart-Spalte). Wie der Tempowechsel nicht aus der Datei-Pruefung
+// (taganomaly.py), sondern aus keyNeedsSync() -- dieselbe Regel wie das
+// Notenschluessel-Symbol, behoben ueber denselben Weg (/api/tags mit key).
+const keyIssueOf = r => keyNeedsSync(r) ? {code: "key_notation", field: "key"} : null;
 const rowIssues = r => {
-  const tempo = tempoIssueOf(r), own = Array.isArray(r.ti) ? r.ti : [];
-  return tempo ? [...own, tempo] : own;
+  const extra = [tempoIssueOf(r), keyIssueOf(r)].filter(Boolean), own = Array.isArray(r.ti) ? r.ti : [];
+  return extra.length ? [...own, ...extra] : own;
 };
 const hasAnyTagIssues = r => rowIssues(r).length > 0;
 const hasAutoFixableTagIssues = r => rowIssues(r).some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code));
@@ -1678,13 +1711,15 @@ function extChildren(source, parentId, depth = 0) {
       view: n.kind === "folder" ? null : `${prefix}${n.id}`,
       label: n.name,
       icon: PLAYLIST_ICONS[n.kind] || PLAYLIST_ICONS.playlist,
-      // Smart Playlists der Fremdsysteme tragen zusaetzlich ein Schloss --
-      // sie werden dort berechnet und liessen sich hier auch spaeter nicht
-      // sinnvoll aendern.
-      locked: true,
-      // Nur normale Rekordbox-Playlisten nehmen Tracks per Drag & Drop auf
-      // (Ordner/Smart Playlists nicht) -- renderTree() gibt data-rbpl aus.
+      // Smart Playlists der Fremdsysteme tragen ein Schloss -- sie werden dort
+      // berechnet, Tracks lassen sich weder hinzufuegen noch entfernen.
+      // Normale Playlisten und Ordner bearbeitet das Menue extNodeMenuItems().
+      locked: n.kind === "smart",
+      ext: {source, id: String(n.id), kind: n.kind, name: n.name},
+      // Nur normale Playlisten nehmen Tracks per Drag & Drop auf (Ordner/Smart
+      // Playlists nicht) -- renderTree() gibt data-rbpl bzw. data-mupl aus.
       rbpl: source === "rekordbox" && n.kind === "playlist" ? n.id : null,
+      mupl: source === "music" && n.kind === "playlist" ? n.id : null,
       count: n.kind === "folder" ? null : n.count,
       kids: extChildren(source, n.id, depth + 1),
     }));
@@ -1692,7 +1727,9 @@ function extChildren(source, parentId, depth = 0) {
 
 function extRootNode(source, labelKey) {
   const st = EXT_TREES[source];
-  const kids = st.loaded ? extChildren(source, null) : [];
+  // Beim Neuladen nach einer Aenderung bleibt der bisherige Stand stehen (sonst
+  // klappte der Ast fuer die Dauer der Abfrage zu "wird geladen" zusammen).
+  const kids = st.loaded || st.nodes.length ? extChildren(source, null) : [];
   return {
     id: EXT_SOURCES[source].root, view: null, label: t(labelKey),
     icon: EXT_SOURCES[source].icon, count: null,
@@ -1768,8 +1805,10 @@ function treeRoots() {
   // state.treeOrder verschiebbar (dieselben ids wie ihre root:-Knoten,
   // siehe dropTreeNode()); TrackTab bleibt fix an erster Stelle, taucht in
   // dieser Liste deshalb gar nicht erst auf.
-  // Die DJ-Ansicht arbeitet nur auf TrackTabs eigenen Listen.
-  const extRoots = state.layout === "dj" ? [] : sortByTreeOrder([
+  // Auch in der DJ-Ansicht: Titel ohne TrackTab-Zeile (r.ext) stehen dort wie in
+  // Bearbeiten markiert in der Liste, oeffnen aber keinen Editor (Klick-Handler
+  // in render()) und fallen aus allen Sammelaktionen (gone-Filter).
+  const extRoots = sortByTreeOrder([
     ...(MUSIC_NAME ? [extRootNode("music", "tree.root_music")] : []),
     ...(REKORDBOX_NAME ? [extRootNode("rekordbox", "tree.root_rekordbox")] : []),
   ]);
@@ -1813,11 +1852,13 @@ function renderTree() {
         `${n.icon && n.icon.startsWith("sym:") ? SVG(LUCIDE_ICONS[n.icon.slice(4)] || "") : n.icon}</span>`;
     out.push(
       `<button class="treenode${depth === 0 ? " root" : ""}` +
-      `${n.hint ? " hint" : ""}${n.locked ? " locked" : ""}` +
+      `${n.hint ? " hint" : ""}${n.locked ? " locked" : ""}${extBusyClass(n)}` +
       `${n.view && state.view === n.view ? " on" : ""}" ` +
       `data-id="${esc(n.id)}"${n.view ? ` data-view="${esc(n.view)}"` : ""}` +
       `${n.node ? ` data-pl="${esc(n.node.id)}"` : ""}` +
       `${n.rbpl ? ` data-rbpl="${esc(n.rbpl)}"` : ""}` +
+      `${n.mupl ? ` data-mupl="${esc(n.mupl)}"` : ""}` +
+      `${n.ext ? ` data-ext="${esc(n.ext.source)}" data-extkind="${esc(n.ext.kind)}"` : ""}` +
       `${n.lazy === "rekordbox" ? ` title="${esc(t("tree.rekordbox_dnd_hint"))}"` : ""}` +
       `${n.top ? ' data-top="1"' : ""}` +
       `${n.lazy ? ` data-lazy="${esc(n.lazy)}"` : ""} style="--depth:${depth}">` +
@@ -1826,6 +1867,7 @@ function renderTree() {
       badge +
       `<span class="tlabel">${esc(n.label)}</span>` +
       (n.count == null ? "" : `<span class="tcount">${n.count.toLocaleString("de-DE")}</span>`) +
+      linkBadgeHtml(n) +
       (n.userLocked ? `<span class="tlock" title="${esc(t("tree.user_locked"))}">${ICONS.lock}</span>` : "") +
       (n.locked ? `<span class="tlock" title="${esc(t("tree.readonly"))}">${ICONS.lock}</span>` : "") +
       (n.node && apiMode && nodeMenuItems(n.node).length
@@ -1835,6 +1877,9 @@ function renderTree() {
         // Laden sonst nie von selbst aktualisieren (st.loaded bleibt stehen).
         : n.lazy && apiMode
         ? `<span class="tmenu" data-extmenu="${esc(n.lazy)}">&#8943;</span>`
+        // Knoten eines fremden Astes: Umbenennen, Loeschen, Neu darin, Abgleich.
+        : n.ext && apiMode
+        ? `<span class="tmenu" data-extnode="${esc(n.id)}">&#8943;</span>`
         // Feste View-Eintraege ohne eigene Playlist-Zeile (Alle/Ausgeblendet/
         // Datei fehlt/Duplikate/Merklisten) -- n.top grenzt sie von den
         // Musik.app/Rekordbox-Fremdaesten ab, die ebenfalls .view aber kein
@@ -1849,7 +1894,7 @@ function renderTree() {
   renderPlaylistHeader();
 
   host.querySelectorAll(".treenode").forEach(b => b.onclick = ev => {
-    if (ev.target.closest("[data-nodemenu], [data-viewmenu]")) return;   // eigener Handler
+    if (ev.target.closest("[data-nodemenu], [data-viewmenu], [data-extnode]")) return;   // eigener Handler
     // Ein Knoten ohne View (Wurzel, Ordner) kennt nur auf/zu; bei einem mit
     // View oeffnet nur der Pfeil, alles andere waehlt aus.
     if (!b.dataset.view || ev.target.closest("[data-twist]")) {
@@ -1876,6 +1921,12 @@ function renderTree() {
   host.querySelectorAll("[data-extmenu]").forEach(el => el.onclick = ev => {
     ev.stopPropagation();
     openExtMenu(el.dataset.extmenu, el);
+  });
+  host.querySelectorAll("[data-extnode]").forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    const [source, ...rest] = el.dataset.extnode.split(":");
+    const node = (EXT_TREES[source] || {nodes: []}).nodes.find(n => String(n.id) === rest.join(":"));
+    if (node) openContextMenu(extNodeMenuItems(source, node), el);
   });
   wireTreeDnd(host);
 }
@@ -1936,10 +1987,18 @@ function refreshRbRunning() {
 function treeDropTarget(btn, ev, kind) {
   const node = btn.dataset.pl ? PLAYLISTS.find(n => n.id === btn.dataset.pl) : null;
   if (kind === "tracks") {
-    if (btn.dataset.rbpl) return "into";
+    if (btn.dataset.rbpl || btn.dataset.mupl) return "into";
     return (node && (node.kind === "playlist" || node.kind === "generator")) ? "into" : null;
   }
   if (btn.dataset.id === "root:tracktab") return "into";
+  // Knoten eines fremden Astes: Ordner nehmen auf, sonst davor/dahinter. Ob der
+  // gezogene Knoten aus demselben Ast stammt, prueft erst moveExtNode().
+  if (btn.dataset.ext) {
+    const r = btn.getBoundingClientRect();
+    const y = (ev.clientY - r.top) / r.height;
+    if (btn.dataset.extkind === "folder") return y < 0.25 ? "before" : y > 0.75 ? "after" : "into";
+    return y < 0.5 ? "before" : "after";
+  }
   // Knoten der obersten Ebene ohne Datenbankzeile (Alle, Ausgeblendet, ...)
   // nehmen zwar nichts auf, koennen aber eine Position abgeben -- deshalb
   // zaehlen sie hier als gueltiges Ziel fuer davor/dahinter. Die fremden
@@ -1981,7 +2040,9 @@ function wireTreeDnd(host) {
     // Uebergeben wird die BAUM-Kennung (view:.../node:.../root:...), nicht
     // die Datenbank-id -- nur so laesst sich beim Ablegen unterscheiden, was
     // da gezogen wurde.
-    if ((node || btn.dataset.top === "1" || btn.dataset.lazy) && apiMode) {
+    // Knoten der fremden Aeste (data-ext) ebenso: verschoben wird dort in
+    // Rekordbox/Music.app selbst (moveExtNode()).
+    if ((node || btn.dataset.top === "1" || btn.dataset.lazy || btn.dataset.ext) && apiMode) {
       btn.draggable = true;
       btn.ondragstart = ev => {
         ev.dataTransfer.setData(DND_NODE, btn.dataset.id);
@@ -2026,6 +2087,8 @@ function wireTreeDnd(host) {
         catch (e) { paths = []; }
         if (btn.dataset.rbpl) {
           dropTracksOnRekordbox(btn.dataset.rbpl, btn.querySelector(".tlabel").textContent, paths);
+        } else if (btn.dataset.mupl) {
+          dropTracksOnMusic(btn.dataset.mupl, btn.querySelector(".tlabel").textContent, paths);
         } else if (btn.dataset.pl && (PLAYLISTS.find(n => n.id === btn.dataset.pl) || {}).kind === "generator") {
           genDropOnNode(btn.dataset.pl, paths);
         } else {
@@ -2221,7 +2284,8 @@ async function loadExtPlaylist(source, playlistId) {
   // angeglichen, bei doppelten Eintraegen mehrdeutig).
   const entries = [];
   for (const track of (data.tracks || [])) {
-    const ids = {entryId: track.entry_id || null, contentId: track.content_id || null};
+    const ids = {entryId: track.entry_id || null, contentId: track.content_id || null,
+                 trackId: source === "music" ? (track.id || null) : null};
     if (track.known && track.path) {
       const row = ROW_BY_PATH.get(track.path);
       if (row) { paths.push(row.p); entries.push({key: row.p, ...ids}); continue; }
@@ -2311,8 +2375,10 @@ function sortKeys(rows, keyFn) {
 // Wert, wie ihn die Energie-Spalte zeigt -- r.eg selbst hat Nachkommastellen,
 // "ist gleich 8" traefe als Zahl fast nie). TAGS: ein vorhandener Tag
 // (Stimmung oder eigener Tag, ids aus rowTags()).
+// PLAYLIST: Mitgliedschaft in einer anderen Liste des Baums (normale,
+// smarte, Generator oder Ordner = alles darunter), siehe smartRefSet().
 const SMART_TYPES = {TEXT: "text", NUM: "num", ENUM: "enum", BOOL: "bool", DATE: "date",
-  LEVEL: "level", TAGS: "tags"};
+  LEVEL: "level", TAGS: "tags", PLAYLIST: "playlist"};
 
 // Feldkatalog. 'key' ist das Feld der kompakten Zeile (siehe
 // report.rows_to_payload), 'label' kommt wo moeglich aus FIELD_LABELS, damit
@@ -2360,7 +2426,28 @@ function smartFields() {
     {key: "ig", type: SMART_TYPES.BOOL, label: t("views.ignored")},
     {key: "im", type: SMART_TYPES.BOOL, label: t("smart.field_in_music")},
     {key: "rb", type: SMART_TYPES.BOOL, label: t("smart.field_in_rekordbox")},
+    // Kein Feld der Zeile -- evalSmartRule() prueft die Mitgliedschaft.
+    {key: "pl", type: SMART_TYPES.PLAYLIST, label: t("smart.field_playlist"),
+     options: smartPlaylistOptions},
   ];
+}
+
+// Die gerade im Regel-Editor bearbeitete Smart Playlist -- sie steht nicht
+// in ihrer eigenen Auswahl (eine Regel auf sich selbst traefe nie etwas).
+let SMART_EDITING_ID = null;
+
+// Auswahl fuer die Regel "Playlist": alle Listen des eigenen Baums mit
+// Ordnerpfad, damit gleichnamige Listen unterscheidbar bleiben.
+function smartPlaylistOptions() {
+  return PLAYLISTS
+    .filter(n => n.id !== SMART_EDITING_ID
+      && ["playlist", "smart", "generator", "folder"].includes(n.kind))
+    .map(n => {
+      const pfad = playlistPathLabel(n);
+      const name = pfad ? `${pfad} / ${n.name}` : n.name;
+      return {v: n.id, l: n.kind === "folder" ? t("smart.playlist_folder", {name}) : name};
+    })
+    .sort((a, b) => cmpText(a.l, b.l));
 }
 
 const SMART_OPS = {
@@ -2371,6 +2458,7 @@ const SMART_OPS = {
   [SMART_TYPES.DATE]: ["in_last_days", "before_days", "after_days"],
   [SMART_TYPES.LEVEL]: ["is", "is_not", "at_least", "at_most"],
   [SMART_TYPES.TAGS]: ["has", "has_not"],
+  [SMART_TYPES.PLAYLIST]: ["in", "not_in"],
 };
 // Energie-Regeln von vor der Stufen-Auswahl (Zahlenfeld, ops eq/ne/gt/lt)
 // auf die Stufen umsetzen, sobald der Regel-Editor sie oeffnet. Bis dahin
@@ -2430,6 +2518,11 @@ function evalSmartRule(r, rule) {
   if (field.type === SMART_TYPES.TAGS) {
     const hit = rowTags(r).some(tg => tg.id === rule.value);
     return rule.op === "has_not" ? !hit : hit;
+  }
+  if (field.type === SMART_TYPES.PLAYLIST) {
+    // _set legt computeSmartInto() einmal je Regel an, nicht je Zeile.
+    const hit = (rule._set || smartRefSet(rule.value)).has(r.p);
+    return rule.op === "not_in" ? !hit : hit;
   }
   if (field.type === SMART_TYPES.LEVEL && SMART_OPS[SMART_TYPES.LEVEL].includes(rule.op)) {
     // 0 = nicht analysiert: keine Stufe, trifft nur "ist nicht".
@@ -2493,11 +2586,55 @@ function parseSmartRules(node) {
 // VIEWS-Praedikaten und von der Trackzahl im Baum gelesen.
 let SMART_CACHE = new Map();
 
+// Eine Smart Playlist kann ueber die Regel "Playlist" auf eine andere Smart
+// Playlist zeigen. Deren Ergebnis wird dann im selben Durchlauf zuerst
+// berechnet (SMART_PASS: schon fertig, SMART_COMPUTING: gerade in Arbeit).
+// Ein Kreis (A -> B -> A) bricht an der Liste ab, die gerade berechnet wird:
+// sie gilt dort als leer, statt endlos zu rekursieren.
+let SMART_PASS = null;
+const SMART_COMPUTING = new Set();
+
 function recomputeSmart(playlistId) {
+  const top = !SMART_PASS;
+  if (top) SMART_PASS = new Set();
+  try { computeSmartInto(playlistId); } finally { if (top) SMART_PASS = null; }
+}
+
+// Pfade einer Liste des Baums fuer die Regel "Playlist". Ordner = alles in
+// den Listen darunter (Tiefenbremse wie playlistPathLabel()). Eine
+// geloeschte Liste ist leer: "ist in" trifft nichts, "ist nicht in" alles.
+function smartRefSet(id, depth = 0) {
+  const node = PLAYLISTS.find(n => n.id === id);
+  if (!node || depth > 12) return new Set();
+  if (node.kind === "smart") {
+    if (SMART_COMPUTING.has(id)) return new Set();
+    if (SMART_PASS) computeSmartInto(id);
+    return SMART_CACHE.get(id) || new Set();
+  }
+  if (node.kind === "folder") {
+    const out = new Set();
+    for (const child of PLAYLISTS) {
+      if (child.parent_id !== id) continue;
+      for (const p of smartRefSet(child.id, depth + 1)) out.add(p);
+    }
+    return out;
+  }
+  return PLAYLIST_SETS[id] || new Set();
+}
+
+function computeSmartInto(playlistId) {
+  if (SMART_PASS.has(playlistId) || SMART_COMPUTING.has(playlistId)) return;
+  SMART_COMPUTING.add(playlistId);
+  try { computeSmartRules(playlistId); }
+  finally { SMART_COMPUTING.delete(playlistId); SMART_PASS.add(playlistId); }
+}
+
+function computeSmartRules(playlistId) {
   const node = PLAYLISTS.find(n => n.id === playlistId);
   const spec = parseSmartRules(node);
   if (!spec) { SMART_CACHE.set(playlistId, new Set()); return; }
-  const rules = spec.rules.filter(x => x && x.field);
+  const rules = spec.rules.filter(x => x && x.field)
+    .map(x => x.field === "pl" ? {...x, _set: smartRefSet(x.value)} : x);
   const any = spec.match === "any";
   let rows = DATA.filter(r => {
     if (r.removed) return false;
@@ -2507,6 +2644,15 @@ function recomputeSmart(playlistId) {
   });
   rows = applySmartLimit(rows, spec.limit);
   SMART_CACHE.set(playlistId, new Set(rows.map(r => r.p)));
+  // Verknuepfte smarte Liste: der Inhalt geht nach aussen, sobald er sich aendert.
+  if (linksFor(playlistId)) {
+    const sig = rows.map(r => r.p).sort().join("\n");
+    if (LINK_SMART_SIG.get(playlistId) !== sig) {
+      const had = LINK_SMART_SIG.has(playlistId);
+      LINK_SMART_SIG.set(playlistId, sig);
+      if (had) scheduleLinkSync(playlistId);
+    }
+  }
 }
 
 // Begrenzung wie in Apple Music: Anzahl, Spielzeit oder Speichergroesse,
@@ -2542,7 +2688,19 @@ function applySmartLimit(rows, limit) {
 
 function recomputeAllSmart() {
   SMART_CACHE = new Map();
-  for (const n of PLAYLISTS) if (n.kind === "smart") recomputeSmart(n.id);
+  SMART_PASS = new Set();
+  try {
+    for (const n of PLAYLISTS) if (n.kind === "smart") computeSmartInto(n.id);
+  } finally { SMART_PASS = null; }
+}
+
+// Nach einer lokalen Aenderung an PLAYLIST_SETS (Merken, ohne
+// reloadPlaylists()) die Smart Playlists nachziehen, die ueber die Regel
+// "Playlist" davon abhaengen -- sonst stuende im Baum ein veralteter Zaehler.
+function refreshSmartAfterListChange() {
+  const dependent = PLAYLISTS.some(n => n.kind === "smart"
+    && ((parseSmartRules(n) || {}).rules || []).some(x => x && x.field === "pl"));
+  if (dependent) recomputeAllSmart();
 }
 
 // ── Regel-Editor ──────────────────────────────────────────────────────────
@@ -2563,9 +2721,15 @@ function ruleRowHtml(rule, index) {
         `<option value="0"${String(rule.value) === "0" ? " selected" : ""}>${esc(t("smart.no"))}</option></select>`;
     }
     if (field.type === SMART_TYPES.ENUM || field.type === SMART_TYPES.LEVEL
-        || field.type === SMART_TYPES.TAGS) {
-      return `<select class="ruleval" data-rulevalue="${index}">` +
-        field.options().map(o =>
+        || field.type === SMART_TYPES.TAGS || field.type === SMART_TYPES.PLAYLIST) {
+      const opts = field.options();
+      // Geloeschte Ziel-Liste sichtbar machen, statt still die erste
+      // Option anzuzeigen, waehrend die Regel weiter die alte id traegt.
+      const missing = field.type === SMART_TYPES.PLAYLIST
+        && !opts.some(o => o.v === rule.value)
+        ? `<option value="${esc(rule.value ?? "")}" selected>${esc(t("smart.playlist_missing"))}</option>` : "";
+      return `<select class="ruleval" data-rulevalue="${index}">` + missing +
+        opts.map(o =>
           `<option value="${esc(o.v)}"${o.v === rule.value ? " selected" : ""}>${esc(o.l)}</option>`
         ).join("") + `</select>`;
     }
@@ -2594,6 +2758,7 @@ function ruleRowHtml(rule, index) {
 
 function openRulesDialog(node) {
   const ov = document.getElementById("rulesOverlay");
+  SMART_EDITING_ID = node.id;
   const spec = parseSmartRules(node) || {match: "all", rules: [], limit: {}};
   // Kopie, damit Abbrechen wirklich nichts hinterlaesst.
   let rules = (spec.rules || []).map(x => upgradeSmartRule({...x}));
@@ -2652,7 +2817,7 @@ function openRulesDialog(node) {
       // einem Zahlenfeld waere sonst stillschweigend wirkungslos.
       rules[i] = {field: el.value, op: (SMART_OPS[field.type] || ["is"])[0], value: ""};
       if (field.type === SMART_TYPES.ENUM || field.type === SMART_TYPES.LEVEL
-          || field.type === SMART_TYPES.TAGS) {
+          || field.type === SMART_TYPES.TAGS || field.type === SMART_TYPES.PLAYLIST) {
         const first = field.options()[0];
         rules[i].value = first ? first.v : "";
       }
@@ -2695,6 +2860,7 @@ function openRulesDialog(node) {
   const close = () => {
     ov.style.display = "none";
     document.onkeydown = null;
+    SMART_EDITING_ID = null;
     // Die Vorschau hat SMART_CACHE mit einem ungespeicherten Regelwerk
     // gefuellt -- auf den tatsaechlich gespeicherten Stand zuruecksetzen.
     recomputeSmart(node.id);
@@ -2822,6 +2988,7 @@ function renderPlaylistHeader() {
       ? t(`tree.unit_${GRP_VIEW_FIELD[node.id]}_${n === 1 ? "singular" : "plural"}`)
       : n === 1 ? t("tree.track_singular") : t("tree.track_plural"),
   });
+  renderLinkHeader(node);
   const st = undoStackFor(node.id);
   const undoBtn = document.getElementById("plUndo");
   const redoBtn = document.getElementById("plRedo");
@@ -2930,6 +3097,12 @@ async function dropTreeNode(dragId, btn, where) {
   const targetId = btn.dataset.id;
   if (!dragId || !targetId || dragId === targetId) return;
 
+  // Knoten eines fremden Astes: Verschieben in Rekordbox/Music.app selbst.
+  const extDrag = extTreeNodeOf(dragId);
+  if (extDrag) { await moveExtNode(extDrag, btn, where); return; }
+  // Eigene Listen wandern nie in einen fremden Ast.
+  if (btn.dataset.ext) return;
+
   // Fremde Wurzeln (Music.app/Rekordbox) lassen sich NUR untereinander
   // verschieben -- TrackTab ist hier absichtlich kein gueltiges Ziel (bleibt
   // dadurch immer an erster Stelle, siehe treeRoots()) und nimmt auch keine
@@ -3027,6 +3200,9 @@ function selectView(id) {
   // nicht laufend im Hintergrund -- so bleibt render() unbelastet und das
   // Ergebnis ist trotzdem in dem Moment aktuell, in dem man es ansieht.
   if (String(id).startsWith("sm:")) recomputeSmart(id.slice(3));
+  // Verknuepfte Liste geoeffnet: abgleichen (Auslöser "beim Öffnen").
+  const openedId = String(id).replace(/^(pl|sm):/, "");
+  if (openedId !== String(id) && linksFor(openedId)) scheduleLinkSync(openedId, 0);
   const wasPl = String(state.view).startsWith("pl:");
   const isPl = String(id).startsWith("pl:");
   if (isPl && !wasPl) {
@@ -3110,6 +3286,8 @@ async function playlistApi(path, payload) {
   if (data && data.error) throw new Error(data.error);
   if (!res.ok) throw new Error(t("error.server_status", {status: res.status}));
   if (!data || !data.ok) throw new Error(t("error.unknown"));
+  // Eigene Aenderung an einer verknuepften Liste: entprellt abgleichen.
+  if (path === "/api/playlist-items" && payload && payload.id) scheduleLinkSync(payload.id);
   return data;
 }
 
@@ -3454,6 +3632,9 @@ function nodeMenuItems(node) {
       },
     });
   }
+  if (!locked && (node.kind === "playlist" || node.kind === "smart") && apiMode && (MUSIC_NAME || REKORDBOX_NAME)) {
+    listeSelbst.push({icon: ICONS.link, label: t("link.menu"), action: () => openLinkDialog(node)});
+  }
   if (!locked && !userLocked) {
     listeSelbst.push({
       icon: ICONS.edit, label: t("tree.edit"),
@@ -3655,14 +3836,537 @@ function openViewMenu(view, el) {
 // von selbst neu (st.loaded bleibt stehen, siehe loadExtTree()) -- einziger
 // Menuepunkt stoesst das gezielt wieder an.
 function extMenuItems(source) {
-  return [{icon: ICONS.reanalyse, label: t("tree.reload"), action: () => reloadExtTree(source)}];
+  return [
+    {icon: ICONS.listPlus, label: t("tree.dialog_new_playlist"), action: () => createExtNode(source, null, false)},
+    {icon: ICONS.folder, label: t("tree.dialog_new_folder"), action: () => createExtNode(source, null, true)},
+    {sep: true},
+    {icon: ICONS.reanalyse, label: t("tree.reload"), action: () => reloadExtTree(source)},
+  ];
+}
+
+// ── Verknuepfte Playlisten (playlistsync.py) ───────────────────────────────
+// Eine TrackTab-Liste haelt mit je einer Music- und Rekordbox-Playlist denselben
+// Inhalt. Die Regel rechnet der Server (merge()); hier: Verknuepfen, Ausloeser,
+// Rueckfragen (Massenloeschung, fehlende Music-Tracks), Anzeige.
+// var statt let/const: computeSmartRules() und renderTree() koennen schon vor
+// dieser Zeile laufen (erstes render()), let/const laegen dann noch in der TDZ.
+var PLAYLIST_LINKS = [];
+var LINK_SMART_SIG = new Map();          // pid -> Signatur des letzten Smart-Inhalts
+var LINK_TIMERS = new Map();             // pid -> Entprell-Timer
+var LINK_RUNNING = new Set();
+var LINK_IMPORT_DECLINED = new Map();    // pid -> Set abgelehnter Imports (diese Sitzung)
+
+function linksFor(pid) {
+  if (!PLAYLIST_LINKS || !PLAYLIST_LINKS.length) return null;
+  const own = PLAYLIST_LINKS.filter(l => l.playlist_id === String(pid));
+  if (!own.length) return null;
+  const out = {};
+  for (const l of own) out[l.source] = l;
+  return out;
+}
+async function loadPlaylistLinks() {
+  if (!apiMode) return;
+  try {
+    const data = await (await fetch("/api/playlist-links", {cache: "no-store"})).json();
+    if (data.ok) PLAYLIST_LINKS = data.links || [];
+  } catch (e) { /* ohne Verknuepfungen weiter */ }
+  renderTree();
+  renderPlaylistHeader();
+}
+function linkStateOf(links) {
+  const st = Object.values(links).map(l => l.state);
+  return st.includes("broken") || st.includes("error") ? "broken" : st.includes("pending") ? "pending" : "ok";
+}
+function linkBadgeHtml(n) {
+  let links = null;
+  if (n.node && (n.node.kind === "playlist" || n.node.kind === "smart")) links = linksFor(n.node.id);
+  else if (n.ext) {
+    const hit = PLAYLIST_LINKS.filter(l => l.source === n.ext.source && l.ext_id === String(n.ext.id));
+    if (hit.length) links = Object.fromEntries(hit.map(l => [l.source, l]));
+  }
+  if (!links) return "";
+  const state = linkStateOf(links);
+  const names = Object.values(links).map(l => {
+    if (n.ext) { const own = PLAYLISTS.find(p => p.id === l.playlist_id); return own ? own.name : ""; }
+    return `${t(l.source === "music" ? "tree.root_music" : "tree.root_rekordbox")}: ${l.ext_name || ""}`;
+  }).join(", ");
+  return `<span class="tlinked ${state}" title="${esc(t("link.badge_title", {names}) + (state !== "ok" ? " " + t("link.state_" + state) : ""))}">${ICONS.link}</span>`;
+}
+function renderLinkHeader(node) {
+  const el = document.getElementById("plHeadLink");
+  if (!el) return;
+  const links = node && !String(node.kind).startsWith("ext_") && node.kind !== "view" ? linksFor(node.id) : null;
+  if (!links || !apiMode) { el.hidden = true; el.innerHTML = ""; return; }
+  const ts = Math.max(0, ...Object.values(links).map(l => l.synced_ts || 0));
+  const state = linkStateOf(links);
+  const when = ts ? new Date(ts * 1000).toLocaleString("de-DE", {dateStyle: "short", timeStyle: "short"}) : t("link.never");
+  el.hidden = false;
+  el.innerHTML = `${ICONS.link}<span>${esc(Object.values(links).map(l => t(l.source === "music" ? "tree.root_music" : "tree.root_rekordbox")).join(" + "))}</span>
+    <span${state !== "ok" ? ' class="warn"' : ""}>${esc(state === "ok" ? t("link.synced_at", {when}) : t("link.state_" + state))}</span>
+    <button type="button" class="act small" id="plHeadLinkSync">${esc(t(LINK_RUNNING.has(String(node.id)) ? "link.syncing" : "link.sync_now"))}</button>`;
+  const btn = document.getElementById("plHeadLinkSync");
+  btn.disabled = LINK_RUNNING.has(String(node.id));
+  btn.onclick = () => syncLinkedPlaylist(node.id, true);
+}
+function scheduleLinkSync(pid, delay = 2000) {
+  pid = String(pid);
+  if (!apiMode || !linksFor(pid)) return;
+  clearTimeout(LINK_TIMERS.get(pid));
+  LINK_TIMERS.set(pid, setTimeout(() => { LINK_TIMERS.delete(pid); syncLinkedPlaylist(pid, false); }, delay));
+}
+async function syncAllLinks(onlyPending = false) {
+  const pids = [...new Set(PLAYLIST_LINKS
+    .filter(l => !onlyPending || l.state === "pending").map(l => l.playlist_id))];
+  for (const pid of pids) {
+    const node = PLAYLISTS.find(n => n.id === pid);
+    if (node && node.kind === "smart") recomputeSmart(pid);
+    await syncLinkedPlaylist(pid, false);
+  }
+}
+
+async function linkPost(body) {
+  const res = await fetch("/api/playlist-link-sync", {method: "POST",
+    headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  return data;
+}
+
+// Ein Abgleich: Plan holen, bei Bedarf nachfragen, anwenden. interactive = vom
+// Knopf ausgeloest (dann auch Hinweis, wenn sich nichts geaendert hat).
+async function syncLinkedPlaylist(pid, interactive) {
+  pid = String(pid);
+  const node = PLAYLISTS.find(n => n.id === pid);
+  const links = linksFor(pid);
+  if (!node || !links || LINK_RUNNING.has(pid)) return;
+  LINK_RUNNING.add(pid);
+  renderPlaylistHeader();
+  const sources = Object.keys(links);
+  const busy = async fn => {
+    // Beide fremden Aeste sperren, solange geschrieben wird.
+    let run = fn;
+    for (const s of sources) { const inner = run; run = () => withExtBusy(s, links[s].ext_id, inner); }
+    return run();
+  };
+  try {
+    const smartPaths = () => {
+      if (node.kind !== "smart") return undefined;
+      recomputeSmart(pid);
+      return [...(SMART_CACHE.get(pid) || [])];
+    };
+    const session = rbSessionToken();
+    let plan = await linkPost({playlist_id: pid, paths: smartPaths(), apply: false});
+    if (plan.busy) return;
+    // Fehlende Music-Tracks: nachfragen (Nutzerentscheidung), Ablehnung gilt bis zum Neuladen.
+    let skip = [];
+    const declined = LINK_IMPORT_DECLINED.get(pid) || new Set();
+    const ask = (plan.needs_import || []).filter(p => !declined.has(p));
+    skip = (plan.needs_import || []).filter(p => declined.has(p));
+    if (ask.length) {
+      const ok = await askConfirmSimple(t("link.import_title", {count: ask.length, name: node.name}),
+        t("link.import_note"), t("music.import_first_yes"));
+      if (ok) {
+        const rows = ask.map(p => DATA.find(r => r.p === p && !r.ext)).filter(Boolean);
+        const res = await addToLibrary(rows, {classList: {add() {}, remove() {}}});
+        if (res) rows.forEach(r => { r.im = 1; });
+        plan = await linkPost({playlist_id: pid, paths: smartPaths(), apply: false});
+        skip = (plan.needs_import || []).filter(p => declined.has(p));
+      } else {
+        ask.forEach(p => declined.add(p));
+        LINK_IMPORT_DECLINED.set(pid, declined);
+        skip = [...skip, ...ask];
+      }
+    }
+    let allowGuard = false;
+    if ((plan.guard || []).length) {
+      const g = plan.guard[0];
+      allowGuard = await askConfirmSimple(t("link.guard_title", {name: node.name}),
+        t(g.empty ? "link.guard_empty" : "link.guard_note", {count: g.remove, of: g.of,
+          side: t(g.side === "tracktab" ? "tree.root_tracktab" : g.side === "music" ? "tree.root_music" : "tree.root_rekordbox")}),
+        t("link.guard_yes"));
+      if (!allowGuard) return;
+    }
+    const total = Object.values(plan.summary || {}).reduce((a, s) => a + s.add + s.remove, 0);
+    if (!total) {
+      // Nichts zu tun: Status trotzdem festhalten (der Plan-Aufruf hat ihn gespeichert).
+      await loadPlaylistLinks();
+      if (interactive) note(t("link.nothing", {name: esc(node.name)}));
+      return;
+    }
+    const data = await busy(() => linkPost({playlist_id: pid, paths: smartPaths(), apply: true,
+      allow_guard: allowGuard, skip_import: skip, session}));
+    if (!data.applied) return;
+    PLAYLIST_LINKS = data.links || PLAYLIST_LINKS;
+    if (node.kind !== "smart" && data.items) {
+      setPlaylistLocal(pid, data.items);
+      try { await reloadPlaylists(); } catch (e) { /* lokaler Stand reicht */ }
+    }
+    for (const s of sources) {
+      if ((data.results || {})[s]) await rbRefreshAfterWrite(links[s].ext_id, s);
+    }
+    updateCards(); renderTree(); render();
+    const parts = Object.entries(data.summary || {}).filter(([, v]) => v.add || v.remove)
+      .map(([k, v]) => `${t(k === "tracktab" ? "tree.root_tracktab" : k === "music" ? "tree.root_music" : "tree.root_rekordbox")} +${v.add}/−${v.remove}`);
+    const pending = Object.entries(data.status || {}).filter(([k, v]) => !k.endsWith("_error") && v !== "ok").map(([k, v]) => t("link.side_state", {
+      side: t(k === "music" ? "tree.root_music" : "tree.root_rekordbox"), state: t("link.state_" + v)}));
+    note(t("link.done", {name: esc(node.name), parts: parts.join(", ") || "—"}) + (pending.length ? " " + pending.join(" ") : ""),
+         pending.length ? "soft" : false);
+  } catch (err) {
+    note(t("link.failed", {name: esc(node.name), error: err.message}), true);
+  } finally {
+    LINK_RUNNING.delete(pid);
+    renderPlaylistHeader();
+  }
+}
+
+// Dialog: je Quelle "keine", "neu anlegen" oder eine vorhandene normale Playlist.
+async function openLinkDialog(node) {
+  const links = linksFor(node.id) || {};
+  for (const s of ["music", "rekordbox"]) {
+    const enabled = s === "music" ? !!MUSIC_NAME : !!REKORDBOX_NAME;
+    if (enabled && !EXT_TREES[s].loaded) { try { await loadExtTree(s); } catch (e) { /* Fehler zeigt der Baum */ } }
+  }
+  const ov = document.getElementById("linkOverlay");
+  document.getElementById("linkTitle").textContent = t("link.dialog_title", {name: node.name});
+  document.getElementById("linkSmartNote").hidden = node.kind !== "smart";
+  // Schon mit einer anderen TrackTab-Liste verknuepft: im Baum gesperrt, mit deren Namen.
+  const takenBy = new Map(PLAYLIST_LINKS.filter(l => l.playlist_id !== node.id)
+    .map(l => [`${l.source}:${l.ext_id}`, l.playlist_id]));
+  const choice = {
+    music: links.music ? String(links.music.ext_id) : "",
+    rekordbox: links.rekordbox ? String(links.rekordbox.ext_id) : "",
+  };
+  const extNode = (s, id) => EXT_TREES[s].nodes.find(x => String(x.id) === String(id));
+  const extPath = (s, n) => {
+    const parts = [n.name];
+    for (let p = n.parent ? extNode(s, n.parent) : null, i = 0; p && i < 12; p = p.parent ? extNode(s, p.parent) : null, i++) parts.unshift(p.name);
+    return parts;
+  };
+  const specials = () => [
+    {value: "", label: t("link.none"), icon: SVG(LUCIDE_ICONS["unlink-2"] || "")},
+    {value: "new", label: t("link.new", {name: node.name}), icon: ICONS.listPlus},
+  ];
+  const paint = s => {
+    const btn = document.getElementById(s === "music" ? "linkMusic" : "linkRekordbox");
+    const v = choice[s];
+    const n = v && v !== "new" ? extNode(s, v) : null;
+    let html;
+    if (!v) html = `<span class="lplabel">${esc(t("link.none"))}</span>`;
+    else if (v === "new") html = `<span class="lpicon">${ICONS.listPlus}</span><span class="lplabel">${esc(t("link.new", {name: node.name}))}</span>`;
+    else {
+      const parts = n ? extPath(s, n) : [links[s] && links[s].ext_name || v];
+      const dir = parts.slice(0, -1).join(" / ");
+      html = `<span class="lpicon">${SVG(LUCIDE_ICONS["list-music"] || "")}</span><span class="lplabel">`
+        + (dir ? `<span class="lpdir">${esc(dir)} / </span>` : "") + `${esc(parts[parts.length - 1])}</span>`;
+    }
+    btn.innerHTML = html;
+    btn.title = n ? extPath(s, n).join(" / ") : "";
+  };
+  for (const s of ["music", "rekordbox"]) {
+    const field = document.getElementById(s === "music" ? "linkMusicField" : "linkRekordboxField");
+    const btn = document.getElementById(s === "music" ? "linkMusic" : "linkRekordbox");
+    const enabled = s === "music" ? !!MUSIC_NAME : !!REKORDBOX_NAME;
+    field.hidden = !enabled;
+    if (!enabled) continue;
+    paint(s);
+    btn.onclick = async () => {
+      const pick = await pickPlaylistFromTree({
+        title: t("link.pick_title", {source: t(s === "music" ? "tree.root_music" : "tree.root_rekordbox")}),
+        nodes: EXT_TREES[s].error && !EXT_TREES[s].nodes.length
+          ? async () => { throw new Error(EXT_TREES[s].error); } : EXT_TREES[s].nodes,
+        specials: specials(),
+        selected: choice[s],
+        disabled: id => {
+          const other = takenBy.get(`${s}:${id}`);
+          if (!other) return "";
+          const pl = PLAYLISTS.find(p => p.id === other);
+          return t("link.taken", {name: pl ? pl.name : other});
+        },
+      });
+      if (!pick) return;
+      choice[s] = pick.value;
+      paint(s);
+    };
+  }
+  const answer = await new Promise(resolve => {
+    ov.style.display = "flex";
+    const done = v => { ov.style.display = "none"; document.onkeydown = null; resolve(v); };
+    document.getElementById("linkNo").onclick = () => done(null);
+    document.getElementById("linkYes").onclick = () => done({
+      music: MUSIC_NAME ? choice.music : undefined,
+      rekordbox: REKORDBOX_NAME ? choice.rekordbox : undefined,
+    });
+    document.onkeydown = ev => { if (ev.key === "Escape") done(null); };
+  });
+  if (!answer) return;
+  const body = {playlist_id: node.id};
+  for (const s of ["music", "rekordbox"]) {
+    if (answer[s] === undefined) continue;
+    const cur = links[s] ? String(links[s].ext_id) : "";
+    if (answer[s] !== cur) body[s] = answer[s] || null;
+  }
+  if (Object.keys(body).length === 1) return;
+  try {
+    if (body.rekordbox) await rbEnsureClosed();
+    const data = await playlistApi("/api/playlist-links", body);
+    PLAYLIST_LINKS = data.links || [];
+    if (body.music === "new") await rbRefreshAfterWrite("__none__", "music");
+    if (body.rekordbox === "new") await rbRefreshAfterWrite("__none__", "rekordbox");
+    renderTree(); renderPlaylistHeader();
+    if (linksFor(node.id)) await syncLinkedPlaylist(node.id, true);
+  } catch (err) {
+    note(t("link.save_failed", {error: err.message}), true, !!err.sticky);
+  }
+}
+
+// ── Laufende Aenderung an einem fremden Ast ───────────────────────────────
+// Solange in Rekordbox/Music.app geschrieben und danach neu geladen wird, ist der
+// ganze Ast ausgegraut und nimmt keine Klicks/Ablagen an; der betroffene Knoten
+// pulsiert. Der Baum bleibt dabei aufgeklappt stehen (extRootNode()).
+const EXT_BUSY = new Map();          // source -> Zaehler
+const EXT_BUSY_NODE = new Map();     // source -> Set der Knoten-ids (Baum-Kennung)
+async function withExtBusy(source, nodeId, fn) {
+  EXT_BUSY.set(source, (EXT_BUSY.get(source) || 0) + 1);
+  const nodes = EXT_BUSY_NODE.get(source) || new Set();
+  const key = nodeId ? `${source}:${nodeId}` : EXT_SOURCES[source].root;
+  nodes.add(key);
+  EXT_BUSY_NODE.set(source, nodes);
+  renderTree();
+  try {
+    return await fn();
+  } finally {
+    const n = (EXT_BUSY.get(source) || 1) - 1;
+    if (n) EXT_BUSY.set(source, n); else EXT_BUSY.delete(source);
+    nodes.delete(key);
+    if (!nodes.size) EXT_BUSY_NODE.delete(source);
+    renderTree();
+  }
+}
+function extBusyClass(n) {
+  const source = n.lazy || (n.ext && n.ext.source);
+  if (!source || !EXT_BUSY.has(source)) return "";
+  return (EXT_BUSY_NODE.get(source) || new Set()).has(n.id) ? " extbusy extpulse" : " extbusy";
+}
+
+// ── Playlisten in Rekordbox/Music.app bearbeiten ──────────────────────────
+// Menue je Knoten eines fremden Astes. Rekordbox schreibt in master.db (Programm
+// muss geschlossen sein, weiches Loeschen wie Rekordbox selbst), Music.app per
+// AppleScript. Smart Playlists lassen sich nur umbenennen und loeschen.
+function extNodeMenuItems(source, node) {
+  const items = [];
+  if (node.kind === "folder") {
+    items.push({icon: ICONS.listPlus, label: t("tree.dialog_new_playlist"), action: () => createExtNode(source, node.id, false)});
+    items.push({icon: ICONS.folder, label: t("tree.dialog_new_folder"), action: () => createExtNode(source, node.id, true)});
+    items.push({sep: true});
+  }
+  if (source === "rekordbox" && node.kind === "playlist") {
+    items.push({icon: djIcon("upload"), label: t("rbpush.menu"), action: () => pushRekordboxPlaylist(node)});
+    items.push({sep: true});
+  }
+  items.push({icon: ICONS.edit, label: t("tree.rename"), action: () => renameExtNode(source, node)});
+  items.push({icon: ICONS.trash, cls: "del", label: t("tree.delete"), action: () => deleteExtNode(source, node)});
+  return items;
+}
+
+// Baum-Kennung "<source>:<id>" -> {source, node} eines fremden Knotens, sonst null.
+function extTreeNodeOf(treeId) {
+  for (const source of Object.keys(EXT_SOURCES)) {
+    if (!String(treeId).startsWith(`${source}:`)) continue;
+    const id = String(treeId).slice(source.length + 1);
+    const node = (EXT_TREES[source].nodes || []).find(n => String(n.id) === id);
+    return node ? {source, node} : null;
+  }
+  return null;
+}
+
+// Ablage eines gezogenen fremden Knotens: in einen Ordner, vor/hinter einen Knoten
+// derselben Ebene oder auf die Wurzel des Astes (= oberste Ebene). Nur innerhalb
+// desselben Programms. Music.app kennt keine eigene Reihenfolge (sortiert selbst
+// alphabetisch) und kann nicht zurueck auf die oberste Ebene verschieben.
+async function moveExtNode({source, node}, btn, where) {
+  let parentId = null, beforeId = null;
+  if (btn.dataset.lazy) {
+    if (btn.dataset.lazy !== source) return;
+  } else {
+    const tgt = extTreeNodeOf(btn.dataset.id);
+    if (!tgt || tgt.source !== source) { note(t("tree.ext_move_other"), "soft"); return; }
+    if (where === "into") {
+      if (tgt.node.kind !== "folder") return;
+      parentId = tgt.node.id;
+    } else {
+      parentId = tgt.node.parent || null;
+      const sibs = EXT_TREES[source].nodes
+        .filter(n => (n.parent || null) === parentId && String(n.id) !== String(node.id))
+        .sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      const at = sibs.findIndex(n => String(n.id) === String(tgt.node.id));
+      beforeId = where === "before" ? tgt.node.id : (sibs[at + 1] ? sibs[at + 1].id : null);
+    }
+  }
+  if (parentId && String(parentId) === String(node.id)) return;
+  if (source === "music") {
+    if (!parentId) { note(t("tree.music_no_top"), "soft"); return; }
+    if (String(parentId) === String(node.parent || "")) return;   // keine Reihenfolge in Music
+  }
+  await withExtBusy(source, node.id, async () => {
+    try {
+      await extNodeEdit(source, {op: "move", id: node.id, parent_id: parentId, before_id: beforeId});
+      if (parentId) state.treeClosed = state.treeClosed.filter(id => id !== `${source}:${parentId}`);
+      await rbRefreshAfterWrite("__none__", source);
+    } catch (err) {
+      note(t("tree.move_failed", {error: err.message}), true, !!err.sticky);
+    }
+  });
+}
+
+async function extNodeEdit(source, body) {
+  if (source === "rekordbox") await rbEnsureClosed();
+  return rbPost(source === "rekordbox" ? "/api/rekordbox-playlist-edit" : "/api/music-playlist-edit", body);
+}
+
+async function createExtNode(source, parentId, folder) {
+  const props = await askPlaylistProps(t(folder ? "tree.dialog_new_folder" : "tree.dialog_new_playlist"), null, false);
+  if (!props) return;
+  await withExtBusy(source, parentId, () => createExtNodeRun(source, parentId, folder, props));
+}
+async function createExtNodeRun(source, parentId, folder, props) {
+  try {
+    const data = await extNodeEdit(source, {op: "create", name: props.name, parent_id: parentId, folder});
+    if (parentId) state.treeClosed = state.treeClosed.filter(id => id !== `${source}:${parentId}`);
+    state.treeClosed = state.treeClosed.filter(id => id !== EXT_SOURCES[source].root);
+    await rbRefreshAfterWrite("__none__", source);
+    note(t("tree.created", {name: esc(data.name || props.name)}));
+  } catch (err) {
+    note(t("tree.create_failed", {error: err.message}), true, !!err.sticky);
+  }
+}
+
+async function renameExtNode(source, node) {
+  const props = await askPlaylistProps(t("tree.rename"), {name: node.name}, false);
+  if (!props || props.name === node.name) return;
+  await withExtBusy(source, node.id, () => renameExtNodeRun(source, node, props));
+}
+async function renameExtNodeRun(source, node, props) {
+  try {
+    await extNodeEdit(source, {op: "rename", id: node.id, name: props.name});
+    const view = VIEWS.find(v => v.id === `${EXT_SOURCES[source].prefix}${node.id}`);
+    if (view) view.label = props.name;
+    await rbRefreshAfterWrite("__none__", source);
+    if (state.view === view?.id) renderPlaylistHeader();
+  } catch (err) {
+    note(t("tree.rename_failed", {error: err.message}), true, !!err.sticky);
+  }
+}
+
+async function deleteExtNode(source, node) {
+  const ok = await askConfirmSimple(t("tree.delete_title", {name: node.name}),
+    t(node.kind === "folder" ? "tree.ext_delete_note_folder" : "tree.ext_delete_note",
+      {app: t(source === "rekordbox" ? "tree.root_rekordbox" : "tree.root_music")}));
+  if (!ok) return;
+  await withExtBusy(source, node.id, () => deleteExtNodeRun(source, node));
+}
+async function deleteExtNodeRun(source, node) {
+  try {
+    await extNodeEdit(source, {op: "delete", id: node.id});
+    // Geoeffnete Liste (oder eine darin) weg: zurueck auf die Bibliothek.
+    if (extSourceOfView(state.view) === source) {
+      const gone = new Set([node.id]);
+      let grew = true;
+      while (grew) {
+        grew = false;
+        for (const n of EXT_TREES[source].nodes) {
+          if (n.parent && gone.has(String(n.parent)) && !gone.has(String(n.id))) { gone.add(String(n.id)); grew = true; }
+        }
+      }
+      if (gone.has(String(state.view).slice(EXT_SOURCES[source].prefix.length))) selectView("all");
+    }
+    await rbRefreshAfterWrite("__none__", source);
+    note(t("tree.deleted", {name: esc(node.name)}));
+  } catch (err) {
+    note(t("tree.delete_failed", {error: err.message}), true, !!err.sticky);
+  }
+}
+
+// "Mit TrackTab abgleichen": alle bekannten Tracks einer Rekordbox-Playlist, dieselbe
+// Auswahl wie beim Ziehen, angehakte bekommen TrackTabs Fassung.
+async function pushRekordboxPlaylist(node) {
+  let entry;
+  try { entry = await loadExtPlaylist("rekordbox", node.id); }
+  catch (err) { note(t("tree.load_failed", {error: err.message}), true); return; }
+  const rows = [...new Set(entry.paths)].map(p => ROW_BY_PATH.get(p)).filter(r => r && !r.ext && !r.gone);
+  if (!rows.length) { note(t("rbpush.nothing"), "soft"); return; }
+  const picked = await askRekordboxOverwrite(rows, t("rbpush.title_list", {name: node.name}));
+  if (!picked || !picked.length) return;
+  try { await rbEnsureClosed(); }
+  catch (err) { note(t("rb.edit_failed", {error: err.message}), true, !!err.sticky); return; }
+  await djRekordboxRun(picked, "update");
+}
+
+// Ziehen auf eine Music-Playlist. Tracks, die Music.app noch nicht kennt, vorher
+// importieren (derselbe Weg wie "Zu Music hinzufügen", Rueckfrage).
+async function dropTracksOnMusic(playlistId, playlistName, paths) {
+  await withExtBusy("music", playlistId, () => dropTracksOnMusicRun(playlistId, playlistName, paths));
+}
+async function dropTracksOnMusicRun(playlistId, playlistName, paths) {
+  let rows = paths.map(p => DATA.find(r => r.p === p && !r.ext)).filter(Boolean);
+  if (!rows.length) return;
+  const outside = rows.filter(r => !r.im);
+  if (outside.length) {
+    const ok = await askConfirmSimple(t("music.import_first_title", {count: outside.length}),
+      t("music.import_first_note"), t("music.import_first_yes"));
+    if (!ok) return;
+    const noBtn = {classList: {add() {}, remove() {}}};
+    const res = await addToLibrary(outside, noBtn);
+    if (!res) return;
+    outside.forEach(r => { r.im = 1; });
+  }
+  try {
+    const data = await rbPost("/api/music-playlist-add", {playlist_id: playlistId, paths: rows.map(r => r.p)});
+    await rbRefreshAfterWrite(playlistId, "music");
+    note(t("tree.drop_added", {count: data.added.length, track_word: t(data.added.length === 1 ? "tree.track_singular" : "tree.track_plural"), name: esc(playlistName)})
+       + (data.missing.length ? " " + t("music.add_missing", {count: data.missing.length}) : ""),
+       data.missing.length ? "soft" : false);
+  } catch (err) {
+    note(t("tree.drop_failed", {error: err.message}), true);
+  }
+}
+
+// Geoeffnete, normale Music-Playlist ({id, name, key}) oder null.
+function currentMusicPlaylist() {
+  const id = String(state.view || "");
+  if (extSourceOfView(id) !== "music" || !apiMode) return null;
+  const plId = id.slice(EXT_SOURCES.music.prefix.length);
+  const node = EXT_TREES.music.nodes.find(n => String(n.id) === plId);
+  if (!node || node.kind !== "playlist") return null;
+  return {id: plId, name: node.name, key: `music:${plId}`};
+}
+
+async function removeFromMusicPlaylist(rows) {
+  const pl = currentMusicPlaylist();
+  if (!pl || !rows.length) return;
+  const entry = EXT_CONTENTS.get(pl.key);
+  const keys = new Set(rows.map(extRowKey));
+  const ids = [...new Set(((entry && entry.entries) || []).filter(e => keys.has(e.key) && e.trackId).map(e => e.trackId))];
+  if (!ids.length) return;
+  const ok = await askConfirmSimple(t("music.remove_title", {count: ids.length, playlist: pl.name}),
+    t("music.remove_note"));
+  if (!ok) return;
+  await withExtBusy("music", pl.id, async () => {
+    try {
+      const data = await rbPost("/api/music-playlist-remove", {playlist_id: pl.id, track_ids: ids});
+      state.selected.clear();
+      await rbRefreshAfterWrite(pl.id, "music");
+      note(t("rb.removed_entries", {count: data.removed, playlist: esc(pl.name)}));
+    } catch (err) {
+      note(t("rb.edit_failed", {error: err.message}), true);
+    }
+  });
 }
 function openExtMenu(source, el) {
   openContextMenu(extMenuItems(source), el);
 }
 function reloadExtTree(source) {
   const st = EXT_TREES[source];
-  st.nodes = []; st.loaded = false; st.error = null;
+  st.loaded = false; st.error = null;
   for (const key of [...EXT_CONTENTS.keys()]) if (key.startsWith(`${source}:`)) EXT_CONTENTS.delete(key);
   loadExtTree(source);
 }
@@ -3812,6 +4516,7 @@ async function setFavorite(r, playlistId, flag) {
   const before = PLAYLIST_SETS[playlistId].has(r.p);
   flag ? PLAYLIST_SETS[playlistId].add(r.p) : PLAYLIST_SETS[playlistId].delete(r.p);
   PLAYLIST_ITEMS[playlistId] = [...PLAYLIST_SETS[playlistId]];
+  refreshSmartAfterListChange();
   updateCards(); render();
   const listName = (merkPlaylists().find(n => n.id === playlistId) || {}).name || playlistId;
   try {
@@ -3821,6 +4526,7 @@ async function setFavorite(r, playlistId, flag) {
   } catch (err) {
     before ? PLAYLIST_SETS[playlistId].add(r.p) : PLAYLIST_SETS[playlistId].delete(r.p);
     PLAYLIST_ITEMS[playlistId] = [...PLAYLIST_SETS[playlistId]];
+    refreshSmartAfterListChange();
     updateCards(); render();
     note(t("toast.save_failed", {error: err.message}), true);
   }
@@ -4088,6 +4794,7 @@ async function initStorage() {
       // ohne Server, er zeigt dann nur die festen Knoten.
       document.querySelector(".treehead-actions").style.display = "";
       await syncMarks();
+      loadPlaylistLinks().then(() => setTimeout(syncAllLinks, 3000));
       fetch("/api/settings").then(r => r.json()).then(s => {
         // Vor dem Fetch stand hier schon die Browsersprache (siehe
         // resolveLang()) -- eine explizite Wahl in den Einstellungen
@@ -4130,6 +4837,8 @@ async function initStorage() {
         PHRASES_AVAILABLE = !!s.phrases_available;
         // Auto Cue (Modelle vorhanden), gleiche Logik.
         AUTOCUE_AVAILABLE = !!s.autocue_available;
+        // Laeuft ein Auto-Cue-Training (auch nach Neuladen), Stand unter dem Titel zeigen.
+        if (s.autocue_train_available) pollAcTrain();
         // Stem-Trennung (onnxruntime + Demucs-Modell), gleiche Logik.
         STEMS_AVAILABLE = !!s.stems_available;
         BPMKEY_INSTALLED = !!s.bpmkey_installed;
@@ -4158,7 +4867,6 @@ async function initStorage() {
         document.getElementById("btnRekordboxSync").style.display = REKORDBOX_NAME ? "" : "none";
         document.getElementById("btnMusicAddedSync").style.display = MUSIC_NAME ? "" : "none";
         renderSourcesDot();
-        REKORDBOX_PLAYLIST = s.values.rekordbox_playlist || "";
         RENAME_PATTERN = s.values.rename_pattern || "";
         REKORDBOX_QUALITY_CHECK = s.values.rekordbox_quality_check !== undefined
           ? !!s.values.rekordbox_quality_check : true;
@@ -4967,7 +5675,9 @@ function saveDropColumns() {
 // Kopfzeile neu gebaut werden -- daran haengt syncColumnsForView() beim
 // Listenwechsel.
 const columnStoreKey = () => {
-  if (state.layout === "dj") return "dj";
+  // Zwei Schluessel, weil "#" nur in einer Playlist sichtbar ist (DJ_COLUMN_STORE.hidden)
+  // -- sonst bliebe die Kopfzeile beim Wechsel Playlist <-> feste Liste stehen.
+  if (state.layout === "dj") return djListOpen() ? "dj:list" : "dj";
   const v = activeColumnView();
   return v ? `cv:${v.id}` : `std:${state.layout}`;
 };
@@ -5249,7 +5959,6 @@ let FIELD_LABELS = {a:t("field.artist"), t:t("field.title"), al:t("field.album")
 // dem Laden der Einstellungen erneut aufgerufen, damit ein explizit
 // gewaehltes ui_language auch bei diesen Texten tatsaechlich greift.
 function refreshI18nCache() {
-  REKORDBOX_MISSING_HINT = t("hint.rekordbox_missing");
   labels = {FAKE:t("verdict.fake"), VERDAECHTIG:t("verdict.suspicious"), OK:t("verdict.ok"), UNKLAR:t("verdict.unclear")};
   SEARCH_HELP_ENTRIES = [
     [t("search.help.album.token"), t("field.album"), t("search.help.album.example")],
@@ -6442,7 +7151,7 @@ const CELL_RENDERERS = {
           return r.cv
             ? `<button class="covercell-btn" data-cover="${r.i}" title="${title}">
                  <img class="covercell${cls}" loading="lazy" src="${coverUrl(r.p)}" alt="Cover"></button>`
-            : `<div class="covercell-empty${cls}" title="${title}"></div>`;
+            : `<div class="covercell-empty${cls}" title="${title}">${SVG(LUCIDE_ICONS["eighth-notes"])}</div>`;
         })()
       : ""}</td>`,
   al: r => `<td>${esc(r.al || "")}</td>`,
@@ -6479,12 +7188,15 @@ const CELL_RENDERERS = {
   a: r => `<td>${esc(r.a || "")}</td>`,
   // In der DJ-Ansicht eine Spalte fuer beides, siehe DJ_COLUMNS.
   t: r => cellLayout() === "dj"
-    ? `<td class="titlecell djtrack"><b>${esc(r.t || baseName(r.p))}</b>${r.a ? `<span> – ${esc(r.a)}</span>` : ""}</td>`
+    ? `<td class="titlecell djtrack"><b>${esc(r.t || baseName(r.p))}</b>${r.a ? `<span> – ${esc(r.a)}</span>` : ""}${
+        r.ext ? ` <span class="extbadge">${esc(t(r.p ? "badge.not_scanned" : "badge.no_local_file"))}</span>` : ""}${djMetaLine(r)}</td>`
     : `<td class="titlecell">${esc(r.t || "")}</td>`,
   // Zweites Argument: nur die Haupttabelle bindet den Klick-Handler fuer
   // data-copy, in renderDrops bleibt der Pfad deshalb ein schlichter Text.
   // Die Statushinweise schliessen sich je Tabelle gegenseitig aus (gone/mc
   // gibt es nur in DATA, mikPick/libAdded nur in drops).
+  // Auffaelligkeiten stehen nicht mehr als Zaehler am Titel -- dafuer gibt es
+  // die eigene Spalte "Auffälligkeiten" (Nutzervorgabe).
   n: (r, copyable) => `<td><div class="name">${esc(displayName(r))}${
         r.ext ? ` <span class="extbadge">${esc(t(r.p ? "badge.not_scanned" : "badge.no_local_file"))}</span>`
               : r.gone ? ` <span class="missing">${esc(t("badge.file_deleted"))}</span>` : ""}${
@@ -6494,13 +7206,47 @@ const CELL_RENDERERS = {
           : "").join("")}${
         r.mc ? ` <span class="correctedtag">${esc(t("badge.corrected"))}</span>` : ""}${
         r.mikPick ? ` <span class="miktag">${esc(t("badge.mik_pick"))}</span>` : ""}${
-        r.libAdded ? ` <span class="miktag">${esc(t("badge.lib_added"))}</span>` : ""}${
-        hasAnyTagIssues(r) ? ` <span class="probtag" data-tagissues="${esc(r.p)}" title="${esc(t("views.tag_issues"))}">${
-          TREE_ICONS.tag_issues}${rowIssues(r).length}</span>` : ""}</div>
+        r.libAdded ? ` <span class="miktag">${esc(t("badge.lib_added"))}</span>` : ""}</div>
       ${copyable
         ? `<div class="path copyable" data-copy="${esc(r.p)}" title="${esc(t("action.copy_path"))}">${esc(r.p)}</div>`
         : `<div class="path">${esc(r.p)}</div>`}</td>`,
 };
+
+// DJ-Liste: kleine Zeile unter Titel/Interpret -- Format und die in der Datei
+// deklarierte Bitrate (wie die Spalte "Bitrate", nicht die gemessene), dazu
+// Pfad kopieren und Im Finder zeigen. Ersatzzeilen fremder Listen (r.ext) und
+// fehlende Dateien bekommen keine Knoepfe: /api/reveal kennt nur DB-Zeilen.
+function djMetaLine(r) {
+  if (r.ext || !r.p) return "";
+  const parts = [fileExt(r.p)];
+  if (r.fam === "lossless") parts.push(t("field.lossless"));
+  else if (r.kb) parts.push(`${r.kb} kbps${r.mo ? " " + r.mo : ""}`);
+  const btns = apiMode && !r.gone
+    ? `<button class="djmeta-btn" data-djcopy="${esc(r.p)}" title="${esc(t("dj.copy_path"))}">${SVG(LUCIDE_ICONS.copy)}</button>` +
+      `<button class="djmeta-btn" data-reveal="${esc(r.p)}" title="${esc(t("action.reveal_finder"))}">${ICONS.folder}</button>`
+    : "";
+  return `<div class="djmeta"><span class="djmeta-fmt">${esc(parts.filter(Boolean).join(" · "))}</span>${btns}</div>`;
+}
+
+// Text in die Zwischenablage. Die Clipboard-API ist nicht ueberall erlaubt
+// (eingebettete Browser-Ansichten verweigern sie), dann ueber ein
+// unsichtbares Textfeld und execCommand("copy") -- das geht, solange der
+// Aufruf aus einem Klick kommt. Wirft, wenn beides scheitert.
+async function copyPlainText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return;
+  } catch (err) { /* Rueckfall unten */ }
+  const ta = document.createElement("textarea");
+  ta.value = text;
+  ta.setAttribute("readonly", "");
+  ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;pointer-events:none";
+  document.body.appendChild(ta);
+  ta.select();
+  const ok = document.execCommand("copy");
+  ta.remove();
+  if (!ok) throw new Error("copy failed");
+}
 
 // Ganze Werte ohne ",0" ("130"), echte Nachkommastellen bleiben ("127,5"). Ein im
 // DJ-Editor geaendertes Tempo steht mit zwei Stellen da ("125,50"). Rot, wenn das Tempo
@@ -6598,112 +7344,88 @@ async function rescanRow(r) {
   }
 }
 
+// Eintraege des "Weitere Optionen"-Menues einer Zeile, in denselben Gruppen
+// wie die Sammelleisten (Ueberschrift = {head}). Je Ansicht:
+//  - Bearbeiten: alles, was nicht schon als Icon in der Zeile steht.
+//  - Player: nur die Playlisten-Gruppe (reine Hoer-Ansicht, siehe
+//    renderPlayerBulkBar()) -- damit sich ein Track auch dort aus der offenen
+//    Liste nehmen laesst.
+//  - DJ: keine Aktionsspalte, das Menue haengt an der Fuellzelle; deshalb
+//    zusaetzlich "Zu Playlist hinzufuegen" und "Tags bearbeiten".
+// Leer -> kein Knopf.
 function rowMoreMenuItems(r) {
-  const items = [];
-  // "Zu Playlist hinzufuegen" sitzt als eigenes Icon im "top"-Aktionsblock
-  // neben "Zur Warteschlange hinzufuegen" (siehe render()) -- hier nur noch
-  // das Gegenstueck, das ausserhalb der jeweiligen Liste keinen Sinn ergibt.
+  const layout = state.layout;
   const inList = apiMode ? currentPlaylistNode() : null;
-  if (inList) {
-    items.push({
-      icon: ICONS.listX, label: t("tree.remove_from_list", {name: inList.name}),
-      action: () => removeFromPlaylist(inList.id, [r.p]),
-    });
+  const rbList = currentRekordboxPlaylist(), musicList = currentMusicPlaylist();
+  const live = !r.gone && apiMode;
+  const groups = [{head: t("bulk.group_lists"), items: [
+    layout === "dj" && live && {icon: ICONS.listPlus, label: t("tree.add_to_playlist"), action: () => openPlaylistPicker([r.p])},
+    inList && {icon: ICONS.listX, label: t("tree.remove_from_list", {name: inList.name}),
+      action: () => removeFromPlaylist(inList.id, [r.p])},
+    rbList && {icon: ICONS.listX, label: t("rb.remove_from_playlist", {playlist: rbList.name}),
+      action: () => removeFromRekordboxPlaylist([r])},
+    musicList && {icon: ICONS.listMinus, label: t("music.remove_from_playlist", {playlist: musicList.name}),
+      action: () => removeFromMusicPlaylist([r])},
+  ]}];
+  if (layout !== "player") {
+    const withRb = REKORDBOX_NAME && apiMode;
+    groups.push({head: t("bulk.group_rekordbox"), items: [
+      withRb && !r.gone && !r.rb && {icon: SVG(LUCIDE_ICONS.plus), label: t("dj.rb_add"), title: t("dj.rb_add_title"),
+        action: () => djBulkRekordbox([r], "add")},
+      withRb && !r.gone && r.rb && {icon: SVG(LUCIDE_ICONS.download), label: t("dj.rb_load"), title: t("dj.rb_load_title"),
+        action: () => djBulkRekordbox([r], "load")},
+      withRb && !r.gone && r.rb && {icon: SVG(LUCIDE_ICONS.upload), label: t("dj.rb_update"), title: t("dj.rb_update_title"),
+        action: () => djBulkRekordbox([r], "update")},
+      withRb && (rbList || (r.rb && !r.ext)) && {icon: ICONS.delete, cls: "del", label: t("rb.remove_from_collection"),
+        action: () => removeFromRekordboxCollection([r])},
+    ]});
+    groups.push({head: t("bulk.group_analysis"), items: [
+      live && BPMKEY_AVAILABLE && {icon: ICONS.analyseBpmKey, title: t("action.bpmkey_title"),
+        label: t("rowmenu.bpmkey"), action: () => analyseBpmKey([r])},
+      live && GENREMOOD_AVAILABLE && {icon: ICONS.analyseGenreMood, title: t("action.genremood_title"),
+        label: t("rowmenu.genremood"), action: () => analyseGenreMood([r])},
+      live && PHRASES_AVAILABLE && {icon: ICONS.analyseGrid, title: t("bulk.dj_analyse_title"),
+        label: t("rowmenu.grid"), action: () => analysePhrases([r], false, "grid")},
+      live && PHRASES_AVAILABLE && {icon: ICONS.analysePhrases, title: t("bulk.dj_analyse_title"),
+        label: t("rowmenu.phrases_only"), action: () => analysePhrases([r], false, "phrases")},
+      live && PHRASES_AVAILABLE && {icon: ICONS.analyseBoth, title: t("action.phrases_title"),
+        label: t("rowmenu.phrases"), action: () => analysePhrases([r], false, "both")},
+      live && STEMS_AVAILABLE && {icon: ICONS.splitStems, title: t("action.stems_title"),
+        label: t("rowmenu.stems"), action: () => openStemsDialog(r)},
+      live && !r.ext && {icon: ICONS.rescan, title: t("action.rescan"),
+        label: t("rowmenu.rescan"), action: () => rescanRow(r)},
+    ]});
+    groups.push({head: t("bulk.group_edit"), items: [
+      layout === "dj" && live && {icon: ICONS.edit, label: t("action.edit_tags"), action: () => openTagsPopup(r)},
+      live && {icon: ICONS.convert, title: t("bulk.convert_title"),
+        label: t("rowmenu.convert"), action: () => openConvertPopup([r], false)},
+      live && isFixable(r) && {icon: ICONS.fix, title: t("action.fix_bitrate", {kbps: r.mk}),
+        label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r)},
+      live && !r.ext && {icon: ICONS.renameFile, title: t("action.rename_library_title"),
+        label: t("rowmenu.rename_file"), action: () => renameLibraryRows([r])},
+      apiMode && keyNeedsSync(r) && {icon: ICONS.keySync, title: t("action.write_key_title", {example: keyNotationExample()}),
+        label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r])},
+    ]});
+    groups.push({head: t("bulk.group_check"), items: [
+      !r.gone && {icon: r.mc ? ICONS.uncorrect : ICONS.correct, cls: "corr",
+        title: r.mc ? t("action.undo_correct") : t("action.mark_corrected"),
+        label: r.mc ? t("rowmenu.undo_correct") : t("rowmenu.mark_corrected"),
+        action: () => setCorrected(r, !r.mc)},
+      !r.gone && {icon: ICONS.eye, cls: "ig",
+        title: r.ig ? t("action.show_track") : t("action.hide_track"),
+        label: r.ig ? t("rowmenu.show_track") : t("rowmenu.hide_track"),
+        action: () => setIgnored(r, !r.ig)},
+    ]});
+    groups.push({head: t("bulk.group_delete"), items: [
+      live && {icon: ICONS.trash, cls: "del", title: t("action.to_trash"),
+        label: t("rowmenu.trash"), action: () => trashTrack(r)},
+    ]});
   }
-  const rbList = currentRekordboxPlaylist();
-  if (rbList) {
-    items.push({
-      icon: ICONS.listX, label: t("rb.remove_from_playlist", {playlist: rbList.name}),
-      action: () => removeFromRekordboxPlaylist([r]),
-    });
+  const items = [];
+  for (const g of groups) {
+    const list = g.items.filter(Boolean);
+    if (list.length) items.push({head: g.head}, ...list);
   }
-  const sep = () => { if (items.length && !items[items.length - 1].sep) items.push({sep: true}); };
-  sep();
-  if (!r.gone && apiMode && BPMKEY_AVAILABLE) {
-    items.push({
-      icon: ICONS.analyseBpmKey, cls: "", title: t("action.bpmkey_title"),
-      label: t("rowmenu.bpmkey"), action: () => analyseBpmKey([r]),
-    });
-  }
-  if (!r.gone && apiMode && GENREMOOD_AVAILABLE) {
-    items.push({
-      icon: ICONS.analyseGenreMood, cls: "", title: t("action.genremood_title"),
-      label: t("rowmenu.genremood"), action: () => analyseGenreMood([r]),
-    });
-  }
-  if (!r.gone && apiMode && PHRASES_AVAILABLE) {
-    items.push({
-      icon: ICONS.analysePhrases, cls: "", title: t("action.phrases_title"),
-      label: t("rowmenu.phrases"), action: () => analysePhrases([r]),
-    });
-  }
-  if (!r.gone && apiMode && STEMS_AVAILABLE) {
-    items.push({
-      icon: ICONS.splitStems, cls: "", title: t("action.stems_title"),
-      label: t("rowmenu.stems"), action: () => openStemsDialog(r),
-    });
-  }
-  if (!r.gone && apiMode && !r.ext) {
-    items.push({
-      icon: ICONS.pickaxe, cls: "", title: t("action.rescan"),
-      label: t("rowmenu.rescan"), action: () => rescanRow(r),
-    });
-  }
-  sep();
-  if (!r.gone && apiMode) {
-    items.push({
-      icon: ICONS.convert, cls: "", title: t("bulk.convert_title"),
-      label: t("rowmenu.convert"), action: () => openConvertPopup([r], false),
-    });
-  }
-  if (!r.gone && apiMode && isFixable(r)) {
-    items.push({
-      icon: ICONS.fix, cls: "", title: t("action.fix_bitrate", {kbps: r.mk}),
-      label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r),
-    });
-  }
-  if (!r.gone && apiMode && !r.ext) {
-    items.push({
-      icon: ICONS.renameFile, cls: "", title: t("action.rename_library_title"),
-      label: t("rowmenu.rename_file"), action: () => renameLibraryRows([r]),
-    });
-  }
-  if (apiMode && keyNeedsSync(r)) {
-    items.push({
-      icon: ICONS.keySync, cls: "", title: t("action.write_key_title", {example: keyNotationExample()}),
-      label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r]),
-    });
-  }
-  if (!r.gone) {
-    items.push({
-      icon: r.mc ? ICONS.uncorrect : ICONS.correct, cls: "corr",
-      title: r.mc ? t("action.undo_correct") : t("action.mark_corrected"),
-      label: r.mc ? t("rowmenu.undo_correct") : t("rowmenu.mark_corrected"),
-      action: () => setCorrected(r, !r.mc),
-    });
-    sep();
-    items.push({
-      icon: ICONS.eye, cls: "ig",
-      title: r.ig ? t("action.show_track") : t("action.hide_track"),
-      label: r.ig ? t("rowmenu.show_track") : t("rowmenu.hide_track"),
-      action: () => setIgnored(r, !r.ig),
-    });
-  }
-  const danger = [];
-  if (REKORDBOX_NAME && apiMode && (rbList || (r.rb && !r.ext))) {
-    danger.push({
-      icon: ICONS.delete, cls: "del", label: t("rb.remove_from_collection"),
-      action: () => removeFromRekordboxCollection([r]),
-    });
-  }
-  if (!r.gone && apiMode) {
-    danger.push({
-      icon: ICONS.trash, cls: "del", title: t("action.to_trash"),
-      label: t("rowmenu.trash"), action: () => trashTrack(r),
-    });
-  }
-  if (danger.length) { sep(); items.push(...danger); }
-  while (items.length && items[items.length - 1].sep) items.pop();
   return items;
 }
 
@@ -6734,11 +7456,13 @@ function openContextMenu(items, btn) {
   // Handler duerfen deshalb NICHT ueber den Kind-Index laufen -- ein Trenner
   // wuerde die Zuordnung um eins verschieben. Stattdessen nur die Knoepfe
   // einsammeln und mit den Eintraegen ohne Trenner paaren.
+  // {head: "..."} wird zur Gruppenueberschrift (rowMoreMenuItems()).
   menu.innerHTML = items.map(it => it.sep
     ? `<div class="menusep"></div>`
+    : it.head ? `<div class="menuhead">${esc(it.head)}</div>`
     : `<button type="button" class="${it.cls || ""}" title="${esc(it.title || it.label)}">` +
       `${it.icon || ""}<span>${esc(it.label)}</span></button>`).join("");
-  const actions = items.filter(it => !it.sep);
+  const actions = items.filter(it => !it.sep && !it.head);
   menu.querySelectorAll("button").forEach((el, idx) => el.onclick = ev => {
     ev.stopPropagation();
     closeRowMoreMenu();
@@ -6765,7 +7489,127 @@ document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeRowMo
 window.addEventListener("scroll", closeRowMoreMenu, {passive: true, capture: true});
 window.addEventListener("resize", closeRowMoreMenu);
 
+// ── Tooltips ─────────────────────────────────────────────────────────────
+// Eigener, schlanker Tooltip im Stil von Tippy.js statt der Browser-Tooltips
+// (die erscheinen erst nach ~1 s und sehen je Browser anders aus). Bewusst
+// keine Bibliothek: Tippy braucht Popper und muesste vendort und lizenziert
+// werden. Gelesen wird das vorhandene title-Attribut -- kein Aufrufer muss
+// etwas aendern, die Texte laufen weiter ueber t(). Beim Ueberfahren wandert
+// es nach data-tip-title (sonst erschiene zusaetzlich der Browser-Tooltip),
+// beim Verlassen zurueck. Gesperrte Knoepfe bleiben aussen vor: nicht jede
+// Engine meldet dort Mausereignisse, der Browser-Tooltip bleibt dann stehen.
+// Eine zweite, gedaempfte Zeile kommt optional aus data-tip-hint.
+const TIP = {el: null, target: null, timer: 0, hiddenAt: 0};
+const TIP_SELECTOR = "button[title]:not(:disabled), a[title], [data-tip-title]";
+const TIP_DELAY_MS = 350;
+
+function tipElement() {
+  if (!TIP.el) {
+    TIP.el = document.createElement("div");
+    TIP.el.className = "tiptip";
+    TIP.el.setAttribute("role", "tooltip");
+    document.body.appendChild(TIP.el);
+  }
+  return TIP.el;
+}
+
+function tipRelease(el) {
+  if (el && el.dataset.tipTitle !== undefined) {
+    // Hat jemand den Titel zwischenzeitlich neu gesetzt, gilt der neue.
+    if (!el.hasAttribute("title")) el.setAttribute("title", el.dataset.tipTitle);
+    delete el.dataset.tipTitle;
+  }
+}
+
+function hideTip() {
+  clearTimeout(TIP.timer);
+  if (TIP.el && TIP.el.classList.contains("show")) TIP.hiddenAt = Date.now();
+  if (TIP.el) TIP.el.classList.remove("show");
+  tipRelease(TIP.target);
+  TIP.target = null;
+}
+
+function showTip(el) {
+  if (!el.isConnected || TIP.target !== el) return;
+  // "Titel — Erklaerung" (so stehen viele Texte in de.js) teilt sich selbst
+  // in fette erste und gedaempfte zweite Zeile.
+  let text = el.dataset.tipTitle || "", hint = el.dataset.tipHint || "";
+  // data-tip-plain: reiner Erklaertext (? in den Einstellungen), nicht fett
+  // und nicht am Gedankenstrich geteilt.
+  const plain = el.dataset.tipPlain !== undefined;
+  const dash = text.indexOf(" — ");
+  if (!plain && !hint && dash > 0) { hint = text.slice(dash + 3); text = text.slice(0, dash); }
+  const tip = tipElement();
+  tip.innerHTML = plain ? `<p>${esc(text)}</p>` : `<b>${esc(text)}</b>${hint ? `<span>${esc(hint)}</span>` : ""}`;
+  tip.classList.toggle("plain", plain);
+  tip.classList.remove("below");
+  const r = el.getBoundingClientRect();
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  let top = r.top - h - 8;
+  if (top < 4) { top = r.bottom + 8; tip.classList.add("below"); }
+  const center = r.left + r.width / 2;
+  const left = Math.max(4, Math.min(center - w / 2, window.innerWidth - w - 4));
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+  tip.style.setProperty("--tip-arrow", `${center - left}px`);
+  tip.classList.add("show");
+}
+
+// Tooltip fuer el vorbereiten und nach delay zeigen (false = gar nicht, dann
+// bleibt der Browser-Tooltip).
+function armTip(el, delay) {
+  const text = el.getAttribute("title") || el.dataset.tipTitle || "";
+  // Steht derselbe Text schon sichtbar im Element (Menueeintraege, beschriftete
+  // Knoepfe), braeuchte es keinen Tooltip.
+  if (!text || text === el.textContent.trim()) return false;
+  // Menueeintraege behalten den Browser-Tooltip: ein Tippy ueber dem Menue
+  // verdeckte den Eintrag darueber.
+  if (el.closest(".rowmore-menu")) return false;
+  el.dataset.tipTitle = text;
+  el.removeAttribute("title");
+  TIP.target = el;
+  TIP.timer = setTimeout(() => showTip(el), delay);
+  return true;
+}
+
+document.addEventListener("pointerover", ev => {
+  if (ev.pointerType === "touch") return;
+  const el = ev.target.closest ? ev.target.closest(TIP_SELECTOR) : null;
+  if (el === TIP.target) return;
+  hideTip();
+  if (!el) return;
+  // Von Icon zu Icon gleiten: der naechste Tooltip kommt sofort.
+  armTip(el, Date.now() - TIP.hiddenAt < 400 ? 0 : TIP_DELAY_MS);
+});
+// Das ? der Einstellungen (.sethelpq) oeffnet auch per Tastatur und per
+// Klick/Tipp -- dort ist der Tooltip der einzige Weg zum Hinweis.
+document.addEventListener("focusin", ev => {
+  const el = ev.target.closest ? ev.target.closest(".sethelpq") : null;
+  if (!el || el === TIP.target || !ev.target.matches(":focus-visible")) return;
+  hideTip();
+  armTip(el, 0);
+});
+document.addEventListener("focusout", ev => {
+  if (TIP.target && ev.target === TIP.target) hideTip();
+});
+document.addEventListener("click", ev => {
+  const el = ev.target.closest ? ev.target.closest(".sethelpq") : null;
+  if (!el) return;
+  ev.preventDefault();   // steht im <label>: nicht das Feld umschalten
+  hideTip();
+  armTip(el, 0);
+}, true);
+document.addEventListener("pointerout", ev => {
+  if (TIP.target && !(ev.relatedTarget && TIP.target.contains(ev.relatedTarget))
+      && TIP.target.contains(ev.target)) hideTip();
+});
+document.addEventListener("pointerdown", hideTip, true);
+document.addEventListener("keydown", ev => { if (ev.key !== "Tab") hideTip(); }, true);
+window.addEventListener("scroll", hideTip, {passive: true, capture: true});
+window.addEventListener("blur", hideTip);
+
 function render() {
+  document.body.classList.add("booted");
   closeRowMoreMenu();
   // Ein Playlist-Generator ersetzt die Tabelle (generator.js) -- dort gibt
   // es nichts zu filtern oder zu zeichnen.
@@ -6870,6 +7714,15 @@ function render() {
     }
     return m;
   })() : null;
+  // Gruppenkopf ueber genau so viele Spalten wie eine Zeile Zellen hat:
+  // Checkbox, Status, sichtbare Spalten, Fuellzelle, "Öffnen" (in der DJ-
+  // Ansicht ausgeblendet, zaehlt dort nicht). Frueher colspan="100" -- das
+  // legte bei table-layout:fixed rund 95 leere Spalten an. In Bearbeiten/
+  // Player fiel das nicht auf (alle Spalten mit fester Breite), in der DJ-
+  // Ansicht teilt sich "Track" (width:auto) den Rest mit ihnen und fiel auf
+  // Breite 0 zusammen.
+  const groupSpan = 1 + (hid("v") ? 0 : 1) + state.colOrder.filter(k => !hid(k) && CELL_RENDERERS[k]).length
+    + 1 + (state.layout === "dj" ? 0 : 1);
   let lastGroupKey;   // Sentinel undefined -- erste Zeile bekommt so garantiert einen Header
   tb.innerHTML = slice.map((r,i) => {
     let groupHeader = "";
@@ -6878,25 +7731,25 @@ function render() {
       if (key !== null && key !== lastGroupKey) {
         if (groupMode === "dup") {
           const allDismissed = groupAllDismissed.get(key) === true;
-          groupHeader = `<tr class="albumgroup ${allDismissed ? "dupok" : "dupwarn"}"><td colspan="100">${esc(r.a || "")} — ${esc(r.t || "")}
+          groupHeader = `<tr class="albumgroup ${allDismissed ? "dupok" : "dupwarn"}"><td colspan="${groupSpan}">${esc(r.a || "")} — ${esc(r.t || "")}
               <span class="path">(${esc(t("group.copies_count", {count: groupTotals.get(key)}))})</span>
               <button type="button" class="dupdismissbtn" data-dupdismiss="${key}">${
                 esc(t(allDismissed ? "group.dup_undismiss_button" : "group.dup_confirm_button"))}</button></td></tr>`;
         } else if (groupMode === "album") {
-          groupHeader = `<tr class="albumgroup"><td colspan="100">${esc(r.al || "")} <span class="albumgroup-artist">— ${esc(r.aa || r.a || "")}</span>
+          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(r.al || "")} <span class="albumgroup-artist">— ${esc(r.aa || r.a || "")}</span>
               <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>
               <button type="button" class="genrerename" data-grouprename="album" data-value="${esc(r.al || "")}"
                       data-groupartist="${esc(r.aa || r.a || "")}"
                       title="${esc(fieldEditTitle("album"))}">${ICONS.edit}</button></td></tr>`;
         } else if (groupMode === "genre") {
           const label = r.ge || t("group.no_genre");
-          groupHeader = `<tr class="albumgroup"><td colspan="100">${esc(label)}
+          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(label)}
               <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>${
                 r.ge ? `<button type="button" class="genrerename" data-grouprename="genre" data-value="${esc(r.ge)}"
                       title="${esc(fieldEditTitle("genre"))}">${ICONS.edit}</button>` : ""}</td></tr>`;
         } else if (groupMode === "artist") {
           const label = r.a || t("group.no_artist");
-          groupHeader = `<tr class="albumgroup"><td colspan="100">${esc(label)}
+          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(label)}
               <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>${
                 r.a ? `<button type="button" class="genrerename" data-grouprename="artist" data-value="${esc(r.a)}"
                       title="${esc(fieldEditTitle("artist"))}">${ICONS.edit}</button>` : ""}</td></tr>`;
@@ -6905,15 +7758,17 @@ function render() {
       lastGroupKey = key;
     }
     const nowPlaying = queueState.current && queueState.current.i === r.i;
+    const moreBtn = rowMoreMenuItems(r).length
+      ? `<button class="iconbtn plain" data-more="${r.i}" title="${esc(t("action.more_options"))}">${ICONS.moreVert}</button>` : "";
     return groupHeader + `
     <tr class="row${r.ig ? " ign" : ""}${r.mc ? " corr" : ""}${r.ext ? " extrow" : r.gone ? " gone" : ""}${state.selected.has(r.i) ? " picked" : ""}${r.i === cursorRowI ? " kbcursor" : ""}${freshFrom >= 0 && i >= freshFrom ? " fresh" : ""}" data-i="${r.i}" draggable="${r.ext && !rbReorderable ? "false" : "true"}">
       <td class="sel"><input type="checkbox" class="selchk" data-sel="${r.i}" ${state.selected.has(r.i) ? "checked" : ""}>${
         nowPlaying ? `<span class="nowplayingicon" title="${esc(t("player.now_playing_title"))}">${ICONS.audioLines}</span>` : ""}</td>
       ${hid("v") ? "" : `<td><span class="badge ${verdictOf(r)}">${VERDICT_ICONS[verdictOf(r)]}${labels[verdictOf(r)]}</span></td>`}
       ${state.colOrder.filter(k => !hid(k) && CELL_RENDERERS[k]).map(k => CELL_RENDERERS[k](r, true)).join("")}
-      <td class="filler"></td>
+      <td class="filler">${state.layout === "dj" ? moreBtn : ""}</td>
       <td class="links"><div class="actions">
-        ${r.ext ? "" : `<div class="actiongroup top">
+        ${r.ext ? (moreBtn ? `<div class="actiongroup top">${moreBtn}</div>` : "") : `<div class="actiongroup top">
           ${(!r.gone || r.ext || !apiMode) ? "" :
             `<button class="iconbtn plain" data-relink="${r.i}"
                      title="${esc(t("action.relink"))}">${ICONS.relink}</button>`}
@@ -6926,11 +7781,6 @@ function render() {
           ${(r.gone || !apiMode) ? "" :
             `<button class="iconbtn plain" data-playlistadd="${r.i}"
                      title="${esc(t("tree.add_to_playlist"))}">${ICONS.listPlus}</button>`}
-          ${(r.gone || !apiMode || !REKORDBOX_NAME) ? "" : (REKORDBOX_PLAYLIST
-            ? `<button class="iconbtn plain" data-rbadd="${r.i}"
-                       title="${esc(t("action.add_to_rekordbox", {playlist: REKORDBOX_PLAYLIST}))}">${
-                       appIcon("rekordbox", "Rekordbox")}</button>`
-            : disabledAppIcon("rekordbox", "Rekordbox", REKORDBOX_MISSING_HINT))}
           ${(r.gone || !apiMode) ? "" : `<span class="sep" data-sep="1"></span>`}
           ${r.gone || apiMode ? "" :
             `<a class="reveal-link" href="${fileURL(dirName(r.p))}" title="${esc(t("action.open_folder"))}">📁</a>`}
@@ -6938,8 +7788,8 @@ function render() {
             `<a class="iconbtn plain" href="${fileURL(r.p)}" title="${esc(t("action.open_in_music"))}">${ICONS.itunes}</a>`}
           ${(r.gone || !apiMode) ? "" :
             `<button class="iconbtn plain" data-tags="${r.i}" title="${esc(t("action.edit_tags"))}">${ICONS.edit}</button>`}
-          ${rowMoreMenuItems(r).length ? `<span class="sep" data-sep="1"></span>
-          <button class="iconbtn plain" data-more="${r.i}" title="${esc(t("action.more_options"))}">${ICONS.moreVert}</button>` : ""}
+          ${moreBtn ? `<span class="sep" data-sep="1"></span>
+          ${moreBtn}` : ""}
         </div>`}
         ${(r.gone || !apiMode) ? "" : `<div class="actiongroup" data-group="open">
           <div class="grouplabel">${esc(t("action.group_open"))}</div>
@@ -7196,6 +8046,20 @@ function render() {
     await reveal(b.dataset.reveal, b);
   });
 
+  // DJ-Liste: Pfad kopieren (djMetaLine()). Rueckmeldung wie bei reveal().
+  tb.querySelectorAll("[data-djcopy]").forEach(b => b.onclick = async ev => {
+    ev.stopPropagation();
+    try {
+      await copyPlainText(b.dataset.djcopy);
+      b.classList.add("done");
+      note(t("action.path_copied"));
+    } catch (err) {
+      b.classList.add("failed");
+      note(t("dj.copy_path_failed"), true);
+    }
+    setTimeout(() => b.classList.remove("done", "failed"), 1000);
+  });
+
   tb.querySelectorAll("[data-copy]").forEach(b => b.onclick = ev => {
     ev.stopPropagation();
     navigator.clipboard.writeText(b.dataset.copy);
@@ -7272,11 +8136,6 @@ function render() {
     openInMusic(DATA[+b.dataset.music], b);
   });
 
-  tb.querySelectorAll("[data-rbadd]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    addToRekordboxPlaylist([DATA[+b.dataset.rbadd]], b);
-  });
-
   tb.querySelectorAll("[data-playlistadd]").forEach(b => b.onclick = ev => {
     ev.stopPropagation();
     openPlaylistPicker([DATA[+b.dataset.playlistadd].p]);
@@ -7345,11 +8204,42 @@ document.getElementById("selAll").onchange = e => {
   render();
 };
 
+// ── Sammelleisten ─────────────────────────────────────────────────────────
+// Bearbeiten, Player, DJ und die Einzelpruefungen bauen ihre Leiste aus
+// denselben beschrifteten Gruppen (gleiche Ueberschriften wie im Zeilenmenue,
+// rowMoreMenuItems()). Ein Eintrag ist {icon, title, hint, run, cls, id}
+// oder {html} (fertiges Markup, z. B. die Merklisten-Quadrate); null/false
+// fallen weg, eine leere Gruppe samt Ueberschrift ebenso. title/hint landen
+// im Tooltip (showTip()). id nur, wo ein anderer Weg den Knopf sucht
+// (bulkApply("mik") fuer die Erfolgsmarkierung).
+function bulkGroupsHtml(groups, handlers) {
+  return groups.map(g => {
+    const items = (g.items || []).filter(Boolean);
+    if (!items.length) return "";
+    const inner = items.map(it => {
+      if (it.html) return it.html;
+      handlers.push(it.run);
+      return `<button class="iconbtn ${it.cls || "plain"}"${it.id ? ` id="${it.id}"` : ""} data-bulkbtn="${handlers.length - 1}"` +
+        ` title="${esc(it.title)}"${it.hint ? ` data-tip-hint="${esc(it.hint)}"` : ""}>${it.icon}</button>`;
+    }).join("");
+    return `<div class="bulkgroup"><div class="grouplabel">${esc(g.label)}</div>` +
+      `<div class="groupicons${g.cls ? " " + g.cls : ""}">${inner}</div></div>`;
+  }).join("");
+}
+
+function mountBulkBar(bar, count, groups, clearId, onClear) {
+  const handlers = [];
+  bar.innerHTML = `<span class="bulkcount">${esc(t("bulk.selected_count", {count: count.toLocaleString("de-DE")}))}</span>` +
+    bulkGroupsHtml(groups, handlers) +
+    `<button class="act small djbulkclear" id="${clearId}">${ICONS.close} ${esc(t("bulk.clear_selection"))}</button>`;
+  bar.querySelectorAll("[data-bulkbtn]").forEach(b => b.onclick = () => handlers[+b.dataset.bulkbtn](b));
+  bar.querySelectorAll("[data-bulkfl]").forEach(b => b.onclick = () => bulkApply(`fl:${b.dataset.bulkfl}`));
+  document.getElementById(clearId).onclick = onClear;
+}
+
 // Vorzustand je Merkliste ueber eine Zeilenauswahl: "all" (Haken), "none"
 // (leer) oder "mixed" (Fragezeichen) -- treibt sowohl das Icon als auch die
-// Zielrichtung des Klicks in bulkApply(). Von der vollen Sammelleiste UND der
-// reduzierten Player-Sammelleiste genutzt, deshalb als eigene Funktion statt
-// einer lokalen Closure in renderBulkBar().
+// Zielrichtung des Klicks in bulkApply().
 function flStateOfSelection(rows, listId) {
   const set = PLAYLIST_SETS[listId];
   const onCount = rows.reduce((n, r) => n + (set && set.has(r.p) ? 1 : 0), 0);
@@ -7357,182 +8247,150 @@ function flStateOfSelection(rows, listId) {
   return onCount === rows.length ? "all" : "mixed";
 }
 
-// Player-Ansicht: dieselben Sammelaktionen (Tags/Fix/Rescan/Ignore/Correct/
-// Trash), die pro Zeile ausgeblendet sind, sollen nicht ueber die
-// Sammelleiste als Hintertuer erreichbar bleiben -- nur "zur Warteschlange
-// hinzufuegen" (passend zur Player-Ansicht) und die Merklisten bleiben.
+// Merklisten-Gruppe (Bearbeiten, Player, DJ).
+function bulkFavoritesGroup(rows) {
+  return {label: t("action.group_favorites"), cls: "flgroup", items: merkPlaylists().map(n => {
+    const flState = flStateOfSelection(rows, n.id);
+    return {html: `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:${plColor(flColorTok(n))}"
+        title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`};
+  })};
+}
+
+// Playlisten-Gruppe: hinzufuegen + aus der gerade geoeffneten Liste nehmen
+// (eigene, Rekordbox- oder Music-Playlist; es ist immer hoechstens eine offen).
+function bulkListsGroup(rows) {
+  const own = apiMode ? currentPlaylistNode() : null;
+  const rbList = currentRekordboxPlaylist(), musicList = currentMusicPlaylist();
+  return {label: t("bulk.group_lists"), items: [
+    apiMode && rows.some(r => !r.gone) && {icon: ICONS.listPlus, title: t("tree.add_to_playlist"),
+      run: () => { const paths = rows.filter(r => !r.gone).map(r => r.p); if (paths.length) openPlaylistPicker(paths); }},
+    own && {icon: ICONS.listX, cls: "", title: t("tree.remove_from_list", {name: own.name}),
+      run: () => removeFromPlaylist(own.id, rows.map(r => r.p))},
+    rbList && {icon: ICONS.listX, cls: "", title: t("rb.remove_from_playlist", {playlist: rbList.name}),
+      run: () => removeFromRekordboxPlaylist(rows)},
+    musicList && {icon: ICONS.listMinus, cls: "", title: t("music.remove_from_playlist", {playlist: musicList.name}),
+      run: () => removeFromMusicPlaylist(rows)},
+  ]};
+}
+
+// Rekordbox-Gruppe: alles, was die Rekordbox-Sammlung betrifft, inklusive
+// Entfernen (rot), in Bearbeiten und DJ. In eine bestimmte Rekordbox-Playlist
+// kommen Tracks per Drag & Drop auf den Baum, eine feste Ziel-Playlist aus den
+// Einstellungen gibt es nicht mehr.
+function bulkRekordboxGroup(rows) {
+  if (!REKORDBOX_NAME) return null;
+  const live = rows.filter(r => !r.gone);
+  return {label: t("bulk.group_rekordbox"), items: [
+    apiMode && live.some(r => !r.rb) && {icon: SVG(LUCIDE_ICONS.plus), title: t("dj.rb_add"),
+      hint: t("dj.bulk_rb_add_title"), run: () => djBulkRekordbox(rows, "add")},
+    apiMode && live.length && {icon: SVG(LUCIDE_ICONS.download), title: t("dj.rb_load"), hint: t("dj.rb_load_title"),
+      run: () => djBulkRekordbox(rows, "load")},
+    apiMode && live.length && {icon: SVG(LUCIDE_ICONS.upload), title: t("dj.rb_update"), hint: t("dj.rb_update_title"),
+      run: () => djBulkRekordbox(rows, "update")},
+    apiMode && (currentRekordboxPlaylist() || rows.some(r => r.rb && !r.ext)) && {icon: ICONS.delete, cls: "del",
+      title: t("rb.remove_from_collection"),
+      run: () => removeFromRekordboxCollection(currentRekordboxPlaylist() ? rows : rows.filter(r => r.rb && !r.ext))},
+  ]};
+}
+
+// Analyse-Gruppe: Beatgrid, Phrasen und beides als drei eigene Knoepfe.
+// rescan: eigener Ablauf je Liste (Haupttabelle bulkApply, Einzelpruefungen
+// reanalyseDrops()), deshalb als Funktion uebergeben.
+function bulkAnalysisGroup(rows, {rescan = null, autocue = false, isDrop = false} = {}) {
+  const phrases = bulkPhrasesShown(rows, isDrop), anaHint = t("bulk.dj_analyse_title");
+  return {label: t("bulk.group_analysis"), items: [
+    bulkBpmKeyShown(rows, isDrop) && {icon: ICONS.analyseBpmKey, title: t("action.bpmkey_title"), run: () => analyseBpmKey(rows, isDrop)},
+    bulkGenreMoodShown(rows, isDrop) && {icon: ICONS.analyseGenreMood, title: t("action.genremood_title"), run: () => analyseGenreMood(rows, isDrop)},
+    phrases && {icon: ICONS.analyseGrid, title: t("bulk.dj_grid"), hint: anaHint, run: () => analysePhrases(rows, isDrop, "grid")},
+    phrases && {icon: ICONS.analysePhrases, title: t("bulk.dj_phrases"), hint: anaHint, run: () => analysePhrases(rows, isDrop, "phrases")},
+    phrases && {icon: ICONS.analyseBoth, title: t("bulk.dj_both"), hint: anaHint,
+      run: () => analysePhrases(rows, isDrop, "both")},
+    autocue && apiMode && AUTOCUE_AVAILABLE && {icon: SVG(LUCIDE_ICONS["square-sparkles"] || ""), title: t("bulk.dj_autocue"),
+      hint: t("bulk.dj_autocue_title"), run: () => djBulkAutoCue(rows)},
+    rescan && {icon: ICONS.rescan, title: t("action.rescan"), run: rescan},
+  ]};
+}
+
+// Mehrere Tracks als Naechstes abspielen -- in Auswahl-Reihenfolge vorn in
+// die Warteschlange (playNext() fuer einen einzelnen).
+function playNextMany(rows, btn) {
+  if (!apiMode) { note(t("player.bar.needs_server"), "soft"); return; }
+  const live = rows.filter(r => !r.gone);
+  if (!live.length) return;
+  queueState.tracks.unshift(...live);
+  queueState.manual = true;
+  renderPlayerBar();
+  renderQueuePopup();
+  flashDoneBtn(btn);
+}
+
+function bulkQueueGroup(rows) {
+  return {label: t("bulk.group_queue"), items: [
+    rows.some(r => !r.gone) && {icon: ICONS.listStart, title: t("bulk.play_next_title"), run: btn => playNextMany(rows, btn)},
+    {icon: ICONS.listEnd, title: t("bulk.queue_add_title"), run: () => bulkApply("queue-add-all")},
+  ]};
+}
+
+// Player: reine Hoer-Ansicht -- Warteschlange, Playlisten, Merklisten. Was je
+// Zeile ausgeblendet ist (Tags/Fix/Rescan/Ignore/Correct/Trash), soll hier
+// keine Hintertuer bekommen. Die DJ-Ansicht nimmt dagegen die volle Leiste
+// von Bearbeiten (renderBulkBar()).
 function renderPlayerBulkBar(bar) {
   const rows = [...state.selected].map(i => DATA[i]).filter(Boolean);
-  const isDj = state.layout === "dj" && apiMode, withRb = isDj && !!REKORDBOX_NAME, withAna = isDj && PHRASES_AVAILABLE;
-  // Bewusst nicht an PHRASES_AVAILABLE: Auto Cue kommt auch mit einem Rekordbox-Grid aus.
-  const withAutocue = isDj && AUTOCUE_AVAILABLE;
-  bar.innerHTML = `
-    <span>${esc(t("bulk.selected_count", {count: state.selected.size.toLocaleString("de-DE")}))}</span>
-    <button class="iconbtn plain" id="bulkQueueAdd" title="${esc(t("bulk.queue_add_title"))}">${ICONS.listEnd}</button>
-    ${merkPlaylists().length ? `<span class="sep"></span>
-    ${merkPlaylists().map(n => {
-        const flState = flStateOfSelection(rows, n.id);
-        return `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:${plColor(flColorTok(n))}"
-        title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`;
-      }).join("")}` : ""}
-    ${withRb ? `<span class="sep"></span>
-    <button class="act small djbulk" id="bulkDjRbAdd" title="${esc(t("dj.bulk_rb_add_title"))}">${djIcon("plus")} ${esc(t("dj.rb_add"))}</button>
-    <button class="act small djbulk" id="bulkDjRbLoad" title="${esc(t("dj.rb_load_title"))}">${djIcon("download")} ${esc(t("dj.rb_load"))}</button>
-    <button class="act small djbulk" id="bulkDjRbUpdate" title="${esc(t("dj.rb_update_title"))}">${djIcon("upload")} ${esc(t("dj.rb_update"))}</button>` : ""}
-    ${withAna ? `<span class="sep"></span>
-    <button class="act small djbulk" id="bulkDjGrid" title="${esc(t("bulk.dj_analyse_title"))}">${djIcon("grid-3x3")} ${esc(t("bulk.dj_grid"))}</button>
-    <button class="act small djbulk" id="bulkDjPhrases" title="${esc(t("bulk.dj_analyse_title"))}">${ICONS.analysePhrases} ${esc(t("bulk.dj_phrases"))}</button>
-    <button class="act small djbulk" id="bulkDjBoth" title="${esc(t("bulk.dj_analyse_title"))}">${djIcon("grid-3x3")}${ICONS.analysePhrases} ${esc(t("bulk.dj_both"))}</button>` : ""}
-    ${withAutocue ? `<span class="sep"></span>
-    <button class="act small djbulk" id="bulkDjAutoCue" title="${esc(t("bulk.dj_autocue_title"))}">${djIcon("square-sparkles")} ${esc(t("bulk.dj_autocue"))}</button>` : ""}
-    <button class="act small djbulkclear" id="bulkClear">${ICONS.close} ${esc(t("bulk.clear_selection"))}</button>`;
-  document.getElementById("bulkQueueAdd").onclick = () => bulkApply("queue-add-all");
-  bar.querySelectorAll("[data-bulkfl]").forEach(b => b.onclick = () => bulkApply(`fl:${b.dataset.bulkfl}`));
-  if (withRb) {
-    document.getElementById("bulkDjRbAdd").onclick = () => djBulkRekordbox(rows, "add");
-    document.getElementById("bulkDjRbLoad").onclick = () => djBulkRekordbox(rows, "load");
-    document.getElementById("bulkDjRbUpdate").onclick = () => djBulkRekordbox(rows, "update");
-  }
-  if (withAna) {
-    document.getElementById("bulkDjGrid").onclick = () => analysePhrases(rows, false, "grid");
-    document.getElementById("bulkDjPhrases").onclick = () => analysePhrases(rows, false, "phrases");
-    document.getElementById("bulkDjBoth").onclick = () => analysePhrases(rows, false, "both");
-  }
-  if (withAutocue) document.getElementById("bulkDjAutoCue").onclick = () => djBulkAutoCue(rows);
-  document.getElementById("bulkClear").onclick = () => { state.selected.clear(); render(); };
+  const groups = [bulkQueueGroup(rows), bulkListsGroup(rows), bulkFavoritesGroup(rows)];
+  mountBulkBar(bar, state.selected.size, groups.filter(Boolean), "bulkClear", () => { state.selected.clear(); render(); });
 }
 
 function renderBulkBar() {
   const bar = document.getElementById("bulkbar");
   if (!state.selected.size) { bar.style.display = "none"; bar.innerHTML = ""; return; }
   bar.style.display = "";
-  if (state.layout !== "edit") { renderPlayerBulkBar(bar); return; }
-  // Vorzustand je Merkliste ueber die Auswahl: "all" (Haken), "none" (leer,
-  // wie bisher) oder "mixed" (Fragezeichen) -- treibt sowohl das Icon als
-  // auch die Zielrichtung des Klicks in bulkApply().
-  const selRowsForFl = merkPlaylists().length
-    ? [...state.selected].map(i => DATA[i]).filter(Boolean) : [];
-  const flStateOf = listId => flStateOfSelection(selRowsForFl, listId);
+  if (state.layout === "player") { renderPlayerBulkBar(bar); return; }
+  // DJ: dieselbe Leiste wie Bearbeiten (Nutzervorgabe), nur ohne Warteschlange
+  // (die DJ-Ansicht spielt ueber das eigene Deck) und mit Auto Cue.
+  const isDj = state.layout === "dj";
+  const rows = [...state.selected].map(i => DATA[i]).filter(Boolean);
   // "Ausblenden"/"Korrigieren" ergeben ohne lokale Datei keinen Sinn (Music-
-  // App-Titel ohne Match, "Datei fehlt") -- die drei Knoepfe verschwinden nur,
+  // App-Titel ohne Match, "Datei fehlt") -- die Knoepfe verschwinden nur,
   // wenn die GESAMTE Auswahl aus solchen Zeilen besteht; bei gemischter
   // Auswahl bleiben sie sichtbar und bulkApply() filtert gone-Zeilen selbst
   // heraus.
-  const selRows = [...state.selected].map(i => DATA[i]).filter(Boolean);
-  const anyNonGone = selRows.some(r => !r.gone);
-  // Gruppen, durch Trennlinien getrennt; leere Gruppen fallen samt Linie weg.
+  const anyNonGone = rows.some(r => !r.gone);
   const groups = [
-    [
-      `<button class="iconbtn plain" id="bulkQueueAdd" title="${esc(t("bulk.queue_add_title"))}">${ICONS.listEnd}</button>`,
-      apiMode ? `<button class="iconbtn plain" id="bulkListAdd" title="${esc(t("tree.add_to_playlist"))}">${ICONS.listPlus}</button>` : "",
-      currentPlaylistNode() && apiMode ? `<button class="iconbtn" id="bulkListRemove" title="${esc(t("tree.remove_from_list", {name: currentPlaylistNode().name}))}">${ICONS.listX}</button>` : "",
-      currentRekordboxPlaylist() ? `<button class="iconbtn" id="bulkRbRemove" title="${esc(t("rb.remove_from_playlist", {playlist: currentRekordboxPlaylist().name}))}">${ICONS.listX}</button>` : "",
-      !REKORDBOX_NAME ? "" : (REKORDBOX_PLAYLIST
-        ? `<button class="iconbtn plain" id="bulkRbAdd" title="${esc(t("bulk.add_to_rekordbox_title", {playlist: REKORDBOX_PLAYLIST}))}">${appIcon("rekordbox", "Rekordbox")}</button>`
-        : disabledAppIcon("rekordbox", "Rekordbox", REKORDBOX_MISSING_HINT, "bulkRbAdd")),
-      merkPlaylists().map(n => {
-        const flState = flStateOf(n.id);
-        return `<button class="iconbtn flbtn${flState === "all" ? " on" : flState === "mixed" ? " part" : ""}" data-bulkfl="${n.id}" style="background:${plColor(flColorTok(n))}"
-        title="${esc(n.name)}">${iconGlyphHtml(playlistIconValue(n))}</button>`;
-      }).join(""),
-    ],
-    [
-      apiMode ? `<button class="iconbtn plain" id="bulkTags" title="${esc(t("bulk.edit_tags_title"))}">${ICONS.edit}</button>` : "",
-      bulkBpmKeyShown(selRows, false) ? `<button class="iconbtn plain" id="bulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.analyseBpmKey}</button>` : "",
-      bulkGenreMoodShown(selRows, false) ? `<button class="iconbtn plain" id="bulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}</button>` : "",
-      bulkPhrasesShown(selRows, false) ? `<button class="iconbtn plain" id="bulkPhrases" title="${esc(t("action.phrases_title"))}">${ICONS.analysePhrases}</button>` : "",
-      `<button class="iconbtn plain" id="bulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>`,
-    ],
-    [
-      `<button class="iconbtn plain" id="bulkConvert" title="${esc(t("bulk.convert_title"))}">${ICONS.convert}</button>`,
-      `<button class="iconbtn plain" id="bulkFix" title="${esc(t("bulk.fix_title"))}">${ICONS.fix}</button>`,
-      selRows.some(hasAutoFixableTagIssues) ? `<button class="iconbtn plain" id="bulkFixTags"
-        title="${esc(t("bulk.action_fix_tag_issues"))}">${TREE_ICONS.tag_issues}</button>` : "",
-      `<button class="iconbtn plain" id="bulkRenameFile" title="${esc(t("action.rename_library_title"))}">${ICONS.renameFile}</button>`,
-      bulkKeySyncShown(selRows, false) ? `<button class="iconbtn plain" id="bulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.keySync}</button>` : "",
-      anyNonGone ? `<button class="iconbtn plain" id="bulkCorrect" title="${esc(t("bulk.correct_title"))}">${ICONS.correct}</button>
-    <button class="iconbtn plain" id="bulkUncorrect" title="${esc(t("bulk.uncorrect_title"))}">${ICONS.uncorrect}</button>` : "",
-    ],
-    [
-      anyNonGone ? `<button class="iconbtn ig" id="bulkIgnore" title="${esc(t("bulk.hide_title"))}">${ICONS.eyeOff}</button>
-    <button class="iconbtn ig" id="bulkShow" title="${esc(t("bulk.show_title"))}">${ICONS.eye}</button>` : "",
-    ],
-    [
-      !MIK_NAME ? "" : `<button class="iconbtn plain" id="bulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`,
-    ],
-    [
-      `<button class="iconbtn plain" id="bulkExportZip" title="${esc(t("export_zip.title"))}">${ICONS.exportZip}</button>`,
-    ],
-    [
-      REKORDBOX_NAME && apiMode && (currentRekordboxPlaylist() || selRows.some(r => r.rb && !r.ext)) ? `<button class="iconbtn del" id="bulkRbCollection" title="${esc(t("rb.remove_from_collection"))}">${ICONS.delete}</button>` : "",
-      `<button class="iconbtn del" id="bulkTrash" title="${esc(t("action.to_trash"))}">${ICONS.trash}</button>`,
-    ],
-  ].map(g => g.filter(Boolean).join("\n    ")).filter(Boolean);
-  bar.innerHTML = `
-    <span>${esc(t("bulk.selected_count", {count: state.selected.size.toLocaleString("de-DE")}))}</span>
-    ${groups.join('\n    <span class="sep"></span>\n    ')}
-    <button class="act small djbulkclear" id="bulkClear">${ICONS.close} ${esc(t("bulk.clear_selection"))}</button>`;
-  const bulkListAddBtn = document.getElementById("bulkListAdd");
-  if (bulkListAddBtn) bulkListAddBtn.onclick = () => {
-    const paths = [...state.selected].map(i => DATA[i]).filter(Boolean).map(x => x.p);
-    if (paths.length) openPlaylistPicker(paths);
-  };
-  const bulkListRemoveBtn = document.getElementById("bulkListRemove");
-  if (bulkListRemoveBtn) bulkListRemoveBtn.onclick = () => {
-    const node = currentPlaylistNode();
-    if (!node) return;
-    const paths = [...state.selected].map(i => DATA[i]).filter(Boolean).map(x => x.p);
-    removeFromPlaylist(node.id, paths);
-  };
-  const bulkRbRemoveBtn = document.getElementById("bulkRbRemove");
-  if (bulkRbRemoveBtn) bulkRbRemoveBtn.onclick = () =>
-    removeFromRekordboxPlaylist([...state.selected].map(i => DATA[i]).filter(Boolean));
-  const bulkRbCollectionBtn = document.getElementById("bulkRbCollection");
-  if (bulkRbCollectionBtn) bulkRbCollectionBtn.onclick = () => {
-    const rows = [...state.selected].map(i => DATA[i]).filter(Boolean);
-    removeFromRekordboxCollection(currentRekordboxPlaylist() ? rows : rows.filter(r => r.rb && !r.ext));
-  };
-  const bulkTagsBtn = document.getElementById("bulkTags");
-  if (bulkTagsBtn) bulkTagsBtn.onclick = () => {
-    const rows = [...state.selected].map(i => DATA[i]).filter(Boolean);
-    if (rows.length === 1) openTagsPopup(rows[0], false);
-    else if (rows.length > 1) openTagsPopupBulk(rows);
-  };
-  document.getElementById("bulkQueueAdd").onclick = () => bulkApply("queue-add-all");
-  const bulkIgnoreBtn = document.getElementById("bulkIgnore");
-  if (bulkIgnoreBtn) bulkIgnoreBtn.onclick = () => bulkApply("ignore");
-  const bulkShowBtn = document.getElementById("bulkShow");
-  if (bulkShowBtn) bulkShowBtn.onclick = () => bulkApply("show");
-  const bulkCorrectBtn = document.getElementById("bulkCorrect");
-  if (bulkCorrectBtn) bulkCorrectBtn.onclick = () => bulkApply("correct");
-  const bulkUncorrectBtn = document.getElementById("bulkUncorrect");
-  if (bulkUncorrectBtn) bulkUncorrectBtn.onclick = () => bulkApply("uncorrect");
-  bar.querySelectorAll("[data-bulkfl]").forEach(b => b.onclick = () => bulkApply(`fl:${b.dataset.bulkfl}`));
-  document.getElementById("bulkFix").onclick = () => bulkApply("fix");
-  const bulkFixTagsBtn = document.getElementById("bulkFixTags");
-  if (bulkFixTagsBtn) bulkFixTagsBtn.onclick = () => bulkApply("fixtags");
-  const bulkRows = () => [...state.selected].map(i => DATA[i]).filter(Boolean);
-  const bulkRenameBtn = document.getElementById("bulkRenameFile");
-  if (bulkRenameBtn) bulkRenameBtn.onclick = () => renameLibraryRows(bulkRows().filter(r => !r.gone && !r.ext));
-  const bulkKeySyncBtn = document.getElementById("bulkKeySync");
-  if (bulkKeySyncBtn) bulkKeySyncBtn.onclick = () => writeKeyToFiles(bulkRows(), false);
-  const bulkBpmKeyBtn = document.getElementById("bulkBpmKey");
-  if (bulkBpmKeyBtn) bulkBpmKeyBtn.onclick = () => analyseBpmKey(bulkRows(), false);
-  const bulkGenreMoodBtn = document.getElementById("bulkGenreMood");
-  if (bulkGenreMoodBtn) bulkGenreMoodBtn.onclick = () => analyseGenreMood(bulkRows(), false);
-  const bulkPhrasesBtn = document.getElementById("bulkPhrases");
-  if (bulkPhrasesBtn) bulkPhrasesBtn.onclick = () => analysePhrases(bulkRows(), false);
-  const bulkConvertBtn = document.getElementById("bulkConvert");
-  if (bulkConvertBtn) bulkConvertBtn.onclick = () => bulkApply("convert");
-  document.getElementById("bulkRescan").onclick = () => bulkApply("rescan");
-  const bulkMikBtn = document.getElementById("bulkMik");
-  if (bulkMikBtn) bulkMikBtn.onclick = () => bulkApply("mik");
-  const bulkRbAddBtn = document.getElementById("bulkRbAdd");
-  if (bulkRbAddBtn) bulkRbAddBtn.onclick = () => bulkApply("rbadd");
-  document.getElementById("bulkExportZip").onclick = () =>
-    openExportZipPopup([...state.selected].map(i => DATA[i]).filter(Boolean));
-  document.getElementById("bulkTrash").onclick = () => bulkApply("trash");
-  document.getElementById("bulkClear").onclick = () => { state.selected.clear(); render(); };
+    isDj ? null : bulkQueueGroup(rows),
+    bulkListsGroup(rows),
+    bulkFavoritesGroup(rows),
+    bulkRekordboxGroup(rows),
+    bulkAnalysisGroup(rows, {rescan: () => bulkApply("rescan"), autocue: isDj && apiMode}),
+    {label: t("bulk.group_edit"), items: [
+      apiMode && {icon: ICONS.edit, title: t("bulk.edit_tags_title"), run: () => {
+        if (rows.length === 1) openTagsPopup(rows[0], false);
+        else if (rows.length > 1) openTagsPopupBulk(rows);
+      }},
+      {icon: ICONS.convert, title: t("bulk.convert_title"), run: () => bulkApply("convert")},
+      {icon: ICONS.fix, title: t("bulk.fix_title"), run: () => bulkApply("fix")},
+      rows.some(hasAutoFixableTagIssues) && {icon: TREE_ICONS.tag_issues, title: t("bulk.action_fix_tag_issues"), run: () => bulkApply("fixtags")},
+      {icon: ICONS.renameFile, title: t("action.rename_library_title"), run: () => renameLibraryRows(rows.filter(r => !r.gone && !r.ext))},
+      bulkKeySyncShown(rows, false) && {icon: ICONS.keySync, title: t("action.write_key_title", {example: keyNotationExample()}),
+        run: () => writeKeyToFiles(rows, false)},
+    ]},
+    {label: t("bulk.group_check"), items: [
+      anyNonGone && {icon: ICONS.correct, title: t("bulk.correct_title"), run: () => bulkApply("correct")},
+      anyNonGone && {icon: ICONS.uncorrect, title: t("bulk.uncorrect_title"), run: () => bulkApply("uncorrect")},
+      anyNonGone && {icon: ICONS.eyeOff, cls: "ig", title: t("bulk.hide_title"), run: () => bulkApply("ignore")},
+      anyNonGone && {icon: ICONS.eye, cls: "ig", title: t("bulk.show_title"), run: () => bulkApply("show")},
+    ]},
+    {label: t("action.group_open"), items: [
+      MIK_NAME && {icon: appIcon("mik", MIK_NAME), id: "bulkMik", title: t("bulk.open_in_mik_title"), run: () => bulkApply("mik")},
+    ]},
+    {label: t("bulk.group_export"), items: [
+      {icon: ICONS.exportZip, title: t("export_zip.title"), run: () => openExportZipPopup(rows)},
+    ]},
+    {label: t("bulk.group_delete"), items: [
+      {icon: ICONS.trash, cls: "del", title: t("action.to_trash"), run: () => bulkApply("trash")},
+    ]},
+  ];
+  mountBulkBar(bar, state.selected.size, groups.filter(Boolean), "bulkClear", () => { state.selected.clear(); render(); });
 }
 
 function askTrashBulk(rows) {
@@ -8210,7 +9068,7 @@ async function analysePhrases(rows, isDrop, what = "both") {
   const apply = !isDrop && state.layout === "dj";
   const pt = progressToast(t({both: "toast.phrases_running", grid: "toast.grid_running", phrases: "toast.phrases_only_running"}[what], {count: todo.length}));
   const queue = todo.slice();
-  let done = 0, uncertain = 0, none = 0, skipped = 0, skipMinutes = 0, locked = 0, failed = 0, lastError = "", missing = false;
+  let done = 0, uncertain = 0, noTempo = 0, none = 0, skipped = 0, skipMinutes = 0, locked = 0, failed = 0, lastError = "", missing = false;
   const worker = async () => {
     while (queue.length && !missing) {
       const r = queue.shift();
@@ -8227,6 +9085,7 @@ async function analysePhrases(rows, isDrop, what = "both") {
         else {
           done++;
           if (data.uncertain) uncertain++;
+          if (data.no_tempo) noTempo++;
         }
       } catch (err) {
         failed++; lastError = `${baseName(r.p)}: ${err.message}`;
@@ -8238,7 +9097,8 @@ async function analysePhrases(rows, isDrop, what = "both") {
   await Promise.all(Array.from({length: 2}, worker));
   if (apply) { await syncMarks(); render(); }
   if (DJ && !DJ.closed && todo.some(r => r.p === DJ.path)) djLoad(DJ);
-  const extra = (skipped ? " " + t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}) : "")
+  const extra = (noTempo ? " " + t("toast.phrases_no_tempo", {count: noTempo}) : "")
+    + (skipped ? " " + t("toast.bpmkey_skipped", {skipped, minutes: skipMinutes}) : "")
     + (none ? " " + t("toast.phrases_none", {none}) : "")
     + (locked ? " " + t("toast.analysis_locked", {locked}) : "");
   if (missing) pt.fail(t("toast.phrases_missing"));
@@ -8254,12 +9114,6 @@ async function bulkApply(kind) {
   if (kind === "mik") {
     if (!MIK_NAME) { openSettings(); return; }
     await openInMik(rows, document.getElementById("bulkMik"));
-    return;
-  }
-
-  if (kind === "rbadd") {
-    if (!REKORDBOX_NAME || !REKORDBOX_PLAYLIST) { openSettings(); return; }
-    await addToRekordboxPlaylist(rows, document.getElementById("bulkRbAdd"));
     return;
   }
 
@@ -8356,6 +9210,7 @@ async function bulkApply(kind) {
     if (!PLAYLIST_SETS[flId]) PLAYLIST_SETS[flId] = new Set();
     rows.forEach(r => flTarget ? PLAYLIST_SETS[flId].add(r.p) : PLAYLIST_SETS[flId].delete(r.p));
     PLAYLIST_ITEMS[flId] = [...PLAYLIST_SETS[flId]];
+    refreshSmartAfterListChange();
     updateCards(); render();
   }
 
@@ -8423,7 +9278,7 @@ async function bulkApply(kind) {
   // Worker -- die Playlist-eigene Ansicht (playlistRows()) braucht sie, aber
   // ein Neuaufbau des Arrays bei jeder einzelnen Zeile waere bei grosser
   // Auswahl unnoetig teuer.
-  if (flId) PLAYLIST_ITEMS[flId] = [...(PLAYLIST_SETS[flId] || [])];
+  if (flId) { PLAYLIST_ITEMS[flId] = [...(PLAYLIST_SETS[flId] || [])]; refreshSmartAfterListChange(); }
   // Merken raeumt die Auswahl bewusst nicht ab -- anders als die uebrigen
   // Sammelaktionen ist das Hinzufuegen zu einer Liste kein Abschluss der
   // Bearbeitung: derselbe Satz Tracks soll sich direkt danach noch einer
@@ -8566,15 +9421,21 @@ function openFixPopup(r, isDrop) {
 // fromServerRow() teilen sich dieselben Kurzschluessel a/t/al/...).
 async function fixTagIssuesOne(r, isDrop) {
   const fixed = (r.ti || []).some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code)) ? await fixFileTagIssues(r, isDrop) : [];
-  if (isDrop || !tempoIssueOf(r)) return fixed;
-  // Der Titel laeuft ueber den normalen Tags-Weg (Datei + DB).
+  // Titel (Tempowechsel) und Tonart-Schreibweise laufen ueber den normalen
+  // Tags-Weg (Datei + DB + key_raw), beide in einem Aufruf. Einzelpruefungen
+  // nur mit echtem Pfad (wie writeKeyToFiles()), den Tempowechsel kennen sie nicht.
+  const body = {};
+  if (!isDrop && tempoIssueOf(r)) body.title = titleWithTempo(r);
+  if (keyIssueOf(r) && (!isDrop || r.nativePath)) body.key = keyLabel(r.ky);
+  if (!Object.keys(body).length) return fixed;
   stopPlayerFor(r.p);
   const res = await fetch("/api/tags", {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({path: r.p, title: titleWithTempo(r)})});
+    body: JSON.stringify({path: r.p, ...body})});
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || t("error.unknown"));
-  applyRowUpdate(r.i, data.row);
-  return [...fixed, "tempo_change_title"];
+  if (isDrop) Object.assign(r, fieldsToDropRow({key: body.key}));
+  else applyRowUpdate(r.i, data.row);
+  return [...fixed, ...(body.title ? ["tempo_change_title"] : []), ...(body.key ? ["key_notation"] : [])];
 }
 
 async function fixFileTagIssues(r, isDrop) {
@@ -8657,7 +9518,7 @@ function openTagIssuesPopup(r, isDrop) {
   };
 }
 
-// ── Konverter (MP3 320 kbps CBR / AIFF) ──────────────────────────────────
+// ── Konverter (MP3 320 kbps CBR / AAC 256 kbps / AIFF) ──────────────────
 // Reine Entscheidungsfunktion ohne I/O, spiegelt app/convert.py::decide()
 // 1:1 -- Vorfilter, damit offensichtlich unpassende Zeilen (Upscaling,
 // bereits im Zielformat) gar nicht erst gesendet werden. Der Server prueft
@@ -8668,6 +9529,11 @@ function convertDecision(r, target) {
     if (r.fam !== "lossless") return "skip_upscale";
     if (suffix === "aiff" || suffix === "aif") return "skip_already_target";
     return "allow";
+  }
+  if (target === "aac_256") {
+    if (r.fam === "lossless") return "allow";
+    if (r.fam === "lossy_aac") return r.kb >= 256 ? "skip_already_target" : "skip_upscale";
+    return r.kb >= 256 ? "allow" : "skip_upscale";
   }
   // target === "mp3_320"
   if (r.fam === "lossless") return "allow";
@@ -8684,6 +9550,7 @@ function openConvertPopup(rows, isDrop) {
     t("confirm.selected_tracks", {count: rows.length});
   const btnMp3 = document.getElementById("convertTargetMp3");
   const btnAiff = document.getElementById("convertTargetAiff");
+  const btnAac = document.getElementById("convertTargetAac");
   const trashToggle = document.getElementById("convertTrash");
   trashToggle.checked = true;
   const status = document.getElementById("convertStatus");
@@ -8694,10 +9561,12 @@ function openConvertPopup(rows, isDrop) {
   let target = "mp3_320";
   const applyTarget = () => {
     btnMp3.classList.toggle("on", target === "mp3_320");
+    btnAac.classList.toggle("on", target === "aac_256");
     btnAiff.classList.toggle("on", target === "aiff");
   };
   applyTarget();
   btnMp3.onclick = () => { target = "mp3_320"; applyTarget(); };
+  btnAac.onclick = () => { target = "aac_256"; applyTarget(); };
   btnAiff.onclick = () => { target = "aiff"; applyTarget(); };
   ov.style.display = "flex";
 
@@ -10079,12 +10948,11 @@ let STEMS_AVAILABLE = false;
 // das Sperren von Einstellungen (SETTING_REQUIREMENTS).
 let BPMKEY_INSTALLED = false, GENREMOOD_INSTALLED = false;
 let PHRASES_AVAILABLE = false;
-// Auto Cue (app/autocue/, Modelle in vendor/models/autocue/).
+// Auto Cue (app/autocue/, eigene Modelle der Bibliothek, autocue/library.py).
 let AUTOCUE_AVAILABLE = false;
 let GENREMOOD_AVAILABLE = false, GENREMOOD_AUTO = false, GENREMOOD_MIN_PERCENT = 5,
   GENREMOOD_WRITES = false;
 let MUSIC_NAME = "";
-let REKORDBOX_PLAYLIST = "";
 let REKORDBOX_QUALITY_CHECK = true;
 let REKORDBOX_MIN_CUTOFF_KHZ = 19;
 let RENAME_PATTERN = "";
@@ -10308,6 +11176,44 @@ function rekordboxQualityProblem(r) {
   return !(r.co > 0) || r.co < REKORDBOX_MIN_CUTOFF_KHZ;
 }
 
+// Tracks, die schon in Rekordbox stehen: Mehrfachauswahl, welche TrackTabs Fassung
+// (Beatgrid, Phrasen, Cues, wie "Rekordbox Update") bekommen. Vorab angehakt sind die
+// abweichenden (r.rbDiff, dieselbe Angabe wie die Spalte Rekordbox). Liefert die
+// angehakten Zeilen oder null (Abbrechen).
+function askRekordboxOverwrite(rows, title) {
+  return new Promise(resolve => {
+    const ov = document.getElementById("rbPushOverlay");
+    const list = document.getElementById("rbPushList");
+    const differs = r => !!(r.rbDiff && r.rbDiff.length);
+    const label = r => (r.a || r.t) ? `${r.a || ""}${r.a && r.t ? " – " : ""}${r.t || ""}` : baseName(r.p);
+    document.getElementById("rbPushTitle").textContent = title
+      || t("rbpush.title", {count: rows.length.toLocaleString("de-DE")});
+    list.innerHTML = rows.map((r, i) => `<label>
+        <input type="checkbox" data-rbpush="${i}"${differs(r) ? " checked" : ""}>
+        <span class="rbpushname" title="${esc(r.p)}">${esc(label(r))}</span>
+        ${differs(r)
+          ? `<small>${esc(r.rbDiff.map(f => t("dj.field_" + f)).join(", "))}</small>`
+          : `<small class="same">${esc(t("rbpush.same"))}</small>`}
+      </label>`).join("");
+    const boxes = [...list.querySelectorAll("[data-rbpush]")];
+    const setAll = fn => boxes.forEach(b => { b.checked = fn(rows[+b.dataset.rbpush]); });
+    document.getElementById("rbPushAll").onclick = () => setAll(() => true);
+    document.getElementById("rbPushNone").onclick = () => setAll(() => false);
+    document.getElementById("rbPushDiff").onclick = () => setAll(differs);
+    ov.style.display = "flex";
+    const done = answer => {
+      ov.style.display = "none";
+      document.onkeydown = null;
+      list.innerHTML = "";
+      resolve(answer);
+    };
+    document.getElementById("rbPushNo").onclick = () => done(null);
+    document.getElementById("rbPushYes").onclick = () =>
+      done(boxes.filter(b => b.checked).map(b => rows[+b.dataset.rbpush]));
+    document.onkeydown = ev => { if (ev.key === "Escape") done(null); };
+  });
+}
+
 function askRekordboxQuality(rows, problems) {
   return new Promise(resolve => {
     const ov = document.getElementById("confirmOverlay");
@@ -10368,14 +11274,15 @@ function askRekordboxQuality(rows, problems) {
 async function dropTracksOnRekordbox(playlistId, playlistName, paths) {
   const rows = paths.map(p => DATA.find(r => r.p === p && !r.ext)).filter(Boolean);
   if (!rows.length) return;
-  await addToRekordboxPlaylist(rows, null, {playlistId, playlistName});
+  await withExtBusy("rekordbox", playlistId,
+    () => addToRekordboxPlaylist(rows, null, {playlistId, playlistName}));
 }
 
-// opts (optional): {playlistId, playlistName} = frei gewaehlte Ziel-Playlist
-// (Drag & Drop); ohne opts gilt die Playlist aus den Einstellungen. btn darf
+// opts: {playlistId, playlistName} = Ziel-Playlist (Drag & Drop auf den Baum).
+// Eine feste Ziel-Playlist aus den Einstellungen gibt es nicht mehr. btn darf
 // null sein (kein Knopf beteiligt).
 async function addToRekordboxPlaylist(rows, btn, opts = {}) {
-  const targetName = opts.playlistName || REKORDBOX_PLAYLIST;
+  const targetName = opts.playlistName || "";
   const noBtn = {classList: {add() {}, remove() {}}};
   btn = btn || noBtn;
   let targetRows = rows;
@@ -10399,9 +11306,19 @@ async function addToRekordboxPlaylist(rows, btn, opts = {}) {
     // Absicherung); dieser Aufruf gibt nur die schnellere, klarere
     // Rueckmeldung direkt beim Klick, statt erst nach einem Schreibversuch.
     await rbEnsureClosed();
+    // Schon in Rekordbox: auswaehlen, welche TrackTabs Fassung bekommen. Neue Tracks
+    // bringen sie ohnehin mit (Server, _post_rekordbox_add_playlist()).
+    const existing = targetRows.filter(r => r.rb);
+    // Eine Sicherung fuer Hinzufuegen UND Ueberschreiben (rekordbox.backup_session()).
+    const session = rbSessionToken();
+    let overwrite = [];
+    if (existing.length) {
+      overwrite = await askRekordboxOverwrite(existing);
+      if (overwrite === null) { btn.classList.remove("busy"); return; }
+    }
     const res = await fetch("/api/rekordbox-add-playlist", {method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({paths: targetRows.map(r => r.p),
+      body: JSON.stringify({paths: targetRows.map(r => r.p), session,
                             ...(opts.playlistId ? {playlist_id: opts.playlistId} : {})})});
     const data = await res.json();
     if (!data.ok) {
@@ -10411,11 +11328,12 @@ async function addToRekordboxPlaylist(rows, btn, opts = {}) {
     }
     targetRows.forEach(r => { if (data.added.includes(r.p)) r.rb = 1; });
     btn.classList.add("done");
+    const partial = Object.keys(data.partial || {}).length;
+    if (partial) note(t("toast.rekordbox_created_partial", {count: partial}), "soft", true);
     if (opts.playlistId) {
-      // Zaehler/Inhalt im Rekordbox-Ast veralten durch das Schreiben.
-      EXT_CONTENTS.delete(`rekordbox:${opts.playlistId}`);
-      EXT_TREES.rekordbox.loaded = false;
-      loadExtTree("rekordbox");
+      // Zaehler/Inhalt im Rekordbox-Ast veralten durch das Schreiben; ist die
+      // Ziel-Playlist offen, wird sie frisch geladen.
+      await rbRefreshAfterWrite(opts.playlistId);
     }
     const extra = [];
     if (data.skipped.length) extra.push(t("toast.rekordbox_skipped_suffix", {count: data.skipped.length}));
@@ -10432,6 +11350,9 @@ async function addToRekordboxPlaylist(rows, btn, opts = {}) {
     const scrollY = window.scrollY;
     render();
     window.scrollTo(0, scrollY);
+    // Angehakte vorhandene Tracks: TrackTabs Fassung schreiben (wie "Rekordbox Update").
+    if (overwrite.length) await djRekordboxRun(overwrite, "update", session);
+    else if ((data.created || []).length) { await syncMarks(); render(); window.scrollTo(0, scrollY); }
   } catch (err) {
     btn.classList.add("failed");
     note(t("toast.rekordbox_playlist_failed", {error: err.message}), true, !!err.sticky);
@@ -10491,18 +11412,18 @@ async function rbPost(url, body) {
 
 // Nach einem Schreibvorgang: Inhalt und Zaehler im Rekordbox-Ast sind veraltet.
 // Die geoeffnete Playlist wird frisch geladen und neu angezeigt.
-async function rbRefreshAfterWrite(playlistId) {
-  if (playlistId) EXT_CONTENTS.delete(`rekordbox:${playlistId}`);
-  else for (const k of [...EXT_CONTENTS.keys()]) if (k.startsWith("rekordbox:")) EXT_CONTENTS.delete(k);
-  EXT_TREES.rekordbox.loaded = false;
-  await loadExtTree("rekordbox");
+async function rbRefreshAfterWrite(playlistId, source = "rekordbox") {
+  if (playlistId) EXT_CONTENTS.delete(`${source}:${playlistId}`);
+  else for (const k of [...EXT_CONTENTS.keys()]) if (k.startsWith(`${source}:`)) EXT_CONTENTS.delete(k);
+  EXT_TREES[source].loaded = false;
+  await loadExtTree(source);
   // Bewusst nicht openExtPlaylist(): das setzt die Spaltensortierung zurueck,
   // nach einem Entfernen soll die gewaehlte Sortierung aber stehen bleiben.
   const id = String(state.view || "");
-  if (extSourceOfView(id) === "rekordbox") {
+  if (extSourceOfView(id) === source) {
     const scrollY = window.scrollY;
     try {
-      await loadExtPlaylist("rekordbox", id.slice(EXT_SOURCES.rekordbox.prefix.length));
+      await loadExtPlaylist(source, id.slice(EXT_SOURCES[source].prefix.length));
       rebuildPlaylistIndex();
     } catch (err) { /* Baum zeigt den Fehler, Liste bleibt beim alten Stand */ }
     updateCards(); render();
@@ -10519,16 +11440,18 @@ async function removeFromRekordboxPlaylist(rows) {
     t("rb.remove_entries_title", {count: entries.length, playlist: pl.name}),
     t("rb.remove_entries_note"));
   if (!ok) return;
-  try {
-    await rbEnsureClosed();
-    const data = await rbPost("/api/rekordbox-remove-entries",
-      {playlist_id: pl.id, entry_ids: entries.map(e => e.entryId)});
-    state.selected.clear();
-    await rbRefreshAfterWrite(pl.id);
-    note(t("rb.removed_entries", {count: data.removed.length, playlist: esc(data.playlist || pl.name)}));
-  } catch (err) {
-    note(t("rb.edit_failed", {error: err.message}), true, !!err.sticky);
-  }
+  await withExtBusy("rekordbox", pl.id, async () => {
+    try {
+      await rbEnsureClosed();
+      const data = await rbPost("/api/rekordbox-remove-entries",
+        {playlist_id: pl.id, entry_ids: entries.map(e => e.entryId)});
+      state.selected.clear();
+      await rbRefreshAfterWrite(pl.id);
+      note(t("rb.removed_entries", {count: data.removed.length, playlist: esc(data.playlist || pl.name)}));
+    } catch (err) {
+      note(t("rb.edit_failed", {error: err.message}), true, !!err.sticky);
+    }
+  });
 }
 
 async function removeFromRekordboxCollection(rows) {
@@ -10913,6 +11836,14 @@ function fieldWidthClass(f) {
   return ["bool", "select", "number"].includes(f.type) ? " inline" : "";
 }
 
+// "Standard wiederherstellen" als schlichter, gedaempfter Knopf mit kurzem
+// Label; der volle Text steht im Tooltip. attr = die Verdrahtung
+// (data-reset="<gruppe>" bzw. data-acslots-default="<block>").
+function resetBtnHtml(attr) {
+  return `<button type="button" class="setreset" ${attr} title="${esc(t("settings.reset_default"))}">` +
+    `${ICONS.resetDefault}<span>${esc(t("settings.reset_short"))}</span></button>`;
+}
+
 // .setbody buendelt Hinweis + Felder (+ ggf. Unter-Accordions) in EINEM
 // Container, der bei "collapsed" komplett verschwindet -- Hinweis und
 // Unter-Accordions standen frueher direkt in .sethead bzw. lose im
@@ -10924,7 +11855,7 @@ function groupHTML(g, v, d, open, extraHtml) {
         <div class="sethead-top">
           <span class="setchevron">${ICONS.chevronDown}</span>
           <b>${esc(g.title)}</b>
-          <button class="act small" data-reset="${g.id}"><span class="btnicon">${ICONS.bookDown}</span> ${esc(t("settings.reset_default"))}</button>
+          ${resetBtnHtml(`data-reset="${g.id}"`)}
         </div>
       </div>
       <div class="setbody">
@@ -10945,7 +11876,7 @@ function subGroupHTML(g, v, d) {
         <div class="sethead-top">
           <span class="setchevron">${ICONS.chevronDown}</span>
           <b>${esc(g.title)}</b>
-          <button class="act small" data-reset="${g.id}"><span class="btnicon">${ICONS.bookDown}</span> ${esc(t("settings.reset_default"))}</button>
+          ${resetBtnHtml(`data-reset="${g.id}"`)}
         </div>
       </div>
       <div class="setbody">
@@ -10964,11 +11895,27 @@ function subGroupHTML(g, v, d) {
 // Tabelle). Bewusst nur ein Hinweis, kein Knopf fuer die ganze Bibliothek --
 // bei ~11k Dateien viel zu langsam; angeglichen wird ueber die Auswahl
 // (Notenschluessel-Symbol in der Sammelleiste).
+// Der Link oeffnet die Liste "Auffaelligkeiten", gefiltert auf genau diese
+// Abweichung (showKeyNotationIssues()).
 function keySyncHintHtml() {
   const count = DATA.filter(r => !r.removed && !r.ext && keyNeedsSync(r)).length;
-  const text = count ? t("settings.key_sync_count", {count: count.toLocaleString("de-DE")})
-                     : t("settings.key_sync_none");
-  return `<div class="sethint" id="keySyncHint">${esc(text)}</div>`;
+  // Nur bei Abweichungen: ein "alles in Ordnung" ist keine Information.
+  // .sethint ist bereits in der Warnfarbe (--susp) gehalten.
+  if (!count) return "";
+  const text = t("settings.key_sync_count", {count: count.toLocaleString("de-DE")});
+  return `<div class="sethint" id="keySyncHint"><span style="display:inline-flex;vertical-align:-3px;margin-right:6px">${ICONS.gone}</span>${esc(text)} <button type="button" class="linkbtn" data-keysync-show>${
+    esc(t("settings.key_sync_show"))}</button></div>`;
+}
+
+// Einstellungen schliessen und die betroffenen Dateien zeigen: Liste
+// "Auffaelligkeiten" mit Bubble-Filter key_notation, in Bearbeiten (nur dort
+// gibt es "Automatisch beheben" in der Tabelle).
+function showKeyNotationIssues() {
+  document.getElementById("btnCloseSettings").click();
+  if (state.layout !== "edit") applyLayout("edit");
+  selectView("tag_issues");
+  state.tagIssueFilter = "key_notation";
+  saveFilters(); render();
 }
 
 // Anzeigereihenfolge im Einstellungs-Dialog -- fest vorgegeben (nicht die
@@ -10979,7 +11926,8 @@ function keySyncHintHtml() {
 // Bearbeiten-Dialog markiert (askPlaylistProps()).
 const SETTINGS_LAYOUT = [
   "library", "search", "display", "bpmkey", "stems", "columnviews",
-  "music", "rekordbox", "tools", "shops", "rename", "djview", "autocueslots", "autocuemodel", "autocue", "analysis", "loudness",
+  "music", "rekordbox", "tools", "shops", "rename", "djview", "autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue",
+  "analysis", "loudness",
   "backup", "logs",
 ];
 
@@ -11001,7 +11949,8 @@ function renderSettings() {
   const dynamicBlocks = {
     columnviews: renderColumnViewsBlock,
     shops: renderShopsBlock, backup: renderBackupBlock, logs: renderLogsBlock,
-    autocueslots: renderAutocueSlotsBlock, autocuemodel: renderAutocueModelBlock,
+    autocuehot: renderAutocueHotBlock, autocuemem: renderAutocueMemoryBlock, autocuemodel: renderAutocueModelBlock,
+    autocuetrain: renderAutocueTrainBlock,
   };
 
   document.getElementById("settingsBody").innerHTML = SETTINGS_LAYOUT
@@ -11012,6 +11961,8 @@ function renderSettings() {
 
   const orphanBtn = document.querySelector('[data-settings-action="orphan_cleanup"]');
   if (orphanBtn) orphanBtn.onclick = () => runOrphanCleanup(orphanBtn);
+  const keySyncShowBtn = document.querySelector("[data-keysync-show]");
+  if (keySyncShowBtn) keySyncShowBtn.onclick = showKeyNotationIssues;
   const rbBackupBtn = document.querySelector('[data-settings-action="rekordbox_backup_folder"]');
   if (rbBackupBtn) rbBackupBtn.onclick = () => openBackupFolder("rekordbox",
     document.getElementById("action_rekordbox_backup_folder_status"));
@@ -11047,13 +11998,12 @@ function renderSettings() {
   document.querySelectorAll(".folderlist").forEach(el => wireFolderRows(el.id.slice("folderlist_".length)));
   document.querySelectorAll("[data-file-pick]").forEach(btn => btn.onclick =
     () => pickFile(btn.dataset.filePick, btn.dataset.filePickUrl));
-  document.querySelectorAll("[data-rbplaylist-pick]").forEach(btn => btn.onclick =
-    () => openRekordboxPlaylistPicker(btn.dataset.rbplaylistPick));
 
   wireColumnViewsBlock();
   wireShopsBlock();
   wireAutocueSlotsBlock();
   wireAutocueModelBlock();
+  wireAutocueTrainBlock();
   wireBackupBlock();
   wireLogsBlock();
   document.querySelectorAll("#settingsBody .sethint").forEach(h =>
@@ -11072,7 +12022,7 @@ const SETTINGS_PAGES = [
   {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename"]},
   {id: "djview", icon: "disc-3", nav: "settings.nav_general", label: "settings.page_djview", groups: ["djview"]},
   {id: "autocue", icon: "square-sparkles", nav: "settings.nav_general", label: "settings.page_autocue",
-   groups: ["autocueslots", "autocuemodel", "autocue"]},
+   groups: ["autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue"]},
   {id: "bpmkey", icon: "audio-waveform", nav: "settings.nav_analysis", label: "settings.page_bpmkey", groups: ["bpmkey"]},
   {id: "stems", icon: "layers", nav: "settings.nav_analysis", label: "settings.page_stems", groups: ["stems"]},
   {id: "music", icon: "music", nav: "settings.nav_connections", label: "settings.page_music", groups: ["music"]},
@@ -11160,7 +12110,8 @@ function applySettingsView() {
     } else {
       fields.forEach(f => {
         const own = textOf(f.querySelector("label") || f) + " " +
-          [...f.querySelectorAll(".sethelp")].map(textOf).join(" ");
+          [...f.querySelectorAll(".sethelp")].map(textOf).join(" ") + " " +
+          [...f.querySelectorAll("[data-help]")].map(el => el.dataset.help.toLowerCase()).join(" ");
         const hit = own.includes(q) || title.includes(q);
         f.classList.toggle("sq-off", !hit);
         if (hit) hits++;
@@ -11431,7 +12382,7 @@ function renderShopsBlock() {
   return `<div class="setgroup collapsed" data-sg="shops">
     <div class="sethead">
       <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.shops_title"))}</b>
-        <button class="act small" data-reset="shops"><span class="btnicon">${ICONS.bookDown}</span> ${esc(t("settings.reset_default"))}</button>
+        ${resetBtnHtml(`data-reset="shops"`)}
       </div>
     </div>
     <div class="setbody">
@@ -11553,41 +12504,61 @@ function autocueRowHTML(group, i, slot) {
   </div>`;
 }
 
-function renderAutocueSlotRows() {
-  const rows = group => autocueDraft[group].map((s, i) => autocueRowHTML(group, i, s)).join("");
-  return `<div class="acslots-head">${esc(t("autocue.hot_title"))}</div><div class="acslots">${rows("hot")}</div>
-    <div class="acslots-head">${esc(t("autocue.memory_title"))}</div><div class="acslots">${rows("memory")}</div>`;
+// Zwei Bloecke -- Hot Cues und Memory Cues --, je mit eigenem Speichern- und
+// Vorgabe-Knopf. Ein gemeinsamer Entwurf (autocueDraft), gespeichert wird je
+// Gruppe: die andere geht mit ihrem gespeicherten Stand zum Server, damit dort
+// die Pruefung "eine Rolle nur einmal" ueber beide laeuft. Aus derselben Belegung
+// lernt auch das Training (labels.learn_plan()).
+const AC_SLOT_GROUPS = [["hot", "autocuehot"], ["memory", "autocuemem"]];
+
+function acSlotsSaved() {
+  return schema.autocue_slots || schema.autocue_slots_default || {hot: [], memory: []};
 }
 
-function renderAutocueSlotsBlock() {
-  autocueDraft = JSON.parse(JSON.stringify(schema.autocue_slots || schema.autocue_slots_default ||
-    {hot: [], memory: []}));
-  const off = AUTOCUE_AVAILABLE ? "" : " req-off";
-  return `<div class="setgroup collapsed${off}" data-sg="autocueslots">
+function renderAutocueSlotRows(group) {
+  return `<div class="acslots">${autocueDraft[group].map((s, i) => autocueRowHTML(group, i, s)).join("")}</div>`;
+}
+
+function renderAutocueSlotGroupBlock(group, sg) {
+  if (!autocueDraft) autocueDraft = JSON.parse(JSON.stringify(acSlotsSaved()));
+  // Auch ohne Modell bearbeitbar: die Belegung sagt dem Training, was es lernt.
+  return `<div class="setgroup collapsed" data-sg="${sg}">
     <div class="sethead">
-      <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("autocue.slots_title"))}</b>
-        <button class="act small" id="btnAutocueSlotsDefault"><span class="btnicon">${ICONS.bookDown}</span> ${
-          esc(t("settings.reset_default"))}</button>
+      <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("autocue.slots_title_" + group))}</b>
+        ${resetBtnHtml(`data-acslots-default="${group}"`)}
       </div>
     </div>
     <div class="setbody">
-      ${AUTOCUE_AVAILABLE ? "" : `<div class="sethint">${esc(t("settings.requires_autocue"))}</div>`}
-      <div id="acSlotRows">${renderAutocueSlotRows()}</div>
-      <div id="acSlotStatus"></div>
-      <button class="act" id="btnSaveAutocueSlots" style="margin-top:10px"${AUTOCUE_AVAILABLE ? "" : " disabled"}>
-        <span class="btnicon">${ICONS.save}</span> ${esc(t("autocue.slots_save"))}</button>
+      <div class="sethint">${esc(t("autocue.slots_note_" + group))}</div>
+      <div id="acSlotRows_${group}">${renderAutocueSlotRows(group)}</div>
+      <div id="acSlotStatus_${group}" class="acslot-status"></div>
+      <button class="act" data-acslots-save="${group}" style="margin-top:10px">
+        <span class="btnicon">${ICONS.save}</span> ${esc(t("autocue.slots_save_" + group))}</button>
     </div>
   </div>`;
 }
 
-function redrawAutocueSlotRows() {
-  document.getElementById("acSlotRows").innerHTML = renderAutocueSlotRows();
-  wireAutocueSlotRows();
+function renderAutocueHotBlock() {
+  autocueDraft = JSON.parse(JSON.stringify(acSlotsSaved()));
+  return renderAutocueSlotGroupBlock("hot", "autocuehot");
 }
 
-function wireAutocueSlotRows() {
-  document.querySelectorAll("#acSlotRows .acslot").forEach(row => {
-    const group = row.dataset.acg, i = +row.dataset.aci;
+function renderAutocueMemoryBlock() {
+  return renderAutocueSlotGroupBlock("memory", "autocuemem");
+}
+
+function redrawAutocueSlotRows(group) {
+  (group ? [group] : ["hot", "memory"]).forEach(g => {
+    const box = document.getElementById("acSlotRows_" + g);
+    if (!box) return;
+    box.innerHTML = renderAutocueSlotRows(g);
+    wireAutocueSlotRows(g);
+  });
+}
+
+function wireAutocueSlotRows(group) {
+  document.querySelectorAll(`#acSlotRows_${group} .acslot`).forEach(row => {
+    const i = +row.dataset.aci;
     const slot = autocueDraft[group][i];
     const palette = (schema.cue_palettes || {})[group === "hot" ? "hot" : "memory"] || [];
     row.querySelectorAll("[data-acf]").forEach(el => {
@@ -11609,7 +12580,7 @@ function wireAutocueSlotRows() {
             slot.direction = slot.direction || "before";
           }
           if (slot.mode !== "off" && !slot.color) slot.color = palette[0];
-          redrawAutocueSlotRows();
+          redrawAutocueSlotRows(group);
         };
       } else {
         el.oninput = el.onchange = read;
@@ -11617,129 +12588,574 @@ function wireAutocueSlotRows() {
     });
     row.querySelectorAll("[data-acc]").forEach(btn => btn.onclick = () => {
       slot.color = palette[+btn.dataset.acc];
-      redrawAutocueSlotRows();
+      redrawAutocueSlotRows(group);
     });
   });
 }
 
 function wireAutocueSlotsBlock() {
-  const btnDefault = document.getElementById("btnAutocueSlotsDefault");
-  if (!btnDefault) return;
-  btnDefault.onclick = () => {
-    autocueDraft = JSON.parse(JSON.stringify(schema.autocue_slots_default));
-    redrawAutocueSlotRows();
-  };
-  document.getElementById("btnSaveAutocueSlots").onclick = () => saveAutocueSlots();
-  wireAutocueSlotRows();
+  document.querySelectorAll("[data-acslots-default]").forEach(btn => btn.onclick = () => {
+    const g = btn.dataset.acslotsDefault;
+    autocueDraft[g] = JSON.parse(JSON.stringify((schema.autocue_slots_default || {})[g] || []));
+    redrawAutocueSlotRows(g);
+  });
+  document.querySelectorAll("[data-acslots-save]").forEach(btn => btn.onclick = () =>
+    saveAutocueSlots(btn.dataset.acslotsSave));
+  ["hot", "memory"].forEach(g => wireAutocueSlotRows(g));
 }
 
-// Ungespeicherte Aenderungen in der Slot-Tabelle? Dann nimmt das grosse "Speichern" des
-// Dialogs sie mit -- sonst gingen Farben, Namen und Rollen still verloren, wenn man nicht
-// den eigenen Knopf des Blocks erwischt.
-function autocueSlotsDirty() {
-  if (!autocueDraft || !document.getElementById("acSlotRows")) return false;
-  return JSON.stringify(autocueDraft) !== JSON.stringify(schema.autocue_slots || schema.autocue_slots_default);
+// Ungespeicherte Aenderungen in einer der beiden Tabellen? Dann nimmt das grosse
+// "Speichern" des Dialogs sie mit -- sonst gingen Farben, Namen und Rollen still
+// verloren, wenn man nicht den eigenen Knopf des Blocks erwischt.
+function autocueSlotsDirty(group) {
+  if (!autocueDraft || !document.getElementById("acSlotRows_" + group)) return false;
+  return JSON.stringify(autocueDraft[group]) !== JSON.stringify(acSlotsSaved()[group]);
 }
 
-async function saveAutocueSlots() {
-  const st = document.getElementById("acSlotStatus");
-  st.textContent = t("autocue.slots_saving"); st.className = "";
+async function saveAutocueSlots(group) {
+  const st = document.getElementById("acSlotStatus_" + group);
+  st.textContent = t("autocue.slots_saving"); st.className = "acslot-status";
   try {
+    const saved = acSlotsSaved();
+    const body = {hot: group === "hot" ? autocueDraft.hot : saved.hot,
+                  memory: group === "memory" ? autocueDraft.memory : saved.memory};
     const res = await fetch("/api/autocue-slots", {method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({slots: autocueDraft})});
+      body: JSON.stringify({slots: body})});
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
     schema.autocue_slots = data.slots;
-    autocueDraft = JSON.parse(JSON.stringify(data.slots));
-    redrawAutocueSlotRows();
+    autocueDraft[group] = JSON.parse(JSON.stringify(data.slots[group]));
+    adoptAutocueModels(schema.autocue_models);
+    redrawAutocueSlotRows(group);
     st.textContent = t("autocue.slots_saved");
+    if (document.getElementById("acTrainForm")) runAcTrainCheck();
     return true;
   } catch (err) {
-    st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
+    st.textContent = t("error.generic", {error: err.message}); st.className = "acslot-status warn";
     return false;
   }
 }
 
-// Modellstand und Laden eines Modells (ZIP aus ./run.command autocue-train, autocue/package.py).
-// Trainiert wird nie hier: die App bekommt das fertige Modell mit der DMG oder als Datei.
-function autocueModelSummary(info) {
-  if (!info || !info.trained_at) return esc(t("autocue.model_none"));
-  const date = new Date(info.trained_at);
-  const when = isNaN(date) ? info.trained_at : date.toLocaleDateString(undefined, {dateStyle: "medium"});
-  const lines = [t(info.origin === "trained" ? "autocue.model_loaded" : "autocue.model_bundled",
-    {date: when, tracks: info.n_tracks || "?"})];
-  const res = info.gold && info.gold.results;
-  if (res && res.A) {
-    lines.push(t("autocue.model_gold", {source: info.gold.source || "", n: info.gold.n || 0,
-      a: `${res.A.hit2}/${res.A.n}`, b: `${res.B.hit2}/${res.B.n}`, c: `${res.C.hit2}/${res.C.n}`}));
+// ── Auto Cue: Modellbibliothek ────────────────────────────────────────
+// Nur eigene Modelle (Training in der App, ZIP-Import), je mit Name und Datum
+// (autocue/library.py), ein mitgeliefertes gibt es nicht. Es gilt das
+// ausgewaehlte (config "autocue_model"), das erste wird automatisch gewaehlt.
+const AC_LABEL_ROLES = ["drop2", "break1", "drop1", "break2", "outro_start"];
+
+function acDate(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return isNaN(d) ? iso : d.toLocaleDateString(undefined, {dateStyle: "medium"});
+}
+
+// Prueflisten-Ergebnis {A: {hit2, n}, C: ...} -> "Hot A 3/4, Hot C 4/4"
+function acGoldText(res) {
+  if (!res) return "";
+  return Object.keys(res).filter(k => k.length === 1 && res[k] && res[k].n)
+    .sort().map(k => t("autocue.gold_slot", {slot: k, hit: res[k].hit2, n: res[k].n})).join(", ");
+}
+
+function acLabelSlotsText(ls, mem) {
+  if (!ls) return "";
+  return AC_LABEL_ROLES.filter(r => ls[r]).map(r => `${t("autocue.role." + r)} = Hot ${ls[r]}`)
+    .concat((mem || []).map(r => t("autocue.models_from_memory", {role: t("autocue.role." + r)}))).join(", ");
+}
+
+function acModelMeta(m) {
+  const parts = [];
+  const when = acDate(m.trained_at);
+  parts.push(t(m.origin === "imported" ? "autocue.models_imported" : "autocue.models_trained", {date: when}));
+  if (m.n_tracks) parts.push(t("autocue.models_tracks", {n: Number(m.n_tracks).toLocaleString("de-DE")}));
+  if (m.training_playlist) parts.push(t("autocue.models_from", {list: m.training_playlist}));
+  const lines = [parts.join(" · ")];
+  if (m.gold && m.gold.results) {
+    const g = acGoldText(m.gold.results);
+    if (g) lines.push(t("autocue.models_gold", {n: m.gold.n || 0, result: g}));
   }
-  if (info.has_loaded && info.origin !== "trained") lines.push(t("autocue.model_loaded_older"));
+  if (m.label_slots) lines.push(t("autocue.models_convention", {map: acLabelSlotsText(m.label_slots, m.memory_roles)}));
   return lines.map(l => `<div>${esc(l)}</div>`).join("");
 }
 
+function acSlotsEqual(a, b) {
+  return JSON.stringify(a || null) === JSON.stringify(b || null);
+}
+
+function acModelRowHTML(m) {
+  const canAdopt = m.suggested_slots && !acSlotsEqual(m.suggested_slots, schema.autocue_slots);
+  return `<div class="acmodel${m.active ? " on" : ""}" data-acm="${esc(m.id)}">
+    <label class="acmodel-pick"><input type="radio" name="acModelActive" value="${esc(m.id)}"${m.active ? " checked" : ""}></label>
+    <div class="acmodel-main">
+      <input class="acmodel-name" type="text" maxlength="60" value="${esc(m.name)}" data-acm-name="${esc(m.id)}"
+        title="${esc(t("autocue.models_rename_title"))}">
+      <div class="acmodel-meta">${acModelMeta(m)}</div>
+      ${canAdopt ? `<button class="act small" data-acm-adopt="${esc(m.id)}">${esc(t("autocue.models_adopt_slots"))}</button>` : ""}
+    </div>
+    <div class="acmodel-btns">
+      <button class="iconbtn" data-acm-export="${esc(m.id)}" title="${esc(t("autocue.models_export"))}">${ICONS.exportZip}</button>
+      <button class="iconbtn del" data-acm-delete="${esc(m.id)}" title="${esc(t("autocue.models_delete"))}">${ICONS.trash}</button>
+    </div>
+  </div>`;
+}
+
+function renderAutocueModelList() {
+  const models = schema.autocue_models || [];
+  if (!models.length) return `<div class="acmodel-empty">${esc(t("autocue.model_none"))}</div>`;
+  return models.map(acModelRowHTML).join("");
+}
+
 function renderAutocueModelBlock() {
-  const info = schema.autocue_model || {};
   return `<div class="setgroup collapsed" data-sg="autocuemodel">
     <div class="sethead">
-      <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("autocue.model_title"))}</b></div>
+      <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("autocue.models_title"))}</b></div>
     </div>
     <div class="setbody">
-      <div class="sethint">${esc(t("autocue.model_note"))}</div>
-      <div class="acmodel-info" id="acModelInfo">${autocueModelSummary(info)}</div>
+      <div class="sethint">${esc(t("autocue.models_note"))}</div>
+      <div class="acmodels" id="acModelList">${renderAutocueModelList()}</div>
       <div id="acModelStatus"></div>
       <div class="acmodel-actions">
         <button class="act" id="btnAutocueModelLoad"><span class="btnicon">${ICONS.modelLoad}</span> ${esc(t("autocue.model_load"))}</button>
-        <button class="act" id="btnAutocueModelRemove"${info.has_loaded ? "" : " hidden"}>${esc(t("autocue.model_remove"))}</button>
         <input type="file" id="acModelFile" accept=".zip,application/zip" hidden>
       </div>
     </div>
   </div>`;
 }
 
-function showAutocueModel(info, statusKey, warn) {
-  schema.autocue_model = info;
-  document.getElementById("acModelInfo").innerHTML = autocueModelSummary(info);
-  document.getElementById("btnAutocueModelRemove").hidden = !info.has_loaded;
+function acModelStatus(text, warn) {
   const st = document.getElementById("acModelStatus");
-  st.textContent = statusKey ? t(statusKey) : ""; st.className = warn ? "warn" : "";
-  AUTOCUE_AVAILABLE = !!info.trained_at;
+  if (!st) return;
+  st.textContent = text || ""; st.className = warn ? "warn" : "";
+}
+
+function adoptAutocueModels(models) {
+  schema.autocue_models = models || [];
+  AUTOCUE_AVAILABLE = schema.autocue_models.some(m => m.active);
+  const list = document.getElementById("acModelList");
+  if (list) { list.innerHTML = renderAutocueModelList(); wireAutocueModelList(); }
+  if (typeof applyRequires === "function") applyRequires();
+}
+
+async function acModelPost(url, body) {
+  const res = await fetch(url, {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(body)});
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  adoptAutocueModels(data.models);
+  return data;
+}
+
+async function selectAutocueModel(id, statusKey) {
+  try {
+    await acModelPost("/api/autocue/model-select", {id});
+    acModelStatus(t(statusKey || "autocue.models_selected"));
+  } catch (err) {
+    acModelStatus(t("error.generic", {error: err.message}), true);
+  }
+}
+
+async function adoptModelSlots(id) {
+  const m = (schema.autocue_models || []).find(x => x.id === id);
+  if (!m || !m.suggested_slots) return;
+  try {
+    const res = await fetch("/api/autocue-slots", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({slots: m.suggested_slots})});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    schema.autocue_slots = data.slots;
+    autocueDraft = JSON.parse(JSON.stringify(data.slots));
+    redrawAutocueSlotRows();
+    adoptAutocueModels(schema.autocue_models);
+    acModelStatus(t("autocue.models_slots_adopted"));
+  } catch (err) {
+    acModelStatus(t("error.generic", {error: err.message}), true);
+  }
+}
+
+function wireAutocueModelList() {
+  document.querySelectorAll('input[name="acModelActive"]').forEach(r => r.onchange = () => {
+    if (r.checked) selectAutocueModel(r.value);
+  });
+  document.querySelectorAll("[data-acm-name]").forEach(inp => {
+    const id = inp.dataset.acmName;
+    const save = async () => {
+      const m = (schema.autocue_models || []).find(x => x.id === id);
+      const name = inp.value.trim();
+      if (!m || name === m.name) return;
+      if (!name) { inp.value = m.name; return; }
+      try {
+        await acModelPost("/api/autocue/model-rename", {id, name});
+        acModelStatus(t("autocue.models_renamed"));
+      } catch (err) {
+        inp.value = m.name;
+        acModelStatus(t("error.generic", {error: err.message}), true);
+      }
+    };
+    inp.onkeydown = ev => {
+      if (ev.key === "Enter") { ev.preventDefault(); inp.blur(); }
+      if (ev.key === "Escape") { ev.stopPropagation(); const m = (schema.autocue_models || []).find(x => x.id === id); inp.value = m ? m.name : inp.value; inp.blur(); }
+    };
+    inp.onblur = save;
+  });
+  document.querySelectorAll("[data-acm-export]").forEach(b => b.onclick = () => {
+    const a = document.createElement("a");
+    a.href = "/api/autocue/model-export?id=" + encodeURIComponent(b.dataset.acmExport);
+    a.download = "";
+    document.body.appendChild(a); a.click(); a.remove();
+  });
+  document.querySelectorAll("[data-acm-delete]").forEach(b => b.onclick = async () => {
+    const id = b.dataset.acmDelete;
+    const m = (schema.autocue_models || []).find(x => x.id === id);
+    if (!await askConfirmSimple(t("autocue.models_delete_confirm", {name: m ? m.name : id}),
+      m && m.active ? t("autocue.models_delete_active_note") : "", t("autocue.models_delete_yes"))) return;
+    try {
+      await acModelPost("/api/autocue/model-delete", {id});
+      acModelStatus(t("autocue.models_deleted"));
+    } catch (err) {
+      acModelStatus(t("error.generic", {error: err.message}), true);
+    }
+  });
+  document.querySelectorAll("[data-acm-adopt]").forEach(b => b.onclick = () => adoptModelSlots(b.dataset.acmAdopt));
 }
 
 function wireAutocueModelBlock() {
   const load = document.getElementById("btnAutocueModelLoad");
   if (!load) return;
+  wireAutocueModelList();
   const input = document.getElementById("acModelFile");
   load.onclick = () => input.click();
   input.onchange = async () => {
     const file = input.files[0];
     input.value = "";
     if (!file) return;
-    const st = document.getElementById("acModelStatus");
-    st.textContent = t("autocue.model_loading"); st.className = "";
+    acModelStatus(t("autocue.model_loading"));
     try {
       const res = await fetch("/api/autocue/model-import", {method: "POST",
         headers: {"Content-Type": "application/zip"}, body: file});
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || t("error.unknown"));
-      showAutocueModel(data.model, data.active ? "autocue.model_loaded_ok" : "autocue.model_loaded_inactive",
-        !data.active);
+      adoptAutocueModels(data.models);
+      const m = data.models.find(x => x.id === data.id);
+      if (await askConfirmSimple(t("autocue.models_imported_ask", {name: m ? m.name : ""}), "",
+        t("autocue.models_activate"))) {
+        await selectAutocueModel(data.id, "autocue.models_imported_active");
+      } else {
+        acModelStatus(t("autocue.models_imported_ok"));
+      }
     } catch (err) {
-      st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
+      acModelStatus(t("error.generic", {error: err.message}), true);
     }
   };
-  document.getElementById("btnAutocueModelRemove").onclick = async () => {
-    if (!await askConfirmSimple(t("autocue.model_remove_confirm"), "", t("autocue.model_remove_yes"))) return;
-    const st = document.getElementById("acModelStatus");
+}
+
+// ── Auto Cue: Training in der App ──────────────────────────────────────
+// Lernt aus den eigenen Hand-Cues einer Playlist (autocue/training/job.py),
+// gemessen an einer zweiten. Der Lauf liegt im Server; die Oberflaeche fragt
+// nur den Stand ab (auch bei geschlossenem Dialog, Zeile unter dem Titel).
+const AC_TRAIN_PHASES = ["collect", "prepare", "export", "base", "chain", "eval", "package"];
+let acTrainState = {status: "idle"};
+let acTrainTimer = null;
+let acTrainCheckTimer = null;
+let acTrainDraft = null;
+
+function acTrainDefaults() {
+  return {name: "", training: "", check: ""};
+}
+
+function renderAutocueTrainBlock() {
+  if (!acTrainDraft) acTrainDraft = acTrainDefaults();
+  const body = !schema.autocue_train_available
+    ? `<div class="sethint">${esc(t("autocue.train_unavailable"))}</div>`
+    : `<div class="sethint">${esc(t("autocue.train_note"))}</div>
+      <div id="acTrainForm">${renderAutocueTrainForm()}</div>
+      <div id="acTrainRun"></div>`;
+  return `<div class="setgroup collapsed" data-sg="autocuetrain">
+    <div class="sethead">
+      <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("autocue.train_title"))}</b></div>
+    </div>
+    <div class="setbody">${body}</div>
+  </div>`;
+}
+
+// Auswahl fuer Lernen/Pruefliste: normale und smarte Playlisten, je Oeffnen neu aus
+// dem aktuellen Stand (PLAYLISTS) -- eben angelegte stehen sofort drin. Den Inhalt
+// smarter Listen kennt nur der Browser (SMART_CACHE); deshalb schickt der Client
+// die Pfade mit, der Server nimmt davon nur, was er als Track mit Hand-Cues kennt.
+function acPlaylistPath(node) {
+  const parts = [node.name];
+  let p = PLAYLISTS.find(n => n.id === node.parent_id);
+  while (p) { parts.unshift(p.name); p = PLAYLISTS.find(n => n.id === p.parent_id); }
+  return parts.join("/");
+}
+
+function acTrainListEntries() {
+  return PLAYLISTS.filter(n => n.kind === "playlist" || n.kind === "smart")
+    .map(n => ({id: n.id, smart: n.kind === "smart", path: acPlaylistPath(n), n: playlistCount(n.id)}))
+    .sort((a, b) => cmpText(a.path, b.path));
+}
+
+function acListPaths(value) {
+  const id = String(value || "").replace(/^id:/, "");
+  const node = PLAYLISTS.find(n => n.id === id);
+  if (!node) return null;
+  if (node.kind === "smart") recomputeSmart(id);
+  const paths = node.kind === "smart" ? (SMART_CACHE.get(id) || [])
+    : (PLAYLIST_SETS[id] || PLAYLIST_ITEMS[id] || []);
+  return {name: acPlaylistPath(node),
+          paths: [...paths].filter(path => { const r = ROW_BY_PATH.get(path); return r && !r.removed; })};
+}
+
+// Anfrage an /api/autocue/train(-check): Anzeigename + Pfade je Liste.
+function acTrainPayload(d) {
+  const tr = acListPaths(d.training), ch = acListPaths(d.check);
+  return {name: d.name,
+          training: tr ? tr.name : "", training_paths: tr ? tr.paths : null,
+          check: ch ? ch.name : "", check_paths: ch ? ch.paths : null};
+}
+
+function acListOptions(selected) {
+  return `<option value="">${esc(t("autocue.train_pick_list"))}</option>` + acTrainListEntries().map(l =>
+    `<option value="id:${esc(l.id)}"${selected === "id:" + l.id ? " selected" : ""}>${
+      esc(t(l.smart ? "autocue.train_list_option_smart" : "autocue.train_list_option",
+        {path: l.path, n: l.n.toLocaleString("de-DE")}))}</option>`).join("");
+}
+
+function renderAutocueTrainForm() {
+  const d = acTrainDraft;
+  return `<div class="actrain-grid">
+      <label>${esc(t("autocue.train_name"))}</label>
+      <input type="text" id="acTrainName" maxlength="60" placeholder="${esc(t("autocue.train_name_placeholder"))}" value="${esc(d.name)}">
+      <label>${esc(t("autocue.train_list"))}</label>
+      <select id="acTrainList">${acListOptions(d.training)}</select>
+      <label>${esc(t("autocue.train_check"))}</label>
+      <select id="acTrainCheck">${acListOptions(d.check)}</select>
+    </div>
+    <div class="acslots-head">${esc(t("autocue.train_convention"))}</div>
+    <div id="acTrainLearn" class="actrain-learn"></div>
+    <div id="acTrainCheckLine" class="actrain-check"></div>
+    <div class="acmodel-actions">
+      <button class="act" id="btnAcTrainStart" disabled><span class="btnicon">${ICONS.autocueTrain}</span> ${esc(t("autocue.train_start"))}</button>
+    </div>`;
+}
+
+function acTrainReadForm() {
+  const d = acTrainDraft;
+  const name = document.getElementById("acTrainName");
+  if (name) d.name = name.value;
+  const tl = document.getElementById("acTrainList"), cl = document.getElementById("acTrainCheck");
+  if (tl) d.training = tl.value;
+  if (cl) d.check = cl.value;
+  return d;
+}
+
+function scheduleAcTrainCheck() {
+  clearTimeout(acTrainCheckTimer);
+  acTrainCheckTimer = setTimeout(runAcTrainCheck, 250);
+}
+
+async function runAcTrainCheck() {
+  const line = document.getElementById("acTrainCheckLine");
+  const btn = document.getElementById("btnAcTrainStart");
+  if (!line || !btn) return;
+  const d = acTrainReadForm();
+  btn.disabled = true;
+  if (d.training && d.check) { line.textContent = t("autocue.train_checking"); line.className = "actrain-check"; }
+  try {
+    const res = await fetch("/api/autocue/train-check", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(acTrainPayload(d))});
+    const data = await res.json();
+    renderAcTrainLearn(data.learn, data.blocked);
+    if (!data.ok) {
+      // Gesperrt: der Grund steht schon in der Lern-Uebersicht darueber.
+      if (data.blocked) { line.textContent = ""; line.className = "actrain-check"; return; }
+      if (!data.error) { line.textContent = t("autocue.train_pick_both"); line.className = "actrain-check"; return; }
+      line.textContent = data.error || t("error.unknown"); line.className = "actrain-check warn"; return;
+    }
+    const lines = [t("autocue.train_check_ok", {train: data.train.toLocaleString("de-DE"),
+      check: data.check.toLocaleString("de-DE")})].concat(data.warnings || []);
+    line.innerHTML = lines.map(l => `<div>${esc(l)}</div>`).join("");
+    line.className = "actrain-check" + ((data.warnings || []).length ? " soft" : " ok");
+    btn.disabled = acTrainState.status === "running";
+  } catch (err) {
+    line.textContent = t("error.generic", {error: err.message}); line.className = "actrain-check warn";
+  }
+}
+
+// Was aus der Slot-Belegung gelernt wird (Server: labels.learn_plan()), mit Sprung
+// zu den beiden Slot-Bloecken.
+function renderAcTrainLearn(learn, blocked) {
+  const box = document.getElementById("acTrainLearn");
+  if (!box || !learn) return;
+  const hot = learn.hot || {}, mem = learn.memory || [];
+  const rows = AC_LABEL_ROLES.map(r => {
+    // Drop 2 und Break 1 sind Pflicht (Grundmodelle, Bezug der Kette); die uebrigen
+    // Stellen ohne Cue sucht Auto Cue ueber die Strukturanalyse bzw. die Outro-Regel.
+    const required = r === "drop2" || r === "break1";
+    const how = hot[r] ? t("autocue.train_learn_hot", {slot: hot[r]})
+      : mem.includes(r) ? t("autocue.train_learn_memory")
+      : required ? t("autocue.train_learn_missing") : t("autocue.train_learn_none");
+    const cls = hot[r] || mem.includes(r) ? "" : required ? " warn" : " dim";
+    return `<div class="actrain-learnrow${cls}"><span>${esc(t("autocue.role." + r))}</span><span>${esc(how)}</span></div>`;
+  }).join("");
+  box.innerHTML = `<div class="sethint">${esc(t(blocked ? "autocue.train_learn_blocked" : "autocue.train_learn_note"))}</div>
+    <div class="actrain-learnrows">${rows}</div>
+    <button class="act small" id="btnAcTrainToSlots">${esc(t("autocue.train_edit_slots"))}</button>`;
+  document.getElementById("btnAcTrainToSlots").onclick = () => {
+    const g = document.querySelector('[data-sg="autocuehot"]');
+    const body = document.getElementById("settingsBody");
+    if (g && body) body.scrollTop += g.getBoundingClientRect().top - body.getBoundingClientRect().top - 12;
+  };
+}
+
+function wireAutocueTrainForm() {
+  const form = document.getElementById("acTrainForm");
+  if (!form) return;
+  form.querySelectorAll("input, select").forEach(el => {
+    el.addEventListener("change", scheduleAcTrainCheck);
+  });
+  const name = document.getElementById("acTrainName");
+  if (name) name.addEventListener("input", () => { acTrainDraft.name = name.value; });
+  document.getElementById("btnAcTrainStart").onclick = startAcTrain;
+  runAcTrainCheck();
+}
+
+function wireAutocueTrainBlock() {
+  if (!schema.autocue_train_available || !document.getElementById("acTrainForm")) return;
+  // Gewaehlte Liste inzwischen geloescht? Dann nicht mehr vorauswaehlen.
+  ["training", "check"].forEach(k => { if (acTrainDraft[k] && !acListPaths(acTrainDraft[k])) acTrainDraft[k] = ""; });
+  wireAutocueTrainForm();
+  renderAcTrainRun();
+}
+
+async function startAcTrain() {
+  const d = acTrainReadForm();
+  const btn = document.getElementById("btnAcTrainStart");
+  if (btn) btn.disabled = true;
+  try {
+    const res = await fetch("/api/autocue/train", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(acTrainPayload(d))});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    acTrainState = data;
+    renderAcTrainRun();
+    pollAcTrain();
+  } catch (err) {
+    const line = document.getElementById("acTrainCheckLine");
+    if (line) { line.textContent = t("error.generic", {error: err.message}); line.className = "actrain-check warn"; }
+    if (btn) btn.disabled = false;
+  }
+}
+
+function acEtaText(sec) {
+  if (sec == null) return "";
+  const min = Math.round(sec / 60);
+  return min >= 1 ? t("autocue.train_eta_min", {n: min}) : t("autocue.train_eta_soon");
+}
+
+function acTrainPhaseText(s) {
+  const idx = Math.max(0, AC_TRAIN_PHASES.indexOf(s.phase));
+  return t("autocue.train_step", {i: idx + 1, n: AC_TRAIN_PHASES.length, phase: t("autocue.train_phase." + (s.phase || "collect"))});
+}
+
+function acResultTable(r) {
+  const letters = Object.keys(r.new || {}).filter(k => k.length === 1).sort();
+  if (!letters.length) return "";
+  const cell = (res, k) => res && res[k] && res[k].n ? `${res[k].hit2}/${res[k].n}` : "–";
+  // Erstes Modell: keine Vergleichsspalte (r.active fehlt).
+  const cmp = !!r.active;
+  return `<table class="actrain-result">
+    <tr><th></th><th>${esc(t("autocue.train_result_new"))}</th>${cmp ? `<th>${esc(t("autocue.train_result_active"))}</th>` : ""}</tr>
+    ${letters.map(k => `<tr><td>Hot ${k}</td><td>${cell(r.new, k)}</td>${cmp ? `<td>${cell(r.active, k)}</td>` : ""}</tr>`).join("")}
+  </table>`;
+}
+
+function renderAcTrainRun() {
+  const box = document.getElementById("acTrainRun");
+  const s = acTrainState || {status: "idle"};
+  const btn = document.getElementById("btnAcTrainStart");
+  if (btn && s.status === "running") btn.disabled = true;
+  if (!box) return;
+  if (s.status === "idle" || s.dismissed) { box.innerHTML = ""; return; }
+  let html = "";
+  if (s.status === "running") {
+    const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
+    html = `<div class="actrain-progress">
+      <div class="actrain-phase">${esc(acTrainPhaseText(s))}</div>
+      <span class="bar${s.total ? "" : " indet"}"><i${s.total ? ` style="width:${pct}%"` : ""}></i></span>
+      <div class="actrain-nums">${esc([s.total ? t("autocue.train_nums", {done: s.done.toLocaleString("de-DE"),
+        total: s.total.toLocaleString("de-DE")}) : "", acEtaText(s.eta)].filter(Boolean).join(" · "))}</div>
+      <button class="act small" id="btnAcTrainCancel">${esc(t("action.cancel"))}</button>
+    </div>`;
+  } else if (s.status === "done" && s.result) {
+    const r = s.result;
+    const first = r.old_hits == null;
+    const better = first || r.new_hits >= r.old_hits;
+    const active = (schema.autocue_models || []).find(m => m.id === r.id && m.active);
+    html = `<div class="actrain-done">
+      <div class="actrain-phase">${esc(t("autocue.train_done", {n: (r.n_tracks || 0).toLocaleString("de-DE")}))}</div>
+      ${acResultTable(r)}
+      <div class="actrain-check ${better ? "ok" : "soft"}">${esc(t(first ? "autocue.train_first"
+        : better ? "autocue.train_better" : "autocue.train_worse", {gold: r.gold_n || 0}))}</div>
+      <div class="acmodel-actions">
+        ${active ? `<span class="actrain-check ok">${esc(t("autocue.models_selected"))}</span>`
+          : `<button class="act" id="btnAcTrainActivate">${esc(t("autocue.models_activate"))}</button>`}
+        <button class="act" id="btnAcTrainDismiss">${esc(t("autocue.train_dismiss"))}</button>
+      </div>
+    </div>`;
+  } else if (s.status === "error" || s.status === "cancelled") {
+    html = `<div class="actrain-check ${s.status === "error" ? "warn" : "soft"}">${esc(s.status === "error"
+      ? t("autocue.train_failed", {error: s.error || ""}) : t("autocue.train_cancelled"))}</div>`;
+  }
+  const log = (s.log || []).join("\n");
+  if (log) html += `<details class="actrain-log"><summary>${esc(t("autocue.train_log"))}</summary><pre>${esc(log)}</pre></details>`;
+  const openLog = box.querySelector(".actrain-log[open]");
+  box.innerHTML = html;
+  if (openLog) {
+    const det = box.querySelector(".actrain-log");
+    if (det) { det.open = true; const pre = det.querySelector("pre"); pre.scrollTop = pre.scrollHeight; }
+  }
+  const cb = document.getElementById("btnAcTrainCancel");
+  if (cb) cb.onclick = () => { cb.disabled = true; fetch("/api/autocue/train-cancel", {method: "POST"}); };
+  const ab = document.getElementById("btnAcTrainActivate");
+  if (ab) ab.onclick = async () => { await selectAutocueModel(s.result.id); renderAcTrainRun(); };
+  const db = document.getElementById("btnAcTrainDismiss");
+  if (db) db.onclick = () => { acTrainState.dismissed = true; renderAcTrainRun(); runAcTrainCheck(); };
+}
+
+// Stand unter dem Titel (#scanLine), solange ein Training laeuft -- ein
+// Bibliotheks-Scan hat dort Vorrang.
+function acTrainScanLine(s, wasRunning) {
+  if (scanRunning) return;
+  if (s.status === "running") {
+    const pct = s.total ? Math.round(100 * s.done / s.total) : 0;
+    scanLine(`<span class="bar${s.total ? "" : " indet"}"><i${s.total ? ` style="width:${pct}%"` : ""}></i></span>` +
+      `<span class="phase">${esc(t("autocue.train_line", {phase: acTrainPhaseText(s)}))}</span>` +
+      `<span class="nums">${esc(acEtaText(s.eta))}</span>`);
+  } else if (wasRunning) {
+    scanLine(esc(s.status === "done" ? t("autocue.train_line_done")
+      : s.status === "cancelled" ? t("autocue.train_cancelled") : t("autocue.train_failed", {error: s.error || ""})),
+      s.status === "error");
+  }
+}
+
+async function pollAcTrain() {
+  clearTimeout(acTrainTimer);
+  const was = acTrainState.status === "running";
+  let s;
+  try {
+    s = await (await fetch("/api/autocue/train-status")).json();
+  } catch (err) { return; }
+  if (!s || !s.ok) return;
+  if (acTrainState.dismissed && acTrainState.id === s.id) s.dismissed = true;
+  acTrainState = s;
+  acTrainScanLine(s, was);
+  if (was && s.status === "done") {
     try {
-      const res = await fetch("/api/autocue/model-remove", {method: "POST"});
-      const data = await res.json();
-      if (!data.ok) throw new Error(data.error || t("error.unknown"));
-      showAutocueModel(data.model, "autocue.model_removed");
-    } catch (err) {
-      st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
-    }
-  };
+      const data = await (await fetch("/api/autocue/models")).json();
+      if (data.ok) adoptAutocueModels(data.models);
+    } catch (_) { /* Liste kommt beim naechsten Oeffnen */ }
+  }
+  renderAcTrainRun();
+  if (s.status === "running") acTrainTimer = setTimeout(pollAcTrain, 1500);
 }
 
 // ── Backup ────────────────────────────────────────────────────────────
@@ -11835,6 +13251,22 @@ async function openBackupFolder(which, st) {
 // Hilfetext: ohne Zeilenumbruch ein Absatz wie bisher. Mit Zeilenumbruechen
 // strukturiert: "## " = Zwischenueberschrift, "• " = Listenpunkt, "> " =
 // Beispiel (Code). {platzhalter} werden als Code gesetzt.
+// Kurze Hinweise (ein Satz, ohne Liste/Beispiel) stehen nicht mehr unter dem
+// Feld, sondern hinter einem ? am Label im Tooltip -- die Einstellungen
+// wirken dadurch ruhiger. Lange Erklaerungen, Listen und Beispiele bleiben
+// sichtbar, ebenso Warnungen, Voraussetzungs- und Statuszeilen (die haben
+// eigene Elemente, nicht f.help). Der Text steht in data-help, damit die
+// Suche der Einstellungen (applySettingsView()) ihn weiter findet.
+const SETTING_HELP_SHORT = 120;
+function settingHelpIsShort(text) {
+  return !!text && !text.includes("\n") && text.length <= SETTING_HELP_SHORT;
+}
+
+function settingHelpBtn(text) {
+  return ` <button type="button" class="sethelpq" data-help="${esc(text)}" data-tip-plain=""` +
+    ` title="${esc(text)}" aria-label="${esc(text)}">${ICONS.helpQ}</button>`;
+}
+
 function helpHtml(text) {
   if (!text.includes("\n")) return `<div class="sethelp">${esc(text)}</div>`;
   const inline = x => esc(x).replace(/\{(\w+)\}/g, "<code>{$1}</code>");
@@ -11892,8 +13324,10 @@ function settingField(f, value, dflt) {
     </div>`;
   }
   const changed = JSON.stringify(value) !== JSON.stringify(dflt);
+  const quick = settingHelpIsShort(f.help);
   const label = `<label for="set_${f.key}">${esc(f.label)}${
     f.unit ? ` <span class="path">(${f.unit})</span>` : ""}${
+    quick ? settingHelpBtn(f.help) : ""}${
     changed ? ` <span class="chg">${esc(t("settings.changed_tag"))}</span>` : ""}</label>`;
   let input;
   if (f.type === "number") {
@@ -11919,16 +13353,6 @@ function settingField(f, value, dflt) {
              placeholder="${esc(f.placeholder || "")}" value="${esc(value || "")}">
       <button type="button" class="act small" data-file-pick="${f.key}" data-file-pick-url="${f.pick}">
         <span class="btnicon">${ICONS.folder}</span> ${esc(t("settings.pick_file"))}</button>
-    </div>`;
-  } else if (f.type === "text" && f.rbpick) {
-    // Wie der Dateidialog oben, aber statt eines Pfads im Dateisystem steht
-    // hier eine Rekordbox-Playlist zur Wahl -- eigener Baum-Dialog
-    // (openRekordboxPlaylistPicker()) statt eines nativen Dateidialogs.
-    input = `<div class="filepick">
-      <input id="set_${f.key}" type="text" data-key="${f.key}"
-             placeholder="${esc(f.placeholder || "")}" value="${esc(value || "")}">
-      <button type="button" class="act small" data-rbplaylist-pick="${f.key}">
-        <span class="btnicon">${ICONS.folder}</span> ${esc(t("settings.pick_playlist"))}</button>
     </div>`;
   } else if (f.type === "text") {
     input = `<input id="set_${f.key}" type="text" data-key="${f.key}"
@@ -11962,7 +13386,7 @@ function settingField(f, value, dflt) {
   const reqIds = [].concat(f.requires || []).filter(id => settingRequirement(id));
   const req = reqIds.length ? ` data-requires="${esc(reqIds.join(" "))}"` : "";
   return `<div class="setfield${fieldWidthClass(f)}"${showIf}${req}>${label}${input}
-          ${f.help ? helpHtml(f.help) : ""}${req ? `<div class="sethelp reqhint"></div>` : ""}</div>`;
+          ${f.help && !quick ? helpHtml(f.help) : ""}${req ? `<div class="sethelp reqhint"></div>` : ""}</div>`;
 }
 
 // Felder mit "requires" (settings.GROUPS) wirken nur, wenn eine optionale
@@ -12132,103 +13556,114 @@ async function pickFile(key, url) {
   }
 }
 
-// Baum-Dialog fuer die Rekordbox-Playlist-Einstellung -- anders als
-// pickFile() kein nativer Dateidialog, sondern derselbe Endpunkt wie der
-// Rekordbox-Ast im Playlist-Baum (siehe EXT_SOURCES.rekordbox), hier als
-// flache, nach Pfad sortierte Liste. Nur bei geschlossenem Rekordbox
-// aufrufbar -- ein waehrend des Dialogs laufendes Rekordbox koennte die
-// Bibliothek zwischendurch wechseln, siehe /api/rekordbox-status.
-async function openRekordboxPlaylistPicker(key) {
-  let status;
-  try {
-    status = await fetch("/api/rekordbox-status").then(r => r.json());
-  } catch (err) {
-    note(t("error.generic", {error: err.message}), true);
-    return;
-  }
-  if (!status.ok) { note(t("error.generic", {error: t("error.unknown")}), true); return; }
-  if (status.running) { note(t("settings.rbpicker_running"), "soft"); return; }
-
-  const ov = document.getElementById("rbPlaylistOverlay");
-  const list = document.getElementById("rbPlaylistList");
-  const close = () => { ov.style.display = "none"; };
-  document.getElementById("rbPlaylistCancel").onclick = close;
-  ov.onclick = e => { if (e.target === ov) close(); };
+// Auswahl einer Playlist aus einem fremden Baum (Rekordbox/Music.app) in einem
+// eigenen Dialog (#treePickOverlay, steht im HTML nach allen anderen Overlays
+// und liegt damit ueber einem bereits offenen Dialog).
+// Echter Baum statt einer flachen Pfadliste -- derselbe Aufbau wie der fremde
+// Ast im Seitenbaum (extChildren()/renderTree()): FLACH gerendert, Einrueckung
+// ueber --depth, Reihenfolge nach 'seq' (Rekordbox; Music hat keins, dort
+// bleibt die gelieferte Folge). Ordner starten zugeklappt (an echtem Material
+// knapp 1000 Knoten in Tiefe 4), nur der Weg zur aktuellen Auswahl ist offen.
+// Smart Playlists und Ordner sind nie waehlbar.
+//   nodes:    Knotenliste oder async-Funktion, die sie liefert
+//   specials: [{value, label, icon}] als feste Eintraege ueber dem Baum
+//   selected: aktuelle id bzw. special-value (hervorgehoben)
+//   disabled: id -> Begruendung (Tooltip) oder "" fuer waehlbar
+// Liefert {value, node, path} oder null bei Abbruch.
+function pickPlaylistFromTree({title, nodes, specials = [], selected = "", disabled = () => ""}) {
+  const ov = document.getElementById("treePickOverlay");
+  const list = document.getElementById("treePickList");
+  document.getElementById("treePickTitle").textContent = title;
   list.innerHTML = `<div class="sethint">${esc(t("settings.rbpicker_loading"))}</div>`;
   ov.style.display = "flex";
-
-  let data;
-  try {
-    data = await fetch("/api/rekordbox-playlists").then(r => r.json());
-  } catch (err) {
-    list.innerHTML = `<div class="sethelp warn">${esc(t("error.generic", {error: err.message}))}</div>`;
-    return;
-  }
-  if (!data.ok) {
-    list.innerHTML = `<div class="sethelp warn">${esc(data.error || t("error.unknown"))}</div>`;
-    return;
-  }
-  const nodes = data.playlists || [];
-  if (!nodes.some(n => n.kind === "playlist")) {
-    list.innerHTML = `<div class="sethint">${esc(t("settings.rbpicker_empty"))}</div>`;
-    return;
-  }
-
-  // Echter Baum statt einer flachen, alphabetisch sortierten Pfadliste --
-  // derselbe Aufbau wie der Rekordbox-Ast im Seitenbaum (extChildren()/
-  // renderTree()): FLACH gerendert, Einrueckung ueber --depth (app.css kennt
-  // das schon vom Baum), sortiert nach Rekordbox' eigener Reihenfolge (seq)
-  // statt alphabetisch. Ordner starten zugeklappt -- an echtem Material
-  // knapp 1000 Knoten in Tiefe 4 (siehe rekordbox.py:playlists()). "closed"
-  // lebt nur waehrend dieser Dialog-Instanz, kein eigener state-Eintrag.
-  const byId = new Map(nodes.map(n => [n.id, n]));
-  const pathOf = n => {
-    const parts = [n.name];
-    for (let p = n.parent ? byId.get(n.parent) : null; p; p = p.parent ? byId.get(p.parent) : null) {
-      parts.unshift(p.name);
-    }
-    return parts.join("/");
-  };
-  const childrenOf = parentId => nodes
-    .filter(n => (n.parent || null) === (parentId || null))
-    .sort((a, b) => (a.seq || 0) - (b.seq || 0));
-  const closed = new Set(nodes.filter(n => n.kind === "folder").map(n => n.id));
-
-  const renderPicker = () => {
-    const out = [];
-    const walk = (parentId, depth) => {
-      for (const n of childrenOf(parentId)) {
-        const hasKids = n.kind === "folder" && childrenOf(n.id).length > 0;
-        const open = !closed.has(n.id);
-        const icon = PLAYLIST_ICONS[n.kind] || PLAYLIST_ICONS.playlist;
-        out.push(`<button type="button" class="treenode rbtreenode${n.kind === "smart" ? " smart" : ""}"
-            data-id="${esc(n.id)}" style="--depth:${depth}">
-          <span class="twist${hasKids ? (open ? " open" : "") : " leaf"}">&#9654;</span>
-          <span class="ticon">${SVG(LUCIDE_ICONS[icon.slice(4)] || "")}</span>
-          <span class="tlabel">${esc(n.name)}</span>
-          ${n.kind === "smart"
-            ? `<span class="tlock" title="${esc(t("tree.smart_unsupported"))}">${ICONS.lock}</span>` : ""}
-          ${n.kind === "folder" ? "" : `<span class="tcount">${n.count}</span>`}
-        </button>`);
-        if (n.kind === "folder" && open) walk(n.id, depth + 1);
-      }
+  return new Promise(resolve => {
+    const prevKey = document.onkeydown;
+    const done = v => {
+      ov.style.display = "none";
+      document.onkeydown = prevKey;
+      resolve(v);
     };
-    walk(null, 0);
-    list.innerHTML = out.join("");
-    list.querySelectorAll(".treenode").forEach(btn => btn.onclick = () => {
-      const n = byId.get(btn.dataset.id);
-      if (n.kind === "folder") {
-        if (closed.has(n.id)) closed.delete(n.id); else closed.add(n.id);
-        renderPicker();
+    document.getElementById("treePickCancel").onclick = () => done(null);
+    ov.onclick = e => { if (e.target === ov) done(null); };
+    document.onkeydown = ev => {
+      if (ev.key === "Escape") { ev.stopPropagation(); done(null); }
+    };
+    (async () => {
+      let all;
+      try {
+        all = typeof nodes === "function" ? await nodes() : nodes;
+      } catch (err) {
+        list.innerHTML = `<div class="sethelp warn">${esc(t("error.generic", {error: err.message}))}</div>`;
         return;
       }
-      if (n.kind === "smart") return;
-      document.getElementById("set_" + key).value = pathOf(n);
-      updateSettingsNavDots();
-      close();
-    });
-  };
-  renderPicker();
+      all = all || [];
+      const byId = new Map(all.map(n => [String(n.id), n]));
+      const parentOf = n => (n.parent ? byId.get(String(n.parent)) : null);
+      const pathOf = n => {
+        const parts = [n.name];
+        for (let p = parentOf(n), i = 0; p && i < 12; p = parentOf(p), i++) parts.unshift(p.name);
+        return parts;
+      };
+      const kids = new Map();
+      for (const n of all) {
+        const key = n.parent ? String(n.parent) : "";
+        if (!kids.has(key)) kids.set(key, []);
+        kids.get(key).push(n);
+      }
+      for (const arr of kids.values()) arr.sort((a, b) => (a.seq || 0) - (b.seq || 0));
+      const closed = new Set(all.filter(n => n.kind === "folder").map(n => String(n.id)));
+      const sel = byId.get(String(selected));
+      for (let p = sel ? parentOf(sel) : null, i = 0; p && i < 12; p = parentOf(p), i++) closed.delete(String(p.id));
+      const hasPlaylists = all.some(n => n.kind === "playlist");
+
+      const render = () => {
+        const out = specials.map(s => `<button type="button" class="treenode pickspecial${String(s.value) === String(selected) ? " on" : ""}"
+            data-special="${esc(s.value)}" style="--depth:0">
+          <span class="twist leaf">&#9654;</span>
+          <span class="ticon">${s.icon || ""}</span>
+          <span class="tlabel">${esc(s.label)}</span>
+        </button>`);
+        if (specials.length && all.length) out.push(`<div class="picksep"></div>`);
+        if (!hasPlaylists) out.push(`<div class="sethint">${esc(t("settings.rbpicker_empty"))}</div>`);
+        const walk = (parentKey, depth) => {
+          for (const n of kids.get(parentKey) || []) {
+            const id = String(n.id);
+            const hasKids = n.kind === "folder" && (kids.get(id) || []).length > 0;
+            const open = !closed.has(id);
+            const icon = PLAYLIST_ICONS[n.kind] || PLAYLIST_ICONS.playlist;
+            const why = n.kind === "smart" ? t("tree.smart_unsupported")
+              : n.kind === "playlist" ? (disabled(id) || "") : "";
+            out.push(`<button type="button" class="treenode picknode${why ? " off" : ""}${id === String(selected) ? " on" : ""}"
+                data-id="${esc(id)}" style="--depth:${depth}"${why ? ` title="${esc(why)}"` : ""}>
+              <span class="twist${hasKids ? (open ? " open" : "") : " leaf"}">&#9654;</span>
+              <span class="ticon">${SVG(LUCIDE_ICONS[icon.slice(4)] || "")}</span>
+              <span class="tlabel">${esc(n.name)}</span>
+              ${why ? `<span class="tlock">${n.kind === "smart" ? ICONS.lock : ICONS.link}</span>` : ""}
+              ${n.kind === "folder" ? "" : `<span class="tcount">${n.count ?? ""}</span>`}
+            </button>`);
+            if (n.kind === "folder" && open) walk(id, depth + 1);
+          }
+        };
+        walk("", 0);
+        list.innerHTML = out.join("");
+        list.querySelectorAll("[data-special]").forEach(btn => btn.onclick = () =>
+          done({value: btn.dataset.special, node: null, path: []}));
+        list.querySelectorAll(".picknode").forEach(btn => btn.onclick = () => {
+          const n = byId.get(btn.dataset.id);
+          if (n.kind === "folder") {
+            if (closed.has(btn.dataset.id)) closed.delete(btn.dataset.id); else closed.add(btn.dataset.id);
+            render();
+            return;
+          }
+          if (btn.classList.contains("off")) return;
+          done({value: btn.dataset.id, node: n, path: pathOf(n)});
+        });
+      };
+      render();
+      const on = list.querySelector(".picknode.on");
+      if (on) on.scrollIntoView({block: "center"});
+    })();
+  });
 }
 
 // Programme kennt der Server ueber mdfind, nicht per Browser-Dateidialog —
@@ -12824,10 +14259,18 @@ function buildWaveLayer(entry, dpr) {
   // ihre echten Farben und bekommen stattdessen die Positionslinie.
   let recolorable = false;
   if (entry.half) {
-    // Halbe, einfarbige Huellkurve des Player-Balkens: nie Rekordbox-Farben.
+    // Halbe Huellkurve. Der Player-Balken bleibt einfarbig; die Slots des
+    // Playlist-Generators (entry.colorHalf) bekommen die Farbe nach
+    // waveform_style. Mit Phrasen bleibt unten Platz fuer deren Leiste
+    // (drawPhraseStrip(), pro Bild).
     if (!(entry.peaks && entry.peaks.length)) return null;
-    drawHalfWave(ctx, w, h, entry.peaks);
-    recolorable = true;
+    const hh = entry.phrases && entry.phrases.length ? h - PHRASE_STRIP_H - 1 : h;
+    if (entry.colorHalf && wf) {
+      drawHalfColorWave(ctx, w, hh, entry.peaks, wf);
+    } else {
+      drawHalfWave(ctx, w, hh, entry.peaks);
+      recolorable = true;
+    }
   } else if (wf && entry.peaks && entry.peaks.length) {
     drawColorWave(ctx, w, h, entry.peaks, wf);
   } else if (entry.peaks && entry.peaks.length) {
@@ -12904,8 +14347,13 @@ function paintWaveEntry(entry) {
 
   // Cue-Marker in ihren echten Rekordbox-Farben, ueber der fertig
   // eingefaerbten Wellenform. Gleiche Reihenfolge wie vor dem Umbau.
+  // Phrasen-Leiste (nur wo entry.phrases gesetzt ist, Playlist-Generator):
+  // eigene Farben, deshalb wie die Cues nach dem Einfaerben.
+  if (isFinite(d) && d > 0 && entry.phrases && entry.phrases.length) {
+    drawPhraseStrip(ctx, w, h, entry.phrases, d);
+  }
   if (isFinite(d) && d > 0 && entry.cues && entry.cues.length) {
-    drawCueMarkers(ctx, w, h, entry.cues, d);
+    drawCueMarkers(ctx, w, h, entry.cues, d, !!entry.compactCues);
   }
 
   // Zuoberst, NACH den Cue-Markern: die Abspielposition soll Cue-Marker an
@@ -13020,10 +14468,62 @@ function traceWaveShape(ctx, w, h, v, cols) {
 const HALF_WAVE_SIGMA = 0.4;
 function drawHalfWave(ctx, w, h, peaks) {
   const cols = Math.max(2, Math.round(w));
-  const v = smoothedColumns(peaks, cols, HALF_WAVE_SIGMA);
+  ctx.fillStyle = theme().wave;
+  traceHalfShape(ctx, w, h, smoothedColumns(peaks, cols, HALF_WAVE_SIGMA), cols);
+  ctx.fill();
+}
+
+// Farbig in derselben halben Form (Playlist-Generator): die Flaeche wird zum
+// Ausschnitt, die Farben fuellen ihn je Pixelspalte -- wie drawColorWave(),
+// nur mit der Grundlinie unten.
+function drawHalfColorWave(ctx, w, h, peaks, wf) {
+  const cols = Math.max(2, Math.round(w)), v = smoothedColumns(peaks, cols, HALF_WAVE_SIGMA);
+  const bw = w / cols;
+  ctx.save();
+  traceHalfShape(ctx, w, h, v, cols);
+  ctx.clip();
+  if (wf.style === "rgb") {
+    const n = Math.min(cols, wf.color.length);
+    const colors = _movingAverageColor(_resampleColorSeries(wf.color, n), WAVE_SMOOTH_RADIUS);
+    for (let x = 0; x < cols; x++) {
+      const i = Math.min(n - 1, Math.floor(x * n / cols));
+      const [r, g, b] = _vividize(colors[i*3], colors[i*3+1], colors[i*3+2]);
+      ctx.fillStyle = `rgb(${r},${g},${b})`;
+      ctx.fillRect(x * bw, 0, bw + 0.5, h);
+    }
+  } else {
+    const n = Math.min(cols, wf.low.length), th = theme();
+    const series = [wf.low, wf.mid, wf.high].map(s => _movingAverage(_resampleSeries(s, n), WAVE_SMOOTH_RADIUS));
+    [th.bandLow, th.bandMid, th.bandHigh].forEach((color, k) => {
+      ctx.fillStyle = color;
+      for (let x = 0; x < cols; x++) {
+        const i = Math.min(n - 1, Math.floor(x * n / cols));
+        const top = Math.max(series[0][i], series[1][i], series[2][i]) || 1;
+        const bh = series[k][i] / top * v[x] * (h - 1);
+        ctx.fillRect(x * bw, h - bh, bw + 0.5, bh);
+      }
+    });
+  }
+  ctx.restore();
+}
+
+// Phrasen als schmale Leiste am unteren Rand, je Phrase in ihrer festen Farbe
+// (--phrase-<art>[-<nummer>], dieselben wie im DJ-Editor), 1 px Luecke dazwischen.
+const PHRASE_STRIP_H = 4;
+function drawPhraseStrip(ctx, w, h, phrases, duration) {
+  const pal = theme().phrase, y = h - PHRASE_STRIP_H;
+  for (const p of phrases) {
+    const x0 = Math.max(0, p.start / duration * w), x1 = Math.min(w, (p.end ?? duration) / duration * w);
+    if (x1 - x0 < 0.5) continue;
+    ctx.fillStyle = pal[phraseToken(p.kind, p.num)] || pal[p.kind] || theme().dim;
+    ctx.fillRect(x0, y, Math.max(0.5, x1 - x0 - 1), PHRASE_STRIP_H);
+  }
+}
+
+// Obere Kontur der halben Huellkurve als geschlossener Pfad (Grundlinie unten).
+function traceHalfShape(ctx, w, h, v, cols) {
   const xAt = i => i * w / (cols - 1);
   const yAt = i => Math.max(0.5, v[i] * (h - 1));
-  ctx.fillStyle = theme().wave;
   ctx.beginPath();
   ctx.moveTo(0, h);
   ctx.lineTo(0, h - yAt(0));
@@ -13034,7 +14534,6 @@ function drawHalfWave(ctx, w, h, peaks) {
   ctx.lineTo(w, h - yAt(cols - 1));
   ctx.lineTo(w, h);
   ctx.closePath();
-  ctx.fill();
 }
 
 // Duenne Fortschrittslinie statt (wie bei drawPlainWave) die Balkenfarbe hart
@@ -13190,11 +14689,16 @@ async function loadWaveColor(entry, path) {
 
 // Nach dem Speichern der Einstellungen: offene Wellenformen auf den neuen Stil bringen.
 function refreshWaveColors() {
+  // Zwischenspeicher der Generator-Slots (generator.js) haelt den alten Stil.
+  GEN_EXTRAS = null;
   for (const entry of waveEntries) if (entry.colorPath) loadWaveColor(entry, entry.colorPath);
 }
 
-function drawCueMarkers(ctx, w, h, cues, duration) {
-  ctx.font = "11px -apple-system, sans-serif";
+// compact: kleinere Faehnchen fuer niedrige Wellenformen (Playlist-Generator),
+// sonst verdeckten sie dort die halbe Hoehe.
+function drawCueMarkers(ctx, w, h, cues, duration, compact = false) {
+  const fw = compact ? 13 : 18, fh = compact ? 11 : 14, tri = compact ? 5 : 7;
+  ctx.font = compact ? "600 9px -apple-system, sans-serif" : "11px -apple-system, sans-serif";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   const memoryColor = theme().cueMemory;
@@ -13206,9 +14710,9 @@ function drawCueMarkers(ctx, w, h, cues, duration) {
       ctx.lineWidth = 2;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
       ctx.fillStyle = `rgb(${r},${g},${b})`;
-      ctx.fillRect(x - 9, 0, 18, 14);
+      ctx.fillRect(x - fw / 2, 0, fw, fh);
       ctx.fillStyle = "#fff";
-      ctx.fillText(cue.label, x, 1.5);
+      ctx.fillText(cue.label, x, compact ? 1 : 1.5);
     } else {
       const col = cue.color ? `rgb(${cue.color[0]},${cue.color[1]},${cue.color[2]})`
                              : memoryColor;
@@ -13218,7 +14722,7 @@ function drawCueMarkers(ctx, w, h, cues, duration) {
       // Dreieck an der Spitze, wie bei Hot Cues als Klickziel erkennbar.
       ctx.fillStyle = col;
       ctx.beginPath();
-      ctx.moveTo(x - 7, 0); ctx.lineTo(x + 7, 0); ctx.lineTo(x, 10);
+      ctx.moveTo(x - tri, 0); ctx.lineTo(x + tri, 0); ctx.lineTo(x, tri * 1.4);
       ctx.closePath(); ctx.fill();
     }
   }
@@ -13550,6 +15054,35 @@ function addToQueue(r, btn) {
   renderPlayerBar();
   renderQueuePopup();
   flashDoneBtn(btn);
+}
+
+// Tracks aus der Tabelle auf den Warteschlange-Knopf ziehen: werden hinten
+// angehaengt, wie "Zur Warteschlange hinzufuegen". Dieselben Zugdaten wie zum
+// Baum (DND_TRACKS = Pfade, bei Mehrfachauswahl die ganze Auswahl).
+function wireQueueDrop(btn) {
+  if (!btn) return;
+  const isTracks = ev => [...(ev.dataTransfer.types || [])].includes(DND_TRACKS);
+  btn.addEventListener("dragover", ev => {
+    if (!apiMode || !isTracks(ev)) return;
+    ev.preventDefault();
+    ev.dataTransfer.dropEffect = "copy";
+    btn.classList.add("dropok");
+  });
+  btn.addEventListener("dragleave", () => btn.classList.remove("dropok"));
+  btn.addEventListener("drop", ev => {
+    btn.classList.remove("dropok");
+    if (!apiMode || !isTracks(ev)) return;
+    ev.preventDefault();
+    let paths = [];
+    try { paths = JSON.parse(ev.dataTransfer.getData(DND_TRACKS) || "[]"); } catch (err) { return; }
+    const want = new Set(paths);
+    const byPath = new Map(DATA.filter(r => want.has(r.p) && !r.ext && !r.gone).map(r => [r.p, r]));
+    const rows = paths.map(p => byPath.get(p)).filter(Boolean);
+    if (!rows.length) return;
+    rows.forEach(r => addToQueue(r));
+    flashDoneBtn(btn);
+    note(t("queue.dropped", {count: rows.length}));
+  });
 }
 
 // "Als naechstes abspielen"-Knopf je Zeile (neben Anhören) -- reiht VORNE im
@@ -14563,7 +16096,7 @@ function renderDrops() {
             ${r.nativePath ? `<button class="iconbtn plain" data-edittags="${r._id}"
                   title="${esc(t("drop.edit_metadata_title"))}">${ICONS.edit}</button>` : ""}
             ${r.nativePath ? `<button class="iconbtn plain" data-droprescan="${r._id}"
-                  title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>` : ""}
+                  title="${esc(t("action.rescan"))}">${ICONS.rescan}</button>` : ""}
             ${r.nativePath && isFixable(r) ? `<button class="iconbtn plain" data-dropfix="${r._id}"
                   title="${esc(t("action.fix_bitrate", {kbps: r.mk}))}">${ICONS.fix}</button>` : ""}
             <span class="sep"></span>
@@ -14747,95 +16280,68 @@ function renderDropBulkBar() {
   const rows = selectedDrops();
   if (!rows.length) { bar.style.display = "none"; bar.innerHTML = ""; return; }
   bar.style.display = "";
-  bar.innerHTML = `
-    <span>${esc(t("bulk.selected_count", {count: rows.length.toLocaleString("de-DE")}))}</span>
-    <button class="iconbtn plain" id="dropBulkTags"
-            title="${esc(t("bulk.edit_tags_title"))}">${ICONS.edit}</button>
-    <button class="iconbtn plain" id="dropBulkConvert" title="${esc(t("drop.bulk_convert_title"))}">${ICONS.convert}</button>
-    ${(() => {
-      // Bewusst nur bei GENAU einem ausgewaehlten Track: anders als bei
-      // rescan/convert/mik gibt es hier keinen Sammel-Modus, der jede Zeile
-      // auf ihre eigene gemessene Bitrate korrigiert (wie renderBulkBar()
-      // es fuer die Haupttabelle tut) -- der Dialog fragt einen einzelnen,
-      // frei editierbaren Zielwert ab, der sich nicht auf mehrere Dateien
-      // uebertragen laesst.
-      const canFix = rows.length === 1 && rows[0].nativePath && isFixable(rows[0]);
-      return canFix
-        ? `<button class="iconbtn plain" id="dropBulkFix"
-                   title="${esc(t("action.fix_bitrate", {kbps: rows[0].mk}))}">${ICONS.fix}</button>`
-        : `<button class="iconbtn plain" id="dropBulkFix" disabled
-                   title="${esc(t("drop.bulk_fix_disabled_hint"))}">${ICONS.fix}</button>`;
-    })()}
-    ${bulkKeySyncShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkKeySync" title="${esc(t("action.write_key_title", {example: keyNotationExample()}))}">${ICONS.keySync}</button>` : ""}
-    <span class="sep"></span>
-    ${bulkBpmKeyShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkBpmKey" title="${esc(t("action.bpmkey_title"))}">${ICONS.analyseBpmKey}</button>` : ""}
-    ${bulkGenreMoodShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkGenreMood" title="${esc(t("action.genremood_title"))}">${ICONS.analyseGenreMood}</button>` : ""}
-    ${bulkPhrasesShown(rows, true) ? `<button class="iconbtn plain" id="dropBulkPhrases" title="${esc(t("action.phrases_title"))}">${ICONS.analysePhrases}</button>` : ""}
-    <button class="iconbtn plain" id="dropBulkRescan" title="${esc(t("action.rescan"))}">${ICONS.pickaxe}</button>
-    ${!MIK_NAME ? "" : `<span class="sep"></span>
-    <button class="iconbtn plain" id="dropBulkMik" title="${esc(t("bulk.open_in_mik_title"))}">${appIcon("mik", MIK_NAME)}</button>`}
-    <span class="sep"></span>
-    <button class="iconbtn del" id="dropBulkRemove"
-            title="${esc(t("drop.bulk_remove_title"))}">${ICONS.trash}</button>
-    <button class="act small" id="dropBulkClear">${esc(t("bulk.clear_selection"))}</button>`;
+  // Nur, was Analyse und Tagging brauchen -- keine Playlisten, Merklisten
+  // oder Rekordbox (Einzelpruefungen haben keine DB-Zeile). Gruppen wie in
+  // der Sammelleiste der Bibliothek (bulkGroupsHtml()).
+  // Bitrate korrigieren bewusst nur bei GENAU einem ausgewaehlten Track: es
+  // gibt hier keinen Sammel-Modus, der jede Zeile auf ihre eigene gemessene
+  // Bitrate korrigiert -- der Dialog fragt einen einzelnen, frei
+  // editierbaren Zielwert ab.
+  const canFix = rows.length === 1 && rows[0].nativePath && isFixable(rows[0]);
+  const groups = [
+    bulkAnalysisGroup(rows, {isDrop: true, rescan: btn => rescanDropsBulk(btn)}),
+    {label: t("bulk.group_edit"), items: [
+      {icon: ICONS.edit, title: t("bulk.edit_tags_title"), run: () => {
+        const sel = selectedDrops();
+        if (sel.length === 1) openTagsPopup(sel[0], true);
+        else if (sel.length > 1) openTagsPopupBulk(sel, true);
+      }},
+      {icon: ICONS.convert, title: t("drop.bulk_convert_title"), run: () => openConvertPopup(selectedDrops(), true)},
+      canFix
+        ? {icon: ICONS.fix, title: t("action.fix_bitrate", {kbps: rows[0].mk}), run: () => openFixPopup(rows[0], true)}
+        : {html: `<button class="iconbtn plain" disabled title="${esc(t("drop.bulk_fix_disabled_hint"))}">${ICONS.fix}</button>`},
+      bulkKeySyncShown(rows, true) && {icon: ICONS.keySync, title: t("action.write_key_title", {example: keyNotationExample()}),
+        run: () => writeKeyToFiles(selectedDrops(), true)},
+    ]},
+    {label: t("action.group_open"), items: [
+      MIK_NAME && {icon: appIcon("mik", MIK_NAME), title: t("bulk.open_in_mik_title"), run: async btn => {
+        const sel = selectedDrops();
+        if (!sel.length) return;
+        if (await openInMik(sel, btn)) {
+          sel.forEach(r => { r.mikPick = true; });
+          renderDrops();
+        }
+      }},
+    ]},
+    {label: t("bulk.group_remove"), items: [
+      {icon: ICONS.trash, cls: "del", title: t("drop.bulk_remove_title"), run: () => {
+        selectedDrops().forEach(r => removeDrop(r._id, true));
+        renderDrops();
+      }},
+    ]},
+  ];
+  mountBulkBar(bar, rows.length, groups, "dropBulkClear", () => { dropSelected.clear(); renderDrops(); });
+}
 
-  document.getElementById("dropBulkTags").onclick = () => {
-    const sel = selectedDrops();
-    if (sel.length === 1) openTagsPopup(sel[0], true);
-    else if (sel.length > 1) openTagsPopupBulk(sel, true);
-  };
-  const dropBulkFixBtn = document.getElementById("dropBulkFix");
-  if (dropBulkFixBtn && !dropBulkFixBtn.disabled) dropBulkFixBtn.onclick = () => {
-    const sel = selectedDrops();
-    if (sel.length === 1) openFixPopup(sel[0], true);
-  };
-  const dropBulkKeySyncBtn = document.getElementById("dropBulkKeySync");
-  if (dropBulkKeySyncBtn) dropBulkKeySyncBtn.onclick = () => writeKeyToFiles(selectedDrops(), true);
-  const dropBulkBpmKeyBtn = document.getElementById("dropBulkBpmKey");
-  if (dropBulkBpmKeyBtn) dropBulkBpmKeyBtn.onclick = () => analyseBpmKey(selectedDrops(), true);
-  const dropBulkGenreMoodBtn = document.getElementById("dropBulkGenreMood");
-  if (dropBulkGenreMoodBtn) dropBulkGenreMoodBtn.onclick = () => analyseGenreMood(selectedDrops(), true);
-  const dropBulkPhrasesBtn = document.getElementById("dropBulkPhrases");
-  if (dropBulkPhrasesBtn) dropBulkPhrasesBtn.onclick = () => analysePhrases(selectedDrops(), true);
-  const dropBulkMikBtn = document.getElementById("dropBulkMik");
-  if (dropBulkMikBtn) dropBulkMikBtn.onclick = async () => {
-    const sel = selectedDrops();
-    if (!sel.length) return;
-    if (await openInMik(sel, dropBulkMikBtn)) {
-      sel.forEach(r => { r.mikPick = true; });
-      renderDrops();
-    }
-  };
-  document.getElementById("dropBulkRescan").onclick = async () => {
-    const sel = selectedDrops();
-    if (!sel.length) return;
-    const btn = document.getElementById("dropBulkRescan");
-    const before = new Map(sel.map(r => [r._id, verdictOf(r)]));
-    btn.disabled = true;
-    const total = sel.length;
-    const pt = progressToast(total > 1 ? t("drop.rescan.progress", {done: 0, total}) : t("drop.rescan.single"));
-    try {
-      const result = await reanalyseDrops(sel, (done, n) => pt.update(100 * done / n,
-        n > 1 ? t("drop.rescan.progress", {done, total: n}) : t("drop.rescan.single")));
-      const changed = sel.filter(r => verdictOf(r) !== before.get(r._id)).length;
-      pt.done(t("drop.rescan.done", {count: sel.length}) +
-        (changed ? t("drop.rescan.done_changed_suffix", {changed}) : t("drop.rescan.done_unchanged_suffix")));
-      if (result.rekordboxRunning) note(t("toast.rekordbox_check_skipped_running"), "soft");
-    } catch (err) {
-      pt.fail(t("drop.rescan.failed", {error: err.message}));
-    }
-    renderDrops();
-  };
-  const dropBulkConvertBtn = document.getElementById("dropBulkConvert");
-  if (dropBulkConvertBtn) dropBulkConvertBtn.onclick = () => openConvertPopup(selectedDrops(), true);
-  document.getElementById("dropBulkRemove").onclick = () => {
-    selectedDrops().forEach(r => removeDrop(r._id, true));
-    renderDrops();
-  };
-  document.getElementById("dropBulkClear").onclick = () => {
-    dropSelected.clear();
-    renderDrops();
-  };
+// "Neu messen" fuer die ausgewaehlten Einzelpruefungen (Sammelleiste).
+async function rescanDropsBulk(btn) {
+  const sel = selectedDrops();
+  if (!sel.length) return;
+  const before = new Map(sel.map(r => [r._id, verdictOf(r)]));
+  btn.disabled = true;
+  const total = sel.length;
+  const pt = progressToast(total > 1 ? t("drop.rescan.progress", {done: 0, total}) : t("drop.rescan.single"));
+  try {
+    const result = await reanalyseDrops(sel, (done, n) => pt.update(100 * done / n,
+      n > 1 ? t("drop.rescan.progress", {done, total: n}) : t("drop.rescan.single")));
+    const changed = sel.filter(r => verdictOf(r) !== before.get(r._id)).length;
+    pt.done(t("drop.rescan.done", {count: sel.length}) +
+      (changed ? t("drop.rescan.done_changed_suffix", {changed}) : t("drop.rescan.done_unchanged_suffix")));
+    if (result.rekordboxRunning) note(t("toast.rekordbox_check_skipped_running"), "soft");
+  } catch (err) {
+    pt.fail(t("drop.rescan.failed", {error: err.message}));
+  }
+  renderDrops();
 }
 
 // Ruft /api/analyse-path einmal je Pfad auf statt eines Sammelaufrufs -- nur
@@ -15588,6 +17094,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("pbarRepeatTrack").onclick = toggleRepeatTrack;
   document.getElementById("pbarRepeatList").onclick = toggleRepeatList;
   document.getElementById("pbarQueueBtn").onclick = () => toggleQueuePopup();
+  wireQueueDrop(document.getElementById("pbarQueueBtn"));
   document.getElementById("queuePopupClose").onclick = () => toggleQueuePopup(false);
   document.getElementById("queueClearBtn").onclick = () => clearQueue();
   document.querySelectorAll("[data-qptab]").forEach(b => b.onclick = () => switchQueuePopupTab(b.dataset.qptab));
@@ -15609,9 +17116,11 @@ document.querySelectorAll("#layoutSwitch [data-layout]").forEach(b => {
 document.getElementById("btnSettings").onclick = openSettings;
 document.getElementById("btnSave").onclick = async () => {
   // Fehlerhafte Slot-Belegung: Dialog bleibt offen, der Fehler steht am Block.
-  if (autocueSlotsDirty() && !await saveAutocueSlots()) {
-    document.getElementById("acSlotStatus").scrollIntoView({block: "center"});
-    return;
+  for (const g of ["hot", "memory"]) {
+    if (autocueSlotsDirty(g) && !await saveAutocueSlots(g)) {
+      document.getElementById("acSlotStatus_" + g).scrollIntoView({block: "center"});
+      return;
+    }
   }
   postSettings("/api/settings", collectSettings());
 };
@@ -16971,6 +18480,8 @@ async function runRekordboxImport() {
     render();
     if (DJ && !DJ.closed) djLoad(DJ);
     pt.done(t("sync.rekordbox_import.done", {imported, changed}));
+    // Verknuepfungen, die auf ein geschlossenes Rekordbox gewartet haben.
+    syncAllLinks(true);
   } catch (err) {
     pt.fail(t("sync.rekordbox_import.failed", {error: err.message}));
   }
@@ -17098,9 +18609,9 @@ document.getElementById("btnQuit").onclick = async () => {
   btn.disabled = true;
   try {
     let data = await quitServer(false);
-    if (!data.ok && data.scan_running) {
+    if (!data.ok && (data.scan_running || data.training_running)) {
       btn.disabled = false;
-      const go = confirm(t("quit.confirm_scan_running"));
+      const go = confirm(t(data.scan_running ? "quit.confirm_scan_running" : "quit.confirm_training_running"));
       if (!go) return;
       btn.disabled = true;
       data = await quitServer(true);

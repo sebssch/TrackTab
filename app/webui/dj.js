@@ -1236,11 +1236,18 @@ function djToggleMetro(ed) {
 function djSortPhrases(ed) { ed.phrases.sort((a, b) => a.start - b.start); }
 function djPhraseAt(ed, sec) { return ed.phrases.findIndex(p => sec >= p.start && sec < p.end); }
 
+// Ohne Phrasen gilt der ganze Track (ab dem ersten Schlag) als eine: Teilen legt beide
+// Haelften an, statt nur ab der Abspielposition -- sonst bliebe der Anfang ohne Phrase.
 function djCutPhrase(ed, ev) {
-  const at = Math.max(djPhraseFloor(ed), djSnapDrag(ed, djPos(ed), ev));
+  const floor = djPhraseFloor(ed);
+  const at = Math.max(floor, djSnapDrag(ed, djPos(ed), ev));
   djPush(ed);
   const i = djPhraseAt(ed, at);
-  if (i < 0) {
+  if (!ed.phrases.length) {
+    if (ed.dur - floor < 0.05) { ed.undo.pop(); return; }
+    if (at - floor >= 0.05) ed.phrases.push({start: floor, end: at, kind: "up", num: 0});
+    if (ed.dur - at >= 0.05) ed.phrases.push({start: at, end: ed.dur, kind: "up", num: 0});
+  } else if (i < 0) {
     const nextP = ed.phrases.find(p => p.start > at);
     const end = nextP ? nextP.start : ed.dur;
     if (end - at < 0.05) { ed.undo.pop(); return; }
@@ -1253,6 +1260,17 @@ function djCutPhrase(ed, ev) {
   }
   djSortPhrases(ed);
   ed.selPhrase = djPhraseAt(ed, at);
+  ed.selCue = null;
+  djTouched(ed, "phrases");
+}
+// Erste Phrase von Hand: ganzer Track ab dem ersten Schlag, danach mit Teilen (X) zerlegen.
+function djAddPhrase(ed) {
+  if (ed.phrases.length) return;
+  const floor = djPhraseFloor(ed);
+  if (ed.dur - floor < 0.05) return;
+  djPush(ed);
+  ed.phrases.push({start: floor, end: ed.dur, kind: "up", num: 0});
+  ed.selPhrase = 0;
   ed.selCue = null;
   djTouched(ed, "phrases");
 }
@@ -1413,6 +1431,17 @@ function djPhraseTools(ed) {
     ${djToolBtn("clearphrases", `${djIcon("trash")} ${esc(t("dj.clear_phrases"))}`, t("dj.clear_phrases_title"), {cls: "wide"})}`;
 }
 
+// Leere Phrasenliste: Hinweis plus Einstieg zum Anlegen und Messen. Gemessen wird auf dem
+// vorhandenen Grid (_measure_phrases()), auch wenn sich selbst kein Tempo finden laesst.
+function djPhrasesEmptyHTML(ed) {
+  const measure = PHRASES_AVAILABLE
+    ? `<button class="dj-addrow" data-dj="measure" data-what="phrases"${ed.locks.phrases ? ` disabled title="${esc(t("dj.analysis_locked"))}"` : ""}>${ICONS.analysePhrases} ${esc(t("bulk.dj_phrases"))}</button>`
+    : "";
+  return `<div class="dj-empty">${esc(t("dj.phrases_empty"))}</div>
+    <button class="dj-addrow" data-dj="addphrase" title="${esc(t("dj.add_phrase_title"))}">${djIcon("plus")} ${esc(t("dj.add_phrase"))}</button>
+    ${measure}`;
+}
+
 function djCueRow(ed, cue, letter) {
   const isMemory = cue.kind === "memory", hot = isMemory ? djHotAt(ed, cue.position_s) : null;
   const loopMark = cue.loop_s == null ? "" : isMemory
@@ -1470,7 +1499,7 @@ function djRenderSide(ed) {
         <span class="dj-phrasename">${esc(djPhraseLabel(p))}</span>
         ${beats ? `<span class="dj-bars">${esc(t("dj.bars", {bars: String(Math.round(beats / 4 * 10) / 10)}))}</span>` : ""}
       </div>`;
-    }).join("") || `<div class="dj-empty">${esc(t("dj.phrases_empty"))}</div>`;
+    }).join("") || djPhrasesEmptyHTML(ed);
   } else {
     html = djInfoHTML(ed);
   }
@@ -1627,7 +1656,7 @@ function djInfoHTML(ed) {
       <span>${esc(t("dj.analysis_lock", {field: t("dj.field_" + f)}))}</span><b>${esc(t(ed.locks[f] ? "dj.analysis_lock_active" : "dj.analysis_lock_inactive"))}</b>
       <button class="dj-link" data-dj="analysislock" data-field="${f}">${esc(t(ed.locks[f] ? "dj.analysis_lock_release" : "dj.analysis_lock_set"))}</button>
     </div>`).join("")}
-    ${PHRASES_AVAILABLE ? [["grid", djIcon("grid-3x3"), "bulk.dj_grid"], ["phrases", ICONS.analysePhrases, "bulk.dj_phrases"], ["both", ICONS.analysePhrases, "dj.measure"]].map(([what, icon, label]) => {
+    ${PHRASES_AVAILABLE ? [["grid", ICONS.analyseGrid, "bulk.dj_grid"], ["phrases", ICONS.analysePhrases, "bulk.dj_phrases"], ["both", ICONS.analyseBoth, "dj.measure"]].map(([what, icon, label]) => {
       const off = what === "both" ? ed.locks.grid && ed.locks.phrases : ed.locks[what];
       return `<button class="dj-addrow" data-dj="measure" data-what="${what}"${off ? ` disabled title="${esc(t("dj.analysis_locked"))}"` : ""}>${icon} ${esc(t(label))}</button>`;
     }).join("") : ""}
@@ -1724,6 +1753,7 @@ function djOnClick(ed, ev) {
     case "measure": djMeasure(ed, d.what || "both"); break;
     case "autocue": djAutoCue(ed); break;
     case "cut": djCutPhrase(ed, ev); break;
+    case "addphrase": djAddPhrase(ed); break;
     case "kind": djSetPhraseKind(ed, d.kind); break;
     case "delphrase": djDeletePhrase(ed); break;
     case "clearphrases": djClearPhrases(ed); break;
@@ -1872,15 +1902,56 @@ async function djBulkRekordbox(rows, action) {
   const ok = await askConfirmSimple(t({load: "dj.rb_load_confirm", update: "dj.rb_update_confirm", add: "dj.bulk_rb_add_confirm"}[action]),
     t({load: "dj.bulk_rb_load_note", update: "dj.bulk_rb_update_note", add: "dj.bulk_rb_add_note"}[action], {count: todo.length}), label);
   if (!ok) return;
+  await djRekordboxRun(todo, action);
+}
+
+// Kern der Sammelaktion ohne Rueckfrage, auch fuer das Uebertragen auf eine
+// Rekordbox-Playlist (addToRekordboxPlaylist(), angehakte vorhandene Tracks).
+// Ein Token je Nutzeraktion: der Server sichert die master.db dann nur einmal
+// (rekordbox.backup_session()), auch ueber mehrere Anfragen hinweg.
+function rbSessionToken() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// "update" laeuft gebuendelt ueber /api/dj-rekordbox-batch: der Server bestimmt die
+// Felder selbst (dieselbe Regel wie unten fuer einzelne Tracks), oeffnet die
+// master.db je Abschnitt einmal und schreibt je Track eine Transaktion.
+const DJ_RB_BATCH = 10;
+
+async function djRekordboxRun(rows, action, session = rbSessionToken()) {
+  const todo = rows.filter(r => !r.gone), label = t({load: "dj.rb_load", update: "dj.rb_update", add: "dj.rb_add"}[action]);
+  if (!todo.length) return;
   if (DJ) await djSave(DJ);
   const pt = progressToast(t("dj.bulk_running", {action: label, count: todo.length}));
   let done = 0, skipped = 0, partial = 0, failed = 0, lastError = "", stopped = "";
-  for (let i = 0; i < todo.length && !stopped; i++) {
+  if (action === "update") {
+    for (let i = 0; i < todo.length && !stopped; i += DJ_RB_BATCH) {
+      const chunk = todo.slice(i, i + DJ_RB_BATCH);
+      try {
+        const res = await fetch("/api/dj-rekordbox-batch", {method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({paths: chunk.map(r => r.p), session})});
+        const data = await res.json();
+        if (res.status === 409) { stopped = data.error || String(res.status); break; }
+        if (!res.ok || !data.ok) throw new Error(data.error || String(res.status));
+        done += data.done.length; skipped += data.skipped.length;
+        const errs = Object.entries(data.errors || {});
+        failed += errs.length;
+        if (errs.length) lastError = `${baseName(errs[0][0])}: ${errs[0][1]}`;
+        if (data.stopped) stopped = data.stopped;
+      } catch (err) {
+        failed += chunk.length; lastError = err.message;
+      } finally {
+        const n = Math.min(i + DJ_RB_BATCH, todo.length);
+        pt.update(100 * n / todo.length, t("toast.bpmkey_progress", {done: n, total: todo.length}));
+      }
+    }
+  }
+  for (let i = 0; action !== "update" && i < todo.length && !stopped; i++) {
     const r = todo[i];
     try {
       if (action === "add") {
         const res = await fetch("/api/dj-rekordbox", {method: "POST", headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({path: r.p, action})});
+          body: JSON.stringify({path: r.p, action, session})});
         const data = await res.json();
         if (res.status === 409) { stopped = data.error || String(res.status); break; }
         if (!res.ok || !data.ok) throw new Error(data.error || String(res.status));

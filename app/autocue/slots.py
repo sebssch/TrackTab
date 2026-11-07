@@ -36,6 +36,34 @@ DIRECTIONS = ("before", "after")
 # Konfidenz-Schwellen je Rolle (config["autocue_conf_<key>"]); alles andere -> default.
 CONFIDENCE_KEYS = ("default", "intro_1", "break1", "drop1", "break2", "setup", "drop2", "outro_start")
 
+# Konfidenz je Rolle als Stufe statt Zahl (Einstellungsseite). "normal" = der an den
+# Modellen kalibrierte Wert je Rolle (frueher die Zahl in config.yaml); "sicher"
+# setzt seltener, aber treffsicherer, "riskant" oefter, auch auf Verdacht.
+CONFIDENCE_CALIBRATED = {"default": 0.25, "intro_1": 0.3, "break1": 0.3, "drop1": 0.3, "break2": 0.3,
+                         "setup": 0.4, "drop2": 0.18, "outro_start": 0.3}
+CONFIDENCE_LEVELS = ("very_safe", "safe", "normal", "risky", "very_risky")
+
+
+def confidence_threshold(key: str, level) -> float:
+    """Schwelle (0..1) fuer eine Stufe; eine Zahl (alte Einstellung) gilt unveraendert."""
+    if isinstance(level, (int, float)) and not isinstance(level, bool):
+        return float(level)
+    d = CONFIDENCE_CALIBRATED.get(key, CONFIDENCE_CALIBRATED["default"])
+    return {"very_safe": d + (1 - d) * 0.5, "safe": d + (1 - d) * 0.25, "normal": d,
+            "risky": d * 0.5, "very_risky": d * 0.2}.get(str(level), d)
+
+
+def confidence_level(key: str, value) -> str:
+    """Naechste Stufe zu einer alten Zahl (Uebernahme gespeicherter Einstellungen)."""
+    if str(value) in CONFIDENCE_LEVELS:
+        return str(value)
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return "normal"
+    return min(CONFIDENCE_LEVELS, key=lambda lv: (abs(confidence_threshold(key, lv) - v),
+                                                  CONFIDENCE_LEVELS.index(lv) != 2))
+
 _HOT_BLUE = [58, 89, 246]          # rekordbox._HOT_CUE_TABLE_COLORS[1]
 _MEMORY_BLUE = [0, 102, 255]       # rekordbox._MEMORY_CUE_PALETTE[6]
 
@@ -71,6 +99,27 @@ def defaults() -> dict:
         _rule("break2", "auto", "before", "Before Break #2", _MEMORY_BLUE),
         off(),
     ]
+    return {"hot": hot, "memory": memory}
+
+
+_ROLE_NAMES = {"break1": "Break 1", "drop1": "Drop 1", "break2": "Break 2", "drop2": "Drop 2",
+               "outro_start": "Outro", "intro_1": "Intro", "setup": "Setup"}
+
+
+def for_label_slots(label_slots: dict | None) -> dict:
+    """Slot-Belegung, die zur Cue-Konvention eines Trainings passt (Manifest
+    "suggested_slots"). Bei der Vorgabe-Konvention genau defaults(); sonst liegen
+    die gelernten Rollen auf ihren Hot Cues, Memory wie in defaults() ohne die
+    Rollen, die jetzt einen Hot Cue haben (eine Rolle belegt nur EINE Zeile)."""
+    from app.autocue.training.labels import DEFAULT_LABEL_SLOTS
+    if not label_slots or dict(label_slots) == DEFAULT_LABEL_SLOTS:
+        return defaults()
+    base = defaults()
+    hot = [off() for _ in HOT_LETTERS]
+    for role, slot in sorted(label_slots.items(), key=lambda kv: kv[1]):
+        hot[int(slot) - 1] = _role(role, f"{HOT_LETTERS[int(slot) - 1]}: {_ROLE_NAMES.get(role, role)}", _HOT_BLUE)
+    memory = [m if not (m.get("mode") == "role" and m.get("role") in label_slots) else off()
+              for m in base["memory"]]
     return {"hot": hot, "memory": memory}
 
 

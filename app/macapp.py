@@ -213,13 +213,13 @@ def run(console, port: int, open_browser: bool = True) -> int:
         # mehr zu tun. terminate_ gehoert auf den Hauptthread.
         AppHelper.callAfter(AppKit.NSApp().terminate_, None)
 
-    def _confirm_scan_quit() -> bool:
+    def _confirm_scan_quit(title: str = "Es läuft noch ein Scan",
+                           text: str = "Beim Beenden bricht der Scan ab. Bereits gemessene Dateien "
+                                       "bleiben in der Datenbank, der Rest wird beim nächsten Scan "
+                                       "nachgeholt.") -> bool:
         alert = AppKit.NSAlert.alloc().init()
-        alert.setMessageText_("Es läuft noch ein Scan")
-        alert.setInformativeText_(
-            "Beim Beenden bricht der Scan ab. Bereits gemessene Dateien "
-            "bleiben in der Datenbank, der Rest wird beim nächsten Scan "
-            "nachgeholt.")
+        alert.setMessageText_(title)
+        alert.setInformativeText_(text)
         alert.addButtonWithTitle_("Trotzdem beenden")
         alert.addButtonWithTitle_("Abbrechen")
         AppKit.NSApp().activateIgnoringOtherApps_(True)
@@ -241,6 +241,14 @@ def run(console, port: int, open_browser: bool = True) -> int:
                 if not _confirm_scan_quit():
                     return AppKit.NSTerminateCancel
                 server_mod.SCAN.cancel()
+            from app.autocue.training import job as autocue_job
+            if autocue_job.JOB.is_running():
+                if not _confirm_scan_quit(
+                        "Es läuft noch ein Auto-Cue-Training",
+                        "Beim Beenden bricht das Training ab. Berechnete Merkmale bleiben "
+                        "gespeichert, ein neuer Lauf rechnet nur den Rest."):
+                    return AppKit.NSTerminateCancel
+                autocue_job.JOB.cancel()
             server_mod.request_stop()
             # NSTerminateLater waere die feine Art, verlangt aber einen
             # zweiten Rueckweg ueber replyToApplicationShouldTerminate_.
@@ -273,6 +281,11 @@ def run(console, port: int, open_browser: bool = True) -> int:
 
     app = AppKit.NSApplication.sharedApplication()
     app.setActivationPolicy_(AppKit.NSApplicationActivationPolicyRegular)
+    # Ohne eigenes Fenster schickt macOS die App fast immer in App Nap (Prioritaet 4,
+    # nur Effizienzkerne) -- Scan, Stems und Training liefen dann ein Vielfaches
+    # langsamer. Details in activity.py.
+    from . import activity
+    activity.hold("TrackTab bearbeitet Anfragen der Oberfläche")
 
     delegate = AQCAppDelegate.alloc().init()
     app.setDelegate_(delegate)

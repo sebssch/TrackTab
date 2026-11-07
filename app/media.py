@@ -106,14 +106,92 @@ def encoder_available(name: str) -> bool:
     return bool(name) and name in _encoder_names()
 
 
-def resolved_aac_encoder(cfg: dict) -> str:
-    """Konfigurierten AAC-Encoder validieren, mit Fallback auf den
-    ueberall verfuegbaren nativen 'aac'-Encoder (z.B. wenn 'libfdk_aac'
-    konfiguriert, im lokalen ffmpeg-Build aber nicht enthalten ist)."""
-    wanted = str(cfg.get("aac_encoder") or "aac").strip() or "aac"
-    if wanted == "aac" or encoder_available(wanted):
-        return wanted
-    return "aac"
+class EncodeError(RuntimeError):
+    """Neukodierung fehlgeschlagen; Text ist die Meldung des Werkzeugs."""
+
+
+def afconvert_path() -> str | None:
+    """Apples Kommandozeilen-Konverter (Teil von macOS, /usr/bin/afconvert)."""
+    found = shutil.which("afconvert")
+    if found:
+        return found
+    return "/usr/bin/afconvert" if Path("/usr/bin/afconvert").is_file() else None
+
+
+def resolved_aac_encoder() -> str:
+    """AAC-Encoder fuer Neukodierungen (Bitrate korrigieren, Format wechseln,
+    calibrate): 'aac_at' = Apples AudioToolbox-Encoder (derselbe wie in
+    Music.app, klingt bei gleicher Bitrate besser), sonst ffmpegs eigener 'aac'.
+    Keine Einstellung: 'libfdk_aac' ist nonfree und darf nicht ins Bundle (GPL).
+
+    'aac_at' laeuft bewusst ueber afconvert und NICHT ueber ffmpegs gleichnamigen
+    Encoder: der nimmt nur s16 an ('ffmpeg -h encoder=aac_at'), ffmpeg muss die
+    dekodierte Float-Quelle also nach 16 Bit wandeln und schneidet dabei alles
+    ueber 0 dBFS hart ab. Laute Master ueberschwingen nach einer verlustbehafteten
+    Dekodierung deutlich (gemessen: +5,5 dBFS, 0,8 % der Samples ueber 1,0) --
+    hoerbare Verzerrung und ein breitbandiger Rauschsockel, der die Tiefpasskante
+    einer frueheren Kodierung verdeckt. afconvert nimmt Float wie Music.app."""
+    return "aac_at" if afconvert_path() else "aac"
+
+
+def _apple_aac_rate(src: Path) -> list[str]:
+    """Apples AAC-Encoder kann hoechstens 48 kHz: 88,2/176,4 kHz auf 44,1,
+    alles andere darueber auf 48 kHz (ffmpeg-Argumente, leer wenn passend)."""
+    try:
+        out = subprocess.run(
+            [ffprobe_path(), "-v", "error", "-select_streams", "a:0",
+             "-show_entries", "stream=sample_rate", "-of", "csv=p=0", str(src)],
+            capture_output=True, text=True, timeout=30)
+        rate = int(out.stdout.strip().splitlines()[0])
+    except (ValueError, IndexError, OSError, subprocess.TimeoutExpired):
+        return []
+    if rate <= 48000:
+        return []
+    return ["-ar", "44100" if rate % 44100 == 0 else "48000"]
+
+
+def encode_aac(src, dst, kbps: int, *, timeout: float = 600) -> str:
+    """AAC-LC mit fester Bitrate (CBR) nach 'dst', ohne Tags und Cover (die
+    uebertraegt der Aufrufer). '.aac' wird ADTS, alles andere MP4 (.m4a).
+    Rueckgabe: verwendeter Encoder. Fehler -> EncodeError.
+
+    aac_at: ffmpeg dekodiert nach 32-Bit-Float-CAF (behaelt Ueberschwinger
+    ueber 0 dBFS), afconvert kodiert (-s 0 = CBR, -q 127 = hoechste Qualitaet).
+    Ohne CBR trifft die deklarierte Bitrate das Ziel nicht."""
+    src, dst = Path(src), Path(dst)
+    codec = resolved_aac_encoder()
+    ffmpeg = ffmpeg_path()
+
+    def run(cmd: list[str], what: str) -> None:
+        try:
+            result = subprocess.run(cmd, capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise EncodeError(f"{what}: Zeitlimit überschritten") from exc
+        if result.returncode != 0:
+            raise EncodeError(
+                result.stderr.decode("utf-8", "replace").strip()[:300] or what)
+
+    if codec == "aac":
+        run([ffmpeg, "-v", "error", "-y", "-nostdin", "-i", str(src),
+             "-map", "0:a:0", "-map_metadata", "-1", "-vn",
+             "-c:a", "aac", "-b:a", f"{int(kbps)}k", str(dst)],
+            "ffmpeg konnte die Datei nicht kodieren")
+    else:
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="tracktab-aac-") as tmp:
+            caf = Path(tmp) / "pcm.caf"
+            run([ffmpeg, "-v", "error", "-y", "-nostdin", "-i", str(src),
+                 "-map", "0:a:0", "-map_metadata", "-1", "-vn",
+                 *_apple_aac_rate(src), "-c:a", "pcm_f32le", "-f", "caf", str(caf)],
+                "ffmpeg konnte die Datei nicht dekodieren")
+            run([afconvert_path() or "afconvert",
+                 "-f", "adts" if dst.suffix.lower() == ".aac" else "m4af",
+                 "-d", "aac", "-s", "0", "-q", "127", "-b", str(int(kbps) * 1000),
+                 str(caf), str(dst)],
+                "afconvert konnte die Datei nicht kodieren")
+    if not dst.is_file():
+        raise EncodeError("Kodierte Datei fehlt")
+    return codec
 
 
 def available() -> tuple[bool, str]:
@@ -1392,11 +1470,224 @@ def music_playlists() -> list[dict]:
     return nodes
 
 
+def _run_music_script(script: str, args: list[str], what: str, timeout: int = 120) -> str:
+    """osascript mit Argumenten; Fehler als MediaToolMissing mit Music.apps Meldung."""
+    result = subprocess.run(["osascript", "-e", script, *[str(a) for a in args]],
+                            capture_output=True, timeout=timeout)
+    if result.returncode != 0:
+        raise MediaToolMissing(
+            result.stderr.decode("utf-8", "replace").strip()[:300] or what)
+    return result.stdout.decode("utf-8", "replace")
+
+
+def music_create_playlist(name: str, parent_pid: str = "", folder: bool = False) -> str:
+    """
+    Legt in Music.app eine normale Playlist oder einen Ordner an, bei 'parent_pid'
+    in diesem Ordner. Liefert die persistent ID. Smart Playlists lassen sich per
+    AppleScript nicht anlegen.
+
+    Erst oben anlegen, dann per 'move' in den Ordner: 'make new ... at <Ordner>'
+    lehnt Music.app je nach Version ab.
+    """
+    script = (
+        'on run argv\n'
+        '  set theName to item 1 of argv\n'
+        '  set parentId to item 2 of argv\n'
+        '  set isFolder to item 3 of argv\n'
+        '  tell application "Music"\n'
+        '    if isFolder is "1" then\n'
+        '      set p to make new folder playlist with properties {name:theName}\n'
+        '    else\n'
+        '      set p to make new user playlist with properties {name:theName}\n'
+        '    end if\n'
+        '    if parentId is not "" then\n'
+        '      set par to (first folder playlist whose persistent ID is parentId)\n'
+        '      move p to par\n'
+        '    end if\n'
+        '    return persistent ID of p\n'
+        '  end tell\n'
+        'end run'
+    )
+    out = _run_music_script(script, [name, parent_pid or "", "1" if folder else "0"],
+                            "Music.app konnte die Playlist nicht anlegen", 60)
+    return out.strip()
+
+
+def music_rename_playlist(persistent_id: str, name: str) -> None:
+    """Benennt eine Playlist, einen Ordner oder eine Smart Playlist in Music.app um."""
+    script = (
+        'on run argv\n'
+        '  tell application "Music"\n'
+        '    set name of (first playlist whose persistent ID is (item 1 of argv)) to (item 2 of argv)\n'
+        '  end tell\n'
+        'end run'
+    )
+    _run_music_script(script, [persistent_id, name], "Music.app konnte die Playlist nicht umbenennen", 60)
+
+
+def music_move_playlist(persistent_id: str, folder_pid: str) -> None:
+    """Verschiebt eine Playlist oder einen Ordner in den Ordner 'folder_pid'. Zurueck
+    auf die oberste Ebene geht per AppleScript nicht: 'move ... to source 1' meldet
+    Erfolg und laesst die Liste im Ordner (an echtem Material geprueft). Eine
+    Reihenfolge innerhalb einer Ebene gibt es in Music.app nicht (sortiert selbst
+    alphabetisch)."""
+    if not folder_pid:
+        raise MediaToolMissing("Music.app kann Playlisten per Fernsteuerung nicht auf die oberste Ebene verschieben.")
+    script = (
+        'on run argv\n'
+        '  tell application "Music"\n'
+        '    set pl to (first playlist whose persistent ID is (item 1 of argv))\n'
+        '    set par to (first folder playlist whose persistent ID is (item 2 of argv))\n'
+        '    move pl to par\n'
+        '  end tell\n'
+        'end run'
+    )
+    _run_music_script(script, [persistent_id, folder_pid], "Music.app konnte die Playlist nicht verschieben", 60)
+
+
+def music_delete_playlist(persistent_id: str) -> None:
+    """Loescht eine Playlist oder einen Ordner (samt Inhalt) in Music.app. Die Tracks
+    bleiben in der Mediathek."""
+    script = (
+        'on run argv\n'
+        '  tell application "Music"\n'
+        '    delete (first playlist whose persistent ID is (item 1 of argv))\n'
+        '  end tell\n'
+        'end run'
+    )
+    _run_music_script(script, [persistent_id], "Music.app konnte die Playlist nicht löschen", 60)
+
+
+def music_add_to_playlist(persistent_id: str, items: list[tuple]) -> list[bool]:
+    """
+    Fuegt Mediathek-Tracks einer normalen Playlist hinzu ('duplicate'). Je
+    (Pfad, Titel[, Interpret, Groesse, Dauer]) wird der Track wie in
+    music_track_ids() gesucht: Titel-Vorfilter, dann 'location' je Kandidat,
+    Umwandlung in einen POSIX-Pfad ausserhalb des tell-Blocks (sonst -1728).
+    Passt kein Speicherort, zaehlt ein Kandidat OHNE Speicherort (Cloud-Eintrag,
+    z. B. nach einer Aenderung am iPhone) mit gleichem Interpreten und gleicher
+    Groesse bzw. Dauer auf 1 s -- nur wenn es genau einer ist (wie
+    playlistsync.cloud_matcher()). Ein Aufruf fuer alle Tracks. Liefert
+    positionsgleich True (hinzugefuegt) oder False (nicht in der Mediathek
+    gefunden). Dateien ausserhalb der Mediathek importiert der Aufrufer vorher
+    (add_to_music_library()).
+    """
+    script = (
+        'on run argv\n'
+        '  set pid to item 1 of argv\n'
+        '  tell application "Music" to set pl to (first user playlist whose persistent ID is pid)\n'
+        '  set out to {}\n'
+        '  set i to 2\n'
+        '  repeat while i < (count of argv)\n'
+        '    set thePath to item i of argv\n'
+        '    set theTitle to item (i + 1) of argv\n'
+        '    set theArtist to item (i + 2) of argv\n'
+        '    set theSize to item (i + 3) of argv\n'
+        # Dauer in ms als Ganzzahl: Text -> real haengt am Dezimaltrenner der Systemsprache.
+        '    set theDur to (item (i + 4) of argv) as integer\n'
+        '    set i to i + 5\n'
+        '    set cloudHits to {}\n'
+        '    set candidates to {}\n'
+        '    tell application "Music"\n'
+        '      try\n'
+        '        set candidates to (every track of library playlist 1 whose name is theTitle)\n'
+        '      end try\n'
+        '    end tell\n'
+        '    set hit to missing value\n'
+        '    repeat with c in candidates\n'
+        '      set theLoc to missing value\n'
+        '      tell application "Music"\n'
+        '        try\n'
+        '          set theLoc to location of c\n'
+        '        end try\n'
+        '      end tell\n'
+        '      if theLoc is not missing value then\n'
+        '        try\n'
+        '          if (POSIX path of theLoc) is thePath then set hit to (contents of c)\n'
+        '        end try\n'
+        '      else if theSize is not "" then\n'
+        '        set cSize to ""\n'
+        '        set cDur to -100000\n'
+        '        set cArtist to ""\n'
+        '        tell application "Music"\n'
+        '          try\n'
+        '            set cSize to ((size of c) as text)\n'
+        '          end try\n'
+        '          try\n'
+        '            set cDur to round ((duration of c) * 1000)\n'
+        '          end try\n'
+        '          try\n'
+        '            set cArtist to (artist of c)\n'
+        '          end try\n'
+        '        end tell\n'
+        '        if cArtist is theArtist and (cSize is theSize or (theDur > 0 and '
+        '((cDur - theDur) ^ 2) <= 1000000)) then set end of cloudHits to (contents of c)\n'
+        '      end if\n'
+        '      if hit is not missing value then exit repeat\n'
+        '    end repeat\n'
+        '    if hit is missing value and (count of cloudHits) is 1 then set hit to item 1 of cloudHits\n'
+        '    if hit is missing value then\n'
+        '      set end of out to "0"\n'
+        '    else\n'
+        '      tell application "Music" to duplicate hit to pl\n'
+        '      set end of out to "1"\n'
+        '    end if\n'
+        '  end repeat\n'
+        '  set AppleScript\'s text item delimiters to linefeed\n'
+        '  return out as text\n'
+        'end run'
+    )
+    args: list[str] = [persistent_id]
+    for item in items:
+        path, title = item[0], item[1]
+        artist = item[2] if len(item) > 2 else ""
+        size = item[3] if len(item) > 3 else 0
+        dur = item[4] if len(item) > 4 else 0
+        # Ohne Interpret und Groesse keine Cloud-Zuordnung (leere Groesse = aus).
+        args += [str(path), str(title or Path(path).stem), str(artist or ""),
+                 str(int(size)) if size and artist else "", str(int(round(float(dur or 0) * 1000)))]
+    out = _run_music_script(script, args, "Music.app konnte die Tracks nicht hinzufügen",
+                            60 + 5 * len(items))
+    flags = [line.strip() == "1" for line in out.split("\n") if line.strip() in ("0", "1")]
+    flags += [False] * (len(items) - len(flags))
+    return flags[:len(items)]
+
+
+def music_remove_from_playlist(persistent_id: str, track_ids: list[str]) -> int:
+    """Entfernt Tracks (persistent IDs) aus einer normalen Playlist, nicht aus der
+    Mediathek. Steht ein Track mehrfach in der Liste, gehen alle seine Eintraege.
+    Liefert die Zahl der entfernten Eintraege."""
+    script = (
+        'on run argv\n'
+        '  set pid to item 1 of argv\n'
+        '  set n to 0\n'
+        '  tell application "Music"\n'
+        '    set pl to (first user playlist whose persistent ID is pid)\n'
+        '    repeat with i from 2 to (count of argv)\n'
+        '      set tid to item i of argv\n'
+        '      set hits to (every track of pl whose persistent ID is tid)\n'
+        '      set n to n + (count of hits)\n'
+        '      delete (every track of pl whose persistent ID is tid)\n'
+        '    end repeat\n'
+        '  end tell\n'
+        '  return n as text\n'
+        'end run'
+    )
+    out = _run_music_script(script, [persistent_id, *track_ids],
+                            "Music.app konnte die Tracks nicht entfernen", 60 + 2 * len(track_ids))
+    try:
+        return int(out.strip() or 0)
+    except ValueError:
+        return 0
+
+
 def music_playlist_tracks(persistent_id: str) -> list[dict]:
     """
     Tracks einer Music.app-Playlist in ihrer Reihenfolge. Liefert je Track
-    {id, name, artist, path} -- 'path' ist leer, wenn es keine lokale Datei
-    gibt (Apple-Music-/Cloud-Track).
+    {id, name, artist, size, duration, path} -- 'path' ist leer, wenn Music
+    keine lokale Datei fuehrt (Apple-Music-/Cloud-Track; auch ein eigener Track,
+    der z. B. nach dem Hinzufuegen zu einer Playlist am iPhone nur noch als
+    Cloud-Eintrag dasteht -- 'size'/'duration' ordnen ihn dann zu).
 
     Warum drei parallele Listen statt einer Schleife: 'location of every
     track' bricht mit Fehler -1728 fuer die GANZE Liste ab, sobald ein Track
@@ -1418,15 +1709,41 @@ def music_playlist_tracks(persistent_id: str) -> list[dict]:
         '  set pid to item 1 of argv\n'
         '  tell application "Music"\n'
         '    set pl to (first user playlist whose persistent ID is pid)\n'
+        # Leere Playlist: 'every track of pl' liefert keine leere Liste, sondern
+        # -1728 (an echtem Material, z.B. eine gerade in TrackTab angelegte Liste).
+        # Dasselbe bei 'every file track' einer Liste nur aus Cloud-Tracks.
+        '    if (count of tracks of pl) is 0 then return linefeed & "---" & linefeed\n'
         '    set allIDs to (get persistent ID of every track of pl)\n'
         '    set allNames to (get name of every track of pl)\n'
         '    set allArtists to (get artist of every track of pl)\n'
-        '    set fileIDs to (get persistent ID of every file track of pl)\n'
-        '    set fileLocs to (get location of every file track of pl)\n'
+        # Groesse/Dauer auch fuer Cloud-Eintraege ohne Speicherort (dort ordnet
+        # sie der Aufrufer der lokalen Datei zu, playlistsync.cloud_matcher()).
+        '    set allSizes to {}\n'
+        '    set allDurations to {}\n'
+        '    try\n'
+        '      set allSizes to (get size of every track of pl)\n'
+        '    end try\n'
+        '    try\n'
+        '      set allDurations to (get duration of every track of pl)\n'
+        '    end try\n'
+        '    set fileIDs to {}\n'
+        '    set fileLocs to {}\n'
+        '    if (count of file tracks of pl) > 0 then\n'
+        '      set fileIDs to (get persistent ID of every file track of pl)\n'
+        '      set fileLocs to (get location of every file track of pl)\n'
+        '    end if\n'
         '    set out to {}\n'
         '    repeat with i from 1 to (count of allIDs)\n'
+        '      set sz to ""\n'
+        '      set du to ""\n'
+        '      try\n'
+        '        set sz to ((item i of allSizes) as text)\n'
+        '      end try\n'
+        '      try\n'
+        '        set du to ((item i of allDurations) as text)\n'
+        '      end try\n'
         '      set end of out to ((item i of allIDs) & tab & (item i of allNames) '
-        '& tab & (item i of allArtists))\n'
+        '& tab & (item i of allArtists) & tab & sz & tab & du)\n'
         '    end repeat\n'
         '    set out2 to {}\n'
         '    repeat with i from 1 to (count of fileIDs)\n'
@@ -1462,9 +1779,20 @@ def music_playlist_tracks(persistent_id: str) -> list[dict]:
             "id": tid,
             "name": parts[1] if len(parts) > 1 else "",
             "artist": parts[2] if len(parts) > 2 else "",
+            "size": int(_as_number(parts[3])) if len(parts) > 3 else 0,
+            "duration": _as_number(parts[4]) if len(parts) > 4 else 0.0,
             "path": paths.get(tid, ""),
         })
     return tracks
+
+
+def _as_number(text: str) -> float:
+    """Zahl aus AppleScripts Textform: Dezimalkomma je nach Systemsprache, grosse
+    Werte als Gleitkomma ('8,400962E+6'). Unlesbares -> 0."""
+    try:
+        return float((text or "").strip().replace(",", "."))
+    except ValueError:
+        return 0.0
 
 
 def track_artwork(items: list[tuple[str, str]]) -> dict[str, tuple[bytes, str] | None]:

@@ -51,8 +51,9 @@ def file_key(path: str) -> str:
 # Kandidaten
 # ----------------------------------------------------------------------------
 
-def candidates(conn) -> list[dict]:
-    """Tracks mit Hot A und Hot C (von Hand), noch ohne Versatz-Korrektur."""
+def candidates(conn, label_slots: dict | None = None, memory_ok: bool = False) -> list[dict]:
+    """Tracks mit den Hand-Cues fuer Drop 2 und Break 1 (Vorgabe Hot C und Hot A,
+    labels.clean_label_slots()), noch ohne Versatz-Korrektur."""
     from app.autocue.training.labels import has_anchor_cues
     out = []
     rows = conn.execute(
@@ -66,7 +67,7 @@ def candidates(conn) -> list[dict]:
             snap = json.loads(r["snap_cues"]) if r["snap_cues"] is not None else None
         except (TypeError, ValueError):
             continue
-        if not has_anchor_cues(edits if edits is not None else snap):
+        if not has_anchor_cues(edits if edits is not None else snap, label_slots, memory_ok):
             continue
         out.append({"path": r["path"], "duration": float(r["duration_s"] or 0),
                     "size": r["size"], "mtime": r["mtime"], "edit_cues": edits, "snap_cues": snap})
@@ -94,7 +95,15 @@ def _prepare_one(task: dict) -> tuple[str, float | None, list, str]:
         wavedetail_mod.forget(path)
 
 
-def prepare(cfg: dict, items: list[dict], work: str, workers: int, progress=None) -> dict:
+def _check_cancel(cancel, futures) -> None:
+    if cancel is not None and cancel():
+        from app.autocue.training.base import Cancelled
+        for fut in futures:
+            fut.cancel()
+        raise Cancelled()
+
+
+def prepare(cfg: dict, items: list[dict], work: str, workers: int, progress=None, cancel=None) -> dict:
     """Versatz je Track (zwischengespeichert in leads.json) und Uebernahme fehlender
     Grids. Rueckgabe {Pfad: Versatz oder None}."""
     from app import config as cfgmod
@@ -133,6 +142,9 @@ def prepare(cfg: dict, items: list[dict], work: str, workers: int, progress=None
                                  initargs=(str(cfgmod.base_dir()),)) as ex:
             futures = [ex.submit(_prepare_one, t) for t in tasks]
             for i, f in enumerate(as_completed(futures), 1):
+                if cancel is not None and cancel():
+                    _write_json(cache_path, cache)
+                    _check_cancel(cancel, futures)
                 path, lead, _seeded, _err = f.result()
                 if lead is not None:
                     leads[path] = lead
@@ -158,8 +170,13 @@ def _write_json(path: str, data) -> None:
 # Export
 # ----------------------------------------------------------------------------
 
-def build_tasks(cfg: dict, items: list[dict], leads: dict, out_dir: str, force: bool) -> tuple[list, dict]:
-    """Aufgaben fuer den Export und eine Zaehlung, was warum wegfiel."""
+def build_tasks(cfg: dict, items: list[dict], leads: dict, out_dir: str, force: bool,
+                label_slots: dict | None = None, memory_ok: bool = False) -> tuple[list, dict]:
+    """Aufgaben fuer den Export und eine Zaehlung, was warum wegfiel.
+
+    Die Cue-Zuordnung entscheidet nur, welche Tracks mitkommen; der Inhalt der
+    .npz-Datei (alle Hot Cues mit Slot) haengt nicht von ihr ab und bleibt deshalb
+    beim Wechsel der Zuordnung gueltig -- die Rollen ordnen base.py/chain.py zu."""
     from app import db as db_mod
     from app import gridstore
     from app.autocue.learned import FEATURE_VERSION
@@ -180,7 +197,7 @@ def build_tasks(cfg: dict, items: list[dict], leads: dict, out_dir: str, force: 
             cues, _src = labels_mod.own_cues(it["edit_cues"], it["snap_cues"], leads.get(path))
             beat_s = labels_mod.beat_seconds(own["beats"])
             lab = labels_mod.hand_cues(cues, auto.get(path), beat_s)
-            if 1 not in lab["hot"] or 3 not in lab["hot"]:
+            if not labels_mod.usable(lab["hot"], bool(lab["memory"]), label_slots, memory_ok):
                 counts["keine_labels"] += 1
                 continue
             grid = gridstore.beats_with_tempo(own["beats"], own["segments"] or [], 0.0, own["bpm"])
@@ -195,6 +212,9 @@ def build_tasks(cfg: dict, items: list[dict], leads: dict, out_dir: str, force: 
             tasks.append({"path": path, "grid": grid, "phrases": own["phrases"], "phrases_edited": edited,
                           "duration": it["duration"],
                           "hot": lab["hot"], "memory": lab["memory"], "key": key, "out_path": out_path,
+                          "label_slots": dict(label_slots if label_slots is not None
+                                              else labels_mod.DEFAULT_LABEL_SLOTS),
+                          "memory_ok": bool(memory_ok),
                           "max_seconds": MAX_MINUTES * 60.0})
     finally:
         conn.close()
@@ -238,8 +258,9 @@ def _export_one(task: dict) -> tuple[str, str, str]:
         limit = lattice.time_of_bar(end_bar) - 0.05 if end_bar is not None else float("inf")
         hot = {int(k): t for k, t in task["hot"].items() if t < limit}
         memory = [t for t in task["memory"] if t < limit]
-        if 1 not in hot or 3 not in hot:
-            return path, "skip", "Hot A/C im Ausklang"
+        from app.autocue.training.labels import usable
+        if not usable(hot, bool(memory), task.get("label_slots"), bool(task.get("memory_ok"))):
+            return path, "skip", "Hand-Cues nur im Ausklang"
         hot_kinds = np.asarray(sorted(hot), dtype=np.int16)
         hot_times = np.asarray([hot[int(k)] for k in hot_kinds], dtype=np.float64)
         hot_bars = np.asarray([lattice.nearest_bar(t) for t in hot_times], dtype=np.int32)
@@ -275,7 +296,7 @@ def _export_one(task: dict) -> tuple[str, str, str]:
         return path, "fail", f"{type(exc).__name__}: {str(exc)[:80]}"
 
 
-def export(tasks: list[dict], workers: int, progress=None) -> dict:
+def export(tasks: list[dict], workers: int, progress=None, cancel=None) -> dict:
     from app import config as cfgmod
     counts = {"ok": 0, "skip": 0, "fail": 0}
     failures = []
@@ -286,6 +307,7 @@ def export(tasks: list[dict], workers: int, progress=None) -> dict:
                              initargs=(str(cfgmod.base_dir()),)) as ex:
         futures = [ex.submit(_export_one, t) for t in tasks]
         for i, f in enumerate(as_completed(futures), 1):
+            _check_cancel(cancel, futures)
             path, status, msg = f.result()
             counts[status] += 1
             if status != "ok":

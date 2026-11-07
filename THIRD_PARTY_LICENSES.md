@@ -72,6 +72,11 @@ Mitgelieferte Bibliotheken in `vendor/libs/` (Lizenzen laut Projektangaben):
 | PyYAML | 6.0.3 | MIT | Konfiguration |
 | rich | 15.0.0 | MIT | Terminal-Ausgabe |
 | PyObjC (Cocoa, Core) | 13.0 | MIT | macOS-App-Hülle |
+| LightGBM | 4.7.0 | MIT | Auto-Cue-Training in der App (nur beim Training geladen; Auto Cue selbst wertet die Bäume ohne LightGBM aus, `app/autocue/trees.py`) |
+| SciPy (nur `scipy.sparse` und Grundmodule) | 1.18.1 | BSD-3-Clause (gebündelte Fortran-Laufzeit: GPL-3.0 mit GCC-Runtime-Ausnahme) | Abhängigkeit von LightGBM |
+| narwhals | 2.28.0 | MIT | Abhängigkeit von LightGBM |
+
+LightGBM braucht die OpenMP-Laufzeit **libomp** (LLVM-Projekt, Homebrew-Formel `libomp`), die über den Ladepfad von `lib_lightgbm.dylib` mit ins Bundle kommt: Apache-2.0 mit LLVM-Ausnahme, Text in [licenses/native/libomp/](licenses/native/libomp/), Quelle <https://openmp.llvm.org>. Sie wird nur beim Training geladen; ist das macOS älter als das, für das diese Bibliothek gebaut ist, bietet die App kein Training an.
 
 Dazu kommen mitgebündelte Abhängigkeiten dieser Pakete (u. a. SQLAlchemy, sqlcipher3-wheels, construct, bidict, protobuf, flatbuffers, psutil, Pygments, markdown-it-py, python-dateutil, six, typing_extensions, tzdata) mit ihren Lizenztexten in [licenses/python/](licenses/python/).
 
@@ -83,7 +88,6 @@ Die Laufzeit des Pakets (CPython) steht unter der PSF-Lizenz 2.0; zum Bündeln d
 |---|---|---|
 | Lucide-Icons (`app/webui/lucide-icons.js`) | ISC (Text in [licenses/ui/](licenses/ui/lucide-LICENSE.txt)) | <https://lucide.dev> · <https://github.com/lucide-icons/lucide/blob/main/LICENSE> |
 | Spektralmerkmale für Auto Cue (`app/autocue/dsp.py`), Nachbau von Funktionen aus librosa 0.11 (STFT, Spektralform, Onset, Mel, Chroma mit Stimmungsschätzung); librosa selbst ist nicht gebündelt | ISC (Text in [licenses/ui/](licenses/ui/librosa-LICENSE.md)) | <https://github.com/librosa/librosa> |
-| LightGBM — nur zum Neu-Trainieren von Auto Cue im Entwicklungsordner (`requirements-train.txt`), nicht gebündelt (`tracktab.spec`: `excludes`); die App wertet die Bäume selbst aus (`app/autocue/trees.py`) | MIT | <https://github.com/microsoft/LightGBM> |
 | Beatgrid-Analyse (`app/beatgrid.py`) und Rekordbox-Analysedateien (`app/anlzwrite.py`), Python-Nachbauten von `crates/rbl-analysis` und `crates/rbl-anlz` aus rbxport | GPL-2.0-oder-später | <https://github.com/chrisle/rbxport> |
 
 ## 5. Hinweise

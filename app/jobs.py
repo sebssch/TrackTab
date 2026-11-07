@@ -18,7 +18,7 @@ from . import config as cfgmod
 from . import db as db_mod
 from . import scanner
 from . import tags as tags_mod
-from .analyzer import analyse_file
+from .analyzer import SPECTRAL_SKIPPED_REASON, analyse_file
 
 _BATCH = 200
 
@@ -75,14 +75,38 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
         if skip_spectral or skip_loudness:
             job_cfg = {**cfg, "_skip_spectral": skip_spectral,
                        "_skip_loudness": skip_loudness}
-        todo = [(p, s, m, job_cfg) for p, s, m in all_files
-                if not db_mod.is_current(cache, p, s, m)]
+        # Nachholen: unveraenderte Dateien, denen eine Messung fehlt, weil sie
+        # in einem frueheren Scan abgewaehlt war (Cutoff) bzw. fehlt (Lautheit),
+        # werden mitgemessen, sobald dieser Scan die Messung macht -- sonst
+        # blieben sie fuer immer "unbekannt" bzw. ohne LUFS, der Cache-
+        # Schluessel (Groesse, mtime) aendert sich ja nicht. Eine vorhandene
+        # Messung wird dabei nie verworfen: was die Zeile schon hat, wird auch
+        # bei abgewaehltem Schalter mitgemessen (analyse_file() ersetzt die
+        # ganze Zeile).
+        gaps = {} if force else db_mod.measurement_gaps(
+            conn, float(cfg["min_duration_s"]), SPECTRAL_SKIPPED_REASON)
+        todo = []
+        catchup = 0
+        for p, s, m in all_files:
+            if not db_mod.is_current(cache, p, s, m):
+                todo.append((p, s, m, job_cfg))
+                continue
+            gap = gaps.get(p)
+            if not gap:
+                continue
+            cut_missing, loud_missing = gap
+            if not ((cut_missing and not skip_spectral) or (loud_missing and not skip_loudness)):
+                continue
+            todo.append((p, s, m, {**cfg, "_skip_spectral": skip_spectral and cut_missing,
+                                   "_skip_loudness": skip_loudness and loud_missing}))
+            catchup += 1
         if limit:
             todo = todo[:limit]
 
         total = len(todo)
         result = {"found": len(all_files), "todo": total, "done": 0,
-                  "cancelled": False, "removed": 0, "renamed": len(renamed)}
+                  "cancelled": False, "removed": 0, "renamed": len(renamed),
+                  "catchup": catchup}
         report(0, total, "analysieren")
         if not total:
             if prune and not limit and not paths:

@@ -222,13 +222,11 @@ def defaults() -> dict:
                 {"min_khz": 15.50, "kbps": 128},
                 {"min_khz": 0.0, "kbps": 64},
             ],
-            # Platzhalter -- ungeprueft. AAC hat eine andere Lowpass-zu-Bitrate
-            # Kurve als LAME/MP3 und braucht eigene Kalibrierung: ./run.command
-            # calibrate, sobald AAC-Referenztracks in der DB vorhanden sind.
+            # An Apples Encoder gemessen (Herleitung in config.yaml).
             "aac": [
-                {"min_khz": 19.50, "kbps": 256},
-                {"min_khz": 18.50, "kbps": 192},
-                {"min_khz": 17.00, "kbps": 128},
+                {"min_khz": 19.80, "kbps": 256},
+                {"min_khz": 19.25, "kbps": 192},
+                {"min_khz": 16.60, "kbps": 128},
                 {"min_khz": 0.0, "kbps": 96},
             ],
         },
@@ -251,7 +249,6 @@ def defaults() -> dict:
         # Stabile Kante unterhalb davon im OK-Bereich -> Hinweis "aus einer
         # verlustbehafteten Quelle exportiert" (LAME 320 = 20,2 kHz).
         "lossless_source_max_khz": 21.0,
-        "aac_encoder": "aac",   # nativer ffmpeg-Encoder, ueberall verfuegbar
 
         # --- Lautheit (EBU R128 / ITU-R BS.1770 ueber ffmpeg 'loudnorm') ---
         # Reiner Hinweis, kein Verdikt: anders als der Encoder-Tiefpass hat
@@ -302,9 +299,6 @@ def defaults() -> dict:
         # und "rekordbox 7") legt dieser Pfad auch fest, welche fuer den
         # Bibliothekszugriff (master.db) verwendet wird
         "external_rekordbox": "",
-        # Name einer bereits bestehenden Rekordbox-Playlist -- wird NICHT
-        # angelegt, nur befuellt. Leer = Rekordbox-Knoepfe bleiben deaktiviert.
-        "rekordbox_playlist": "",
         # Prueft beim Hinzufuegen zu einer Rekordbox-Playlist den bereits
         # beim Scan gemessenen Cutoff jedes Tracks gegen rekordbox_min_cutoff_khz
         # -- unabhaengig von Verdikt oder manueller "corrected"-Markierung.
@@ -502,21 +496,25 @@ def defaults() -> dict:
         # Woher Beatgrid und Phrasen kommen: fallback (Rekordbox, sonst TrackTab)
         # | rekordbox | tracktab.
         "beatgrid_source": "fallback",
-        # Auto Cue (app/autocue/, Modelle in vendor/models/autocue/): Phrasen als
+        # Auto Cue (app/autocue/, eigene Modelle in models/autocue-library/): Phrasen als
         # Hinweis, Memory-Budget (Rekordbox: max. 10), Konfidenz-Schwellen je Rolle
         # (an den Modellen kalibriert, Vorgaben aus dem Autocue-Projekt) und die
         # Slot-Belegung (autocue/slots.py, Einstellungsseite "Auto Cue").
         "autocue_use_phrases": True,
-        "autocue_max_memory": 10,
-        "autocue_conf_default": 0.25,
-        "autocue_conf_intro_1": 0.3,
-        "autocue_conf_break1": 0.3,
-        "autocue_conf_drop1": 0.3,
-        "autocue_conf_break2": 0.3,
-        "autocue_conf_setup": 0.4,
-        "autocue_conf_drop2": 0.18,
-        "autocue_conf_outro_start": 0.3,
+        # Konfidenz je Rolle als Stufe (autocue/slots.py: CONFIDENCE_LEVELS), "normal" =
+        # an den Modellen kalibrierter Wert. Alte Zahlen uebernimmt _migrate_autocue_conf().
+        "autocue_conf_default": "normal",
+        "autocue_conf_intro_1": "normal",
+        "autocue_conf_break1": "normal",
+        "autocue_conf_drop1": "normal",
+        "autocue_conf_break2": "normal",
+        "autocue_conf_setup": "normal",
+        "autocue_conf_drop2": "normal",
+        "autocue_conf_outro_start": "normal",
         "autocue_slots": _autocue_slot_defaults(),
+        # Geltendes Modell: die id eines Eintrags der Modellbibliothek
+        # (autocue/library.py), leer = keins. Nur ueber die Einstellungsseite.
+        "autocue_model": "",
         # Stimmungen als Mood-Tag schreiben (TXXX:MOOD / MOOD): no | tag.
         "genremood_write_mood": "no",
 
@@ -569,6 +567,13 @@ def _read_yaml(path: Path) -> dict:
         return {}
 
 
+# Ungepruefte AAC-Platzhalter bis 2026-11. Das Speichern der Einstellungen hat
+# sie unveraendert nach config.local.yaml geschrieben (im Bundle steht config.yaml
+# ausserdem nur als einmalige Kopie im Datenordner) -- dort verdeckten sie die
+# kalibrierte Leiter. Genau diese Werte gelten deshalb als nie angefasst.
+_OLD_AAC_PLACEHOLDER = {(256, 19.5), (192, 18.5), (128, 17.0), (96, 0.0)}
+
+
 def _normalize_cutoff_classes(cfg: dict) -> None:
     """cutoff_classes ist eine Leiter je Codec-Familie ({"mp3": [...], ...}).
 
@@ -585,6 +590,9 @@ def _normalize_cutoff_classes(cfg: dict) -> None:
         classes = {"mp3": classes}
     for name, ladder in defaults()["cutoff_classes"].items():
         classes.setdefault(name, ladder)
+    if {(int(c["kbps"]), round(float(c["min_khz"]), 3))
+            for c in classes["aac"]} == _OLD_AAC_PLACEHOLDER:
+        classes["aac"] = defaults()["cutoff_classes"]["aac"]
     for name, ladder in classes.items():
         classes[name] = sorted(ladder, key=lambda c: float(c["min_khz"]), reverse=True)
     cfg["cutoff_classes"] = classes
@@ -654,6 +662,7 @@ def load() -> dict:
     _normalize_cutoff_classes(cfg)
     _normalize_columns(cfg)
     _migrate_energy_comment(cfg)
+    _migrate_autocue_conf(cfg)
     # "Nur Rekordbox" gibt es nicht mehr.
     if cfg.get("dj_waveform_source") == "rekordbox":
         cfg["dj_waveform_source"] = "fallback"
@@ -674,6 +683,18 @@ def _migrate_energy_comment(cfg: dict) -> None:
         return
     content = cfg.get("bpmkey_comment_content", "none")
     cfg["bpmkey_comment_content"] = _ENERGY_UPGRADE.get(content, content)
+
+
+def _migrate_autocue_conf(cfg: dict) -> None:
+    """Auto-Cue-Konfidenz war frueher eine Zahl je Rolle, jetzt eine Stufe. Gespeicherte
+    Zahlen werden zur naechsten Stufe (die kalibrierten Vorgaben = "normal");
+    "Memory Cues hoechstens" gibt es nicht mehr (fest 10)."""
+    from .autocue.slots import CONFIDENCE_KEYS, confidence_level
+    for k in CONFIDENCE_KEYS:
+        key = f"autocue_conf_{k}"
+        if key in cfg:
+            cfg[key] = confidence_level(k, cfg[key])
+    cfg.pop("autocue_max_memory", None)
 
 
 def reload() -> dict:

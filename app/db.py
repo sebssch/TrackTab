@@ -369,6 +369,30 @@ CREATE TABLE IF NOT EXISTS playlist_items (
     PRIMARY KEY (playlist_id, path)
 );
 CREATE INDEX IF NOT EXISTS idx_playlist_items_path ON playlist_items(path);
+
+-- Verknuepfte Playlisten (playlistsync.py): je TrackTab-Liste hoechstens eine
+-- Music.app- und eine Rekordbox-Playlist. state: ok / pending (Rekordbox lief)
+-- / broken (fremde Playlist weg).
+CREATE TABLE IF NOT EXISTS playlist_links (
+    playlist_id TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    ext_id      TEXT NOT NULL,
+    ext_name    TEXT,
+    state       TEXT DEFAULT 'ok',
+    error       TEXT,
+    synced_ts   REAL,
+    PRIMARY KEY (playlist_id, source)
+);
+-- Letzter abgeglichener Stand je Seite (side = tracktab / music / rekordbox).
+-- Als Zeilen statt JSON, damit move_path() die Pfade mitnimmt (_PATH_TABLES):
+-- sonst saehe ein von Music.app umsortierter Track wie "entfernt + neu" aus.
+CREATE TABLE IF NOT EXISTS playlist_link_items (
+    playlist_id TEXT NOT NULL,
+    side        TEXT NOT NULL,
+    path        TEXT NOT NULL,
+    PRIMARY KEY (playlist_id, side, path)
+);
+CREATE INDEX IF NOT EXISTS idx_playlist_link_items_path ON playlist_link_items(path);
 """
 
 _COLUMNS = [
@@ -597,6 +621,23 @@ def cached_keys(conn: sqlite3.Connection) -> dict[str, tuple[int, float]]:
     return {r["path"]: (r["size"], r["mtime"]) for r in cur}
 
 
+def measurement_gaps(conn: sqlite3.Connection, min_duration_s: float,
+                     spectral_marker: str) -> dict[str, tuple[bool, bool]]:
+    """Pfad -> (cutoff_fehlt, lautheit_fehlt) fuer fertige Zeilen, denen eine
+    Messung fehlt: Cutoff im Scan abgewaehlt (Grund = spectral_marker) bzw. kein
+    Lautheitswert (NULL oder 0.0 -- die Vorgabe in analyse_file(); eine echte
+    Messung ist nie genau 0 LUFS). Zu kurze Dateien bekommen nie Lautheit (analyse_file() endet
+    vorher) und zaehlen deshalb nicht. Ein fehlgeschlagener Lautheitswert wird
+    bewusst mitgezaehlt -- lieber erneut versuchen als still fehlen lassen."""
+    cur = conn.execute(
+        "SELECT path, instr(reasons, ?) > 0 AS cut,"
+        " (COALESCE(integrated_lufs, 0) = 0 AND COALESCE(duration_s, 0) >= ?) AS loud"
+        " FROM files WHERE status = 'ok'"
+        " AND (instr(reasons, ?) > 0 OR (COALESCE(integrated_lufs, 0) = 0 AND COALESCE(duration_s, 0) >= ?))",
+        (spectral_marker, min_duration_s, spectral_marker, min_duration_s))
+    return {r["path"]: (bool(r["cut"]), bool(r["loud"])) for r in cur}
+
+
 def is_current(cache: dict, path: str, size: int, mtime: float) -> bool:
     entry = cache.get(path)
     if entry is None:
@@ -767,7 +808,8 @@ def delete_cached_cover(conn: sqlite3.Connection, path: str) -> None:
 _PATH_TABLES = ("files", "ignored", "corrected", "waveform",
                 "rekordbox", "rekordbox_pending", "rekordbox_stem_pending",
                 "music_added", "cover_cache", "playlist_items", "dup_dismissed", "genremood", "user_tags",
-                "phrases", "dj_track", "waveform_color", "grid_tempo", "rb_snapshot", "autocue_log")
+                "phrases", "dj_track", "waveform_color", "grid_tempo", "rb_snapshot", "autocue_log",
+                "playlist_link_items")
 
 
 def move_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> bool:
@@ -1473,9 +1515,79 @@ def delete_playlist(conn: sqlite3.Connection, playlist_id: str) -> list[str]:
         return []
     marks = ",".join("?" * len(ids))
     conn.execute(f"DELETE FROM playlist_items WHERE playlist_id IN ({marks})", ids)
+    conn.execute(f"DELETE FROM playlist_links WHERE playlist_id IN ({marks})", ids)
+    conn.execute(f"DELETE FROM playlist_link_items WHERE playlist_id IN ({marks})", ids)
     conn.execute(f"DELETE FROM playlists WHERE id IN ({marks})", ids)
     conn.commit()
     return ids
+
+
+# ── Verknuepfte Playlisten (siehe playlistsync.py) ─────────────────────────
+LINK_SOURCES = ("music", "rekordbox")
+LINK_SIDES = ("tracktab",) + LINK_SOURCES
+
+
+def playlist_links(conn: sqlite3.Connection, playlist_id: str | None = None) -> list[dict]:
+    """Alle Verknuepfungen (oder die einer Liste) als dicts."""
+    sql = "SELECT playlist_id, source, ext_id, ext_name, state, error, synced_ts FROM playlist_links"
+    args: tuple = ()
+    if playlist_id is not None:
+        sql += " WHERE playlist_id = ?"
+        args = (playlist_id,)
+    return [dict(r) for r in conn.execute(sql + " ORDER BY playlist_id, source", args)]
+
+
+def set_playlist_link(conn: sqlite3.Connection, playlist_id: str, source: str,
+                      ext_id: str | None, ext_name: str = "") -> None:
+    """Verknuepft (ext_id) oder trennt (None). Eine neue oder geaenderte Verknuepfung
+    beginnt ohne gemerkten Stand dieser Seite -- die erste Runde vereinigt nur.
+    Ohne jede Verknuepfung faellt auch der TrackTab-Stand weg."""
+    if source not in LINK_SOURCES:
+        raise ValueError(f"Unbekannte Quelle: {source}")
+    old = conn.execute("SELECT ext_id FROM playlist_links WHERE playlist_id = ? AND source = ?",
+                       (playlist_id, source)).fetchone()
+    if ext_id:
+        if old is None or old["ext_id"] != str(ext_id):
+            conn.execute("DELETE FROM playlist_link_items WHERE playlist_id = ? AND side = ?",
+                         (playlist_id, source))
+        conn.execute(
+            "INSERT OR REPLACE INTO playlist_links (playlist_id, source, ext_id, ext_name, state, error, synced_ts) "
+            "VALUES (?, ?, ?, ?, 'ok', NULL, ?)",
+            (playlist_id, source, str(ext_id), ext_name or "",
+             None if old is None or old["ext_id"] != str(ext_id) else time.time()))
+    else:
+        conn.execute("DELETE FROM playlist_links WHERE playlist_id = ? AND source = ?", (playlist_id, source))
+        conn.execute("DELETE FROM playlist_link_items WHERE playlist_id = ? AND side = ?", (playlist_id, source))
+    if not conn.execute("SELECT 1 FROM playlist_links WHERE playlist_id = ?", (playlist_id,)).fetchone():
+        conn.execute("DELETE FROM playlist_link_items WHERE playlist_id = ?", (playlist_id,))
+    conn.commit()
+
+
+def set_link_state(conn: sqlite3.Connection, playlist_id: str, source: str, state: str,
+                   error: str | None = None, synced: bool = False) -> None:
+    if synced:
+        conn.execute("UPDATE playlist_links SET state = ?, error = ?, synced_ts = ? "
+                     "WHERE playlist_id = ? AND source = ?",
+                     (state, error, time.time(), playlist_id, source))
+    else:
+        conn.execute("UPDATE playlist_links SET state = ?, error = ? WHERE playlist_id = ? AND source = ?",
+                     (state, error, playlist_id, source))
+    conn.commit()
+
+
+def link_baselines(conn: sqlite3.Connection, playlist_id: str) -> dict[str, set[str]]:
+    """{side: {pfad, ...}} -- fehlende Seiten als leere Menge."""
+    out: dict[str, set[str]] = {side: set() for side in LINK_SIDES}
+    for r in conn.execute("SELECT side, path FROM playlist_link_items WHERE playlist_id = ?", (playlist_id,)):
+        out.setdefault(r["side"], set()).add(r["path"])
+    return out
+
+
+def set_link_baseline(conn: sqlite3.Connection, playlist_id: str, side: str, paths) -> None:
+    conn.execute("DELETE FROM playlist_link_items WHERE playlist_id = ? AND side = ?", (playlist_id, side))
+    conn.executemany("INSERT OR IGNORE INTO playlist_link_items (playlist_id, side, path) VALUES (?, ?, ?)",
+                     [(playlist_id, side, p) for p in paths if p])
+    conn.commit()
 
 
 def set_playlist_items(conn: sqlite3.Connection, playlist_id: str,

@@ -34,6 +34,13 @@ def _hash_file(path: str) -> str:
         return ""
 
 
+# Grund-Text einer Zeile, deren Cutoff-Messung im Scan abgewaehlt war. Daran
+# erkennt jobs.run_scan() die Zeile wieder und misst beim naechsten Scan mit
+# Cutoff nach (db.measurement_gaps()) -- Text und Erkennung haengen an dieser
+# einen Konstante.
+SPECTRAL_SKIPPED_REASON = "Cutoff-Scan übersprungen"
+
+
 def analyse_file(job: tuple) -> dict:
     path, size, mtime, cfg = job
 
@@ -101,7 +108,7 @@ def analyse_file(job: tuple) -> dict:
         # verdict bleibt beim Default VERDICT_UNKNOWN aus der row-Vorlage oben.
         row["status"] = "ok"
         row["error"] = ""
-        row["reasons"] = ["Cutoff-Scan übersprungen"]
+        row["reasons"] = [SPECTRAL_SKIPPED_REASON]
     else:
         try:
             sr = spectral_mod.analyse(path, pr.sample_rate, pr.duration_s, cfg,

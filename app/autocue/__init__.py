@@ -19,13 +19,13 @@ Die Kette in acht Schritten, jeder baut nur auf dem vorigen auf:
     7  validate   jeden Hot-Cue-Anker unabhaengig pruefen
     8  placement  Cues nach der Slot-Belegung (slots.py) platzieren
 
-Modelle an zwei Orten (model_dir()): gebuendelt in vendor/models/autocue/ und aus
-einem eigenen Training in <base_dir>/models/autocue/ (app/autocue/training/,
-`./run.command autocue-train`). Es gilt der juengere nach manifest.json -- eine
-neuere App verdraengt so ein altes eigenes Training und umgekehrt. Ohne Modelle
-meldet available() False und die Oberflaeche blendet Auto Cue aus -- der
-Strukturfit allein waere deutlich schlechter (Autocue-Doku M-010), deshalb kein
-Rueckfall.
+Modelle (model_dir()): nur eigene, in der Bibliothek
+<base_dir>/models/autocue-library/ (library.py: Training in der App oder per
+`./run.command autocue-train`, ZIP-Import). Ein mitgeliefertes Modell gibt es
+nicht mehr -- jede Installation trainiert nach ihren eigenen Cues. Es gilt das
+in config["autocue_model"] gewaehlte. Ohne Modell meldet available() False und
+die Oberflaeche sperrt Auto Cue -- der Strukturfit allein waere deutlich
+schlechter (Autocue-Doku M-010), deshalb kein Rueckfall.
 """
 from __future__ import annotations
 
@@ -39,24 +39,24 @@ from app import config as cfgmod
 # parallele Laeufe aus mehreren Server-Threads wuerden nur Speicher kosten.
 _LOCK = threading.Lock()
 
-_MODEL_FILES = ("features.json", "calibration.json", "drop2.npz", "break1.npz",
-                "chain_drop1.npz", "chain_break1.npz", "chain_break2.npz")
+# Pflicht: Grundmodelle. Die Kette ist optional -- ein Training ohne Memory Cues
+# (oder ohne Beispiele fuer eine Rolle) laesst ihr Modell weg, Auto Cue sucht die
+# Stelle dann ueber die Strukturanalyse (anchors.py) bzw. die Outro-Regel.
+_MODEL_FILES = ("features.json", "calibration.json", "drop2.npz", "break1.npz")
+_CHAIN_MODEL_FILES = ("chain_drop1.npz", "chain_break1.npz", "chain_break2.npz", "chain_outro.npz")
 
 
 MANIFEST = "manifest.json"
 
 
-def bundled_dir() -> str:
-    return str(cfgmod.vendor_dir() / "models" / "autocue")
-
-
 def trained_dir() -> str:
-    """Ziel eines eigenen Trainings dieser Instanz (beschreibbar, auch im Bundle)."""
+    """Frueherer Ort des einzigen eigenen Modells. Nur noch Quelle der einmaligen
+    Uebernahme in die Bibliothek (library.migrate())."""
     return str(cfgmod.base_dir() / "models" / "autocue")
 
 
-def complete(folder: str) -> bool:
-    return all(os.path.exists(os.path.join(folder, f)) for f in _MODEL_FILES)
+def complete(folder: str | None) -> bool:
+    return bool(folder) and all(os.path.exists(os.path.join(folder, f)) for f in _MODEL_FILES)
 
 
 def manifest(folder: str) -> dict:
@@ -75,24 +75,25 @@ def manifest(folder: str) -> dict:
         return {}
 
 
-def model_dir() -> str:
-    """Der juengere vollstaendige Ordner von eigenem Training und Bundle."""
-    own, bundled = trained_dir(), bundled_dir()
-    if not complete(own):
-        return bundled
-    if not complete(bundled):
-        return own
-    stamp = lambda folder: str(manifest(folder).get("trained_at") or "")  # noqa: E731
-    return own if stamp(own) >= stamp(bundled) else bundled
+def model_dir(cfg: dict | None = None) -> str:
+    """Ordner des geltenden Modells (config["autocue_model"], library.py) oder ""
+    ohne gewaehltes, vollstaendiges Modell."""
+    from app.autocue import library
+    library.migrate()
+    chosen = library.folder_of(library.active_id(cfg))
+    return chosen if complete(chosen) else ""
 
 
-def model_info() -> dict:
-    """Fuer die Einstellungsseite: welches Modell gilt und woher es kommt."""
-    folder = model_dir()
+def model_info(cfg: dict | None = None) -> dict:
+    """Fuer die Einstellungsseite: welches Modell gilt, Name und Herkunft."""
+    from app.autocue import library
+    folder = model_dir(cfg)
     if not complete(folder):
         return {}
-    info = manifest(folder)
-    return {**info, "origin": "trained" if folder == trained_dir() else "bundled"}
+    for entry in library.entries(cfg):
+        if os.path.normpath(library.folder_of(entry["id"]) or "") == os.path.normpath(folder):
+            return entry
+    return {}
 
 
 def available() -> bool:
@@ -100,8 +101,13 @@ def available() -> bool:
 
 
 def min_confidence(cfg: dict) -> dict:
-    from app.autocue.slots import CONFIDENCE_KEYS
-    return {k: float(cfg.get(f"autocue_conf_{k}", 0.25)) for k in CONFIDENCE_KEYS}
+    """Schwelle je Rolle aus der Stufe (autocue_conf_<rolle>, slots.confidence_threshold())."""
+    from app.autocue.slots import CONFIDENCE_KEYS, confidence_threshold
+    return {k: confidence_threshold(k, cfg.get(f"autocue_conf_{k}", "normal")) for k in CONFIDENCE_KEYS}
+
+
+# Rekordbox fuehrt hoechstens 10 Memory Cues -- fest, keine Einstellung.
+MAX_MEMORY = 10
 
 
 def _tracktab_cue(cue) -> dict:
@@ -114,6 +120,65 @@ def _tracktab_cue(cue) -> dict:
     return {"kind": "hot", "slot": int(cue.kind), "label": "ABCDEFGH"[cue.kind - 1], "name": cue.name,
             "position_s": pos, "loop_s": None,
             "color": list(cue.color) if cue.color else [109, 223, 70]}
+
+
+# Von Hand bearbeitete Phrasen sind ein fester Indikator: die Stellen, die Phrasen-
+# anfaenge sind (Drops, Breaks, Outro), rasten auf die naechste Phrasengrenze ein,
+# wenn sie hoechstens SNAP_MAX_BARS entfernt liegt -- eine Korrektur, kein Sprung in
+# eine andere Phrase. "Korrekt gesetzt" heisst: die Grenze liegt auf einer Takt-1
+# (Toleranz ein Viertel Schlag); eine Grenze mitten im Takt zaehlt nicht, sonst zoege
+# sie einen richtigen Cue mit (an der Pruefliste gesehen: Grenze 1 s vor Takt 33,
+# Hand-Cue auf Takt 32). Beat-Einsatz, Builds und Gerechnetes bleiben unberuehrt.
+SNAP_MAX_BARS = 4
+SNAP_ROLES = ("drop1", "drop2", "break1", "break2", "outro_start")
+
+
+def phrase_boundaries(phrases, lattice) -> dict:
+    """{"grid": Takte der Phrasenanfaenge auf einer Takt-1, "loose": naechster Takt der
+    uebrigen (mitten im Takt gesetzt)}, je sortiert. Leer = nichts einzurasten."""
+    tol = 0.25 * float(lattice.beat_duration)
+    grid, loose = set(), set()
+    for p in phrases or []:
+        if p.get("start") is None:
+            continue
+        t = float(p["start"])
+        bar = lattice.nearest_bar(t)
+        (grid if abs(t - lattice.time_of_bar(bar)) <= tol else loose).add(bar)
+    return {"grid": sorted(grid), "loose": sorted(loose)} if grid else {}
+
+
+def _nearest(boundaries: dict, bar: int) -> int | None:
+    """Naechste saubere Grenze in Reichweite. Liegt eine mitten im Takt gesetzte Grenze
+    naeher, ist die Phrase dort nicht verlaesslich -- dann kein Einrasten."""
+    grid = boundaries.get("grid") or []
+    if not grid:
+        return None
+    best = min(grid, key=lambda b: (abs(b - bar), b))
+    loose = boundaries.get("loose") or []
+    if loose and min(abs(b - bar) for b in loose) < abs(best - bar):
+        return None
+    return best if abs(best - bar) <= SNAP_MAX_BARS else None
+
+
+def _snap_decoded(dec, boundaries: dict):
+    import dataclasses
+    if dec.role not in SNAP_ROLES:
+        return dec
+    hit = _nearest(boundaries, int(dec.bar))
+    return dataclasses.replace(dec, bar=hit) if hit is not None else dec
+
+
+def snap_anchors(anchors, boundaries: dict, lattice) -> None:
+    """Erkannte (nicht gerechnete) Anker auf die naechste bearbeitete Phrasengrenze."""
+    for name, a in list(anchors.anchors.items()):
+        if a.derived or name not in SNAP_ROLES:
+            continue
+        hit = _nearest(boundaries, a.bar)
+        if hit is None:
+            anchors.notes.append(f"{name}: keine bearbeitete Phrasengrenze in der Naehe, bleibt bei Takt {a.bar}")
+        elif hit != a.bar:
+            a.reason += f"; auf Phrasengrenze eingerastet ({hit - a.bar:+d} Takte)"
+            a.bar, a.time_sec = int(hit), lattice.time_of_bar(hit)
 
 
 def analyse(path: str, beats: list, phrases: list, duration: float, cfg: dict,
@@ -154,21 +219,29 @@ def analyse(path: str, beats: list, phrases: list, duration: float, cfg: dict,
     with _LOCK:
         # MODEL_DIR ist modulweit: nur unter _LOCK setzen, sonst rechnete ein paralleler
         # Lauf mit dem Modell eines anderen.
-        learned.MODEL_DIR = models or model_dir()
+        learned.MODEL_DIR = models or model_dir(cfg)
         sources = load_sources(path, max_seconds)
         features = extract_bar_features(lattice, sources)
         del sources
-        use_phrases = bool(cfg.get("autocue_use_phrases", True))
+        # Automatische Phrasen nur als Hinweis (Schalter), bearbeitete gelten immer.
+        use_phrases = bool(cfg.get("autocue_use_phrases", True)) or phrases_edited
         evidence = collect_evidence(lattice, phrases, use_phrases=use_phrases)
         end_bar, end_reason = (music_end(features["rms"], lattice.bar_times,
                                          phrases if (use_phrases or phrases_edited) else None, phrases_edited)
                                if features.has("rms") else (None, "kein Pegel"))
         structure = fit_structure(features, evidence, lattice)
-        learned_dec = learned.predict_anchors(features, evidence, lattice)
+        learned_dec = learned.predict_anchors(features, evidence, lattice, music_end=end_bar)
+        boundaries = phrase_boundaries(phrases, lattice) if phrases_edited else []
+        if boundaries:
+            # Vor extract_anchors(), damit Gerechnetes (Build 8 Takte vor Drop 2 ...)
+            # vom eingerasteten Anker ausgeht.
+            learned_dec = {k: _snap_decoded(d, boundaries) for k, d in learned_dec.items()}
         anchors = extract_anchors(structure, features, lattice, learned=learned_dec)
+        if boundaries:
+            snap_anchors(anchors, boundaries, lattice)
         validate_anchors(anchors, features, lattice)
         placement = build_cues(anchors, features, lattice,
-                               max_memory_cues=max(0, min(10, int(cfg.get("autocue_max_memory", 10)))),
+                               max_memory_cues=MAX_MEMORY,
                                min_confidence=min_confidence(cfg),
                                slots=SlotPlan(cfg.get("autocue_slots") or slot_defaults()),
                                music_end=end_bar)

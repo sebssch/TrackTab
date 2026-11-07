@@ -246,10 +246,17 @@ def load_models(model_dir: str = "", force: bool = False) -> LearnedModels | Non
     """Modelle laden, je Ordnerstand einmal. None, wenn keine da sind -- das ist kein Fehler."""
     global _MODELS, _MODELS_KEY
     model_dir = model_dir or MODEL_DIR
+    if not model_dir:
+        return None                         # kein Modell gewaehlt (autocue.model_dir())
     key = _dir_stamp(model_dir)
     if key == _MODELS_KEY and not force:
         return _MODELS
     _MODELS_KEY, _MODELS = key, None
+    _MODELS = _build_models(model_dir)
+    return _MODELS
+
+
+def _build_models(model_dir: str) -> LearnedModels | None:
     paths = model_paths(model_dir)
     try:
         meta = _meta(model_dir)
@@ -264,10 +271,10 @@ def load_models(model_dir: str = "", force: bool = False) -> LearnedModels | Non
         boosters = {role: trees.load(paths[role]) for role in ROLES if os.path.exists(paths[role])}
         if not boosters:
             return None
-        _MODELS = LearnedModels(boosters=boosters, calibrators=_calibrators(model_dir, "bar"),
-                                feature_names=list(bar["feature_names"]), meta=bar)
+        models = LearnedModels(boosters=boosters, calibrators=_calibrators(model_dir, "bar"),
+                               feature_names=list(bar["feature_names"]), meta=bar)
         log.info("Gelerntes Anker-Modell geladen: %s", ", ".join(sorted(boosters)))
-        return _MODELS
+        return models
     except Exception as exc:
         log.warning("Anker-Modell nicht ladbar (%s) -- Anker kommen aus dem Strukturfit", exc)
         return None
@@ -371,7 +378,8 @@ def decode(curves: dict[str, np.ndarray], n_bars: int,
 
 def decode_with_models(curves: dict[str, np.ndarray], n_bars: int) -> dict[str, Decoded]:
     models = load_models()
-    return decode(curves, n_bars, models.calibrators if models else None)
+    gap = int(models.meta.get("min_a_to_c_bars", MIN_A_TO_C_BARS)) if models else MIN_A_TO_C_BARS
+    return decode(curves, n_bars, models.calibrators if models else None, gap)
 
 
 # ----------------------------------------------------------------------------
@@ -409,6 +417,13 @@ CHAIN_FILES = {
 # Chorus, mal Down, mal Outro und taugt deshalb nicht als Kriterium.
 OUTRO_CANDIDATE_BARS = (8, 16, 24, 32)
 OUTRO_DEFAULT_BARS = 16
+# Eigenes Training: das Outro darf ueberall nach Drop 2 liegen (Extended Mixes:
+# +32, +64 ...), begrenzt nur durch den Ausklang. Die Regel nimmt den Abstand,
+# den die eigenen Outro-Cues typischerweise haben (chain.learned_outro()).
+OUTRO_FULL_RANGE = tuple(range(8, 129, 8))
+# Ein Outro braucht mindestens so viele Takte bis zum Ausklang (tail.music_end());
+# ist der Rest nach Drop 2 kuerzer, gibt es ein kurzes oder gar keins.
+OUTRO_MIN_BARS = 4
 # Das Outro ist nie leise: nach dem Hand-Cue liegt der Pegel im Mittel bei 102 %
 # des Drop-2-Pegels, bei den leisesten 10 % noch bei 76 %. Kandidaten darunter
 # sind Ausklingen oder Stille.
@@ -424,15 +439,17 @@ CHAIN_OVERRIDES: dict = {}
 
 
 def position_labels(drop_hint, break_hint, build_hint, mem_bars, a_bar: int | None,
-                    c_bar: int | None) -> dict[str, int | None]:
+                    c_bar: int | None, end_bar: int | None = None,
+                    outro_target: int = OUTRO_DEFAULT_BARS) -> dict[str, int | None]:
     """
     Welcher Memory Cue ist Drop 1, Break 2, Outro? Takt-Indizes oder None.
 
     Drop 1   der erste Chorus-Phrasenstart nach Hot A -- aber nur, wenn dort ein
              Memory Cue sitzt (sonst ist der Track mehrdeutig und zaehlt nicht).
     Break 2  der erste Down/Up-Phrasenstart nach Drop 1, ebenfalls nur mit Cue.
-    Outro    der Memory Cue nach Drop 2, der +16 Takten (64 Beats) am naechsten
-             liegt, innerhalb von +4 bis +40 Takten. Braucht keine Phrasen.
+    Outro    der Memory Cue nach Drop 2, der +outro_target Takten (Vorgabe 16) am
+             naechsten liegt, ab +4 Takten bis zum Ausklang (end_bar; ohne: +40).
+             Braucht keine Phrasen.
 
     Die Phrasenkurven sind die aus evidence.collect_evidence() (drop_hint = 1 an
     jedem Chorus-Start, break_hint = 1 an Down, build_hint >= 0.4 an Up).
@@ -442,9 +459,10 @@ def position_labels(drop_hint, break_hint, build_hint, mem_bars, a_bar: int | No
         return out
     mem = {int(b) for b in mem_bars}
 
-    after = sorted(m for m in mem if c_bar + 4 <= m <= c_bar + 40)
+    limit = end_bar - OUTRO_MIN_BARS if end_bar is not None and end_bar > 0 else c_bar + 40
+    after = sorted(m for m in mem if c_bar + 4 <= m <= limit)
     if after:
-        out["outro_start"] = min(after, key=lambda m: abs(m - (c_bar + OUTRO_DEFAULT_BARS)))
+        out["outro_start"] = min(after, key=lambda m: abs(m - (c_bar + outro_target)))
 
     if a_bar is None or drop_hint is None or len(drop_hint) == 0:
         return out
@@ -507,9 +525,11 @@ def chain_matrix(role: str, X: np.ndarray, base_names: list[str], drop2_bar: int
     return np.concatenate(blocks, axis=1).astype(np.float32), names
 
 
-def chain_window(role: str, n_bars: int, drop2_bar: int, drop1_bar: int | None = None
-                 ) -> list[int]:
-    """Die Takte, unter denen ein Kettenmodell waehlen darf."""
+def chain_window(role: str, n_bars: int, drop2_bar: int, drop1_bar: int | None = None,
+                 outro_bars: tuple = OUTRO_CANDIDATE_BARS, music_end: int | None = None) -> list[int]:
+    """Die Takte, unter denen ein Kettenmodell waehlen darf. outro_bars: Kandidaten
+    nach Drop 2 (Vorgabe; ein eigenes Training legt sie fest). music_end: Takt, ab
+    dem nur noch der Ausklang laeuft -- ein Outro braucht davor OUTRO_MIN_BARS."""
     if role == "drop1":
         return list(range(DROP1_MIN_BAR, max(DROP1_MIN_BAR, drop2_bar - DROP1_GAP_BARS)))
     if role == "break1":
@@ -519,7 +539,9 @@ def chain_window(role: str, n_bars: int, drop2_bar: int, drop1_bar: int | None =
             return []
         return list(range(drop1_bar + 1, drop2_bar))
     if role == "outro_start":
-        return [drop2_bar + k for k in OUTRO_CANDIDATE_BARS if drop2_bar + k < n_bars - 1]
+        limit = music_end if music_end is not None and music_end > 0 else n_bars
+        return [drop2_bar + int(k) for k in outro_bars
+                if drop2_bar + int(k) < n_bars - 1 and drop2_bar + int(k) + OUTRO_MIN_BARS <= limit]
     raise ValueError(role)
 
 
@@ -542,6 +564,8 @@ def load_chain_models(model_dir: str = "", force: bool = False) -> ChainModels |
     """Kettenmodelle laden, je Ordnerstand einmal. None, wenn keine da sind -- dann Rueckfall."""
     global _CHAIN, _CHAIN_KEY
     model_dir = model_dir or MODEL_DIR
+    if not model_dir:
+        return None
     key = _dir_stamp(model_dir)
     if key == _CHAIN_KEY and not force:
         return _CHAIN
@@ -606,7 +630,9 @@ def _pick(chain: ChainModels | None, role: str, curve: np.ndarray, window: list[
                    confidence=_calibrated(chain, role, p) * scale)
 
 
-def outro_by_rule(rms, n_bars: int, drop2_bar: int, confidence: float) -> Decoded | None:
+def outro_by_rule(rms, n_bars: int, drop2_bar: int, confidence: float,
+                  outro_bars: tuple = OUTRO_CANDIDATE_BARS,
+                  default_bars: int = OUTRO_DEFAULT_BARS, music_end: int | None = None) -> Decoded | None:
     """
     Outro ohne Modell: Ende des 16-taktigen Drop-2-Chorus.
 
@@ -614,14 +640,14 @@ def outro_by_rule(rms, n_bars: int, drop2_bar: int, confidence: float) -> Decode
     Stille), wird der naechste lautere Kandidat im 8-Takt-Raster genommen --
     zuerst frueher, dann spaeter.
     """
-    window = chain_window("outro_start", n_bars, drop2_bar)
+    window = chain_window("outro_start", n_bars, drop2_bar, outro_bars=outro_bars, music_end=music_end)
     if not window:
         return None
     level = level_after(rms, drop2_bar) if rms is not None else np.ones(n_bars, np.float32)
     loud = [b for b in window if level[b] >= OUTRO_MIN_LEVEL]
     if not loud:
         return None
-    default = drop2_bar + OUTRO_DEFAULT_BARS
+    default = drop2_bar + int(default_bars)
     bar = min(loud, key=lambda b: (abs(b - default), b))
     return Decoded(role="outro_start", bar=int(bar), prob=1.0, margin=0.0,
                    confidence=float(confidence))
@@ -629,7 +655,7 @@ def outro_by_rule(rms, n_bars: int, drop2_bar: int, confidence: float) -> Decode
 
 def decode_chain(X: np.ndarray, names: list[str], rms, n_bars: int, drop2: Decoded,
                  break1_curve: np.ndarray | None = None,
-                 chain: ChainModels | None = None) -> dict[str, Decoded]:
+                 chain: ChainModels | None = None, music_end: int | None = None) -> dict[str, Decoded]:
     """
     Drop 1, Break 1, Break 2 und Outro in fester Reihenfolge nach Drop 2.
 
@@ -673,21 +699,25 @@ def decode_chain(X: np.ndarray, names: list[str], rms, n_bars: int, drop2: Decod
             out["break2"] = b2
 
     outro = None
+    outro_bars = tuple(chain.setting("outro_candidates", OUTRO_CANDIDATE_BARS)) if chain else OUTRO_CANDIDATE_BARS
+    outro_default = int(chain.setting("outro_default", OUTRO_DEFAULT_BARS)) if chain else OUTRO_DEFAULT_BARS
     if (chain is not None and "outro_start" in chain.boosters
             and chain.setting("outro_mode", "rule") == "model"):
         curve = _predict_chain(chain, "outro_start", X, names, c, None, rms)
         level = level_after(rms, c) if rms is not None else np.ones(n_bars, np.float32)
-        window = [b for b in chain_window("outro_start", n_bars, c) if level[b] >= OUTRO_MIN_LEVEL]
+        window = [b for b in chain_window("outro_start", n_bars, c, outro_bars=outro_bars, music_end=music_end)
+                  if level[b] >= OUTRO_MIN_LEVEL]
         outro = _pick(chain, "outro_start", curve, window, scale)
     if outro is None:
         rule_rate = float(chain.meta.get("outro_rule_hit", 0.8)) if chain else 0.8
-        outro = outro_by_rule(rms, n_bars, c, scale * rule_rate)
+        outro = outro_by_rule(rms, n_bars, c, scale * rule_rate, outro_bars, outro_default, music_end)
     if outro is not None:
         out["outro_start"] = outro
     return out
 
 
-def predict_anchors(features: BarFeatures, evidence, lattice: Lattice) -> dict[str, Decoded]:
+def predict_anchors(features: BarFeatures, evidence, lattice: Lattice,
+                    music_end: int | None = None) -> dict[str, Decoded]:
     """
     Laufzeit: alle gelernten Anker eines Tracks. Leeres Dict ohne Grundmodelle.
 
@@ -699,8 +729,9 @@ def predict_anchors(features: BarFeatures, evidence, lattice: Lattice) -> dict[s
         return {}
     X, names = design_matrix_for(features, evidence, lattice)
     curves = predict_curves_from_matrix(X, names, models)
-    dec = decode(curves, n, models.calibrators)
+    dec = decode(curves, n, models.calibrators,
+                 int(models.meta.get("min_a_to_c_bars", MIN_A_TO_C_BARS)))
     if "drop2" in dec:
         rms = features["rms"] if features.has("rms") else None
-        dec.update(decode_chain(X, names, rms, n, dec["drop2"], curves.get("break1")))
+        dec.update(decode_chain(X, names, rms, n, dec["drop2"], curves.get("break1"), music_end=music_end))
     return dec

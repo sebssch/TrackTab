@@ -6,6 +6,7 @@ Sammelt die Lizenztexte der gebuendelten Drittanbieter-Software nach licenses/
   - licenses/gnu/       GPL-2.0, GPL-3.0, LGPL-2.1, LGPL-3.0 (aus der Homebrew-FFmpeg-Installation)
   - licenses/python/    Lizenzdateien der im .venv installierten Laufzeit-Pakete
   - licenses/ffmpeg-libs/  Lizenzdateien der Bibliotheken in vendor/libs (aus Homebrew)
+  - licenses/native/    weitere native Bibliotheken im Bundle (libomp fuer LightGBM, aus Homebrew)
 
 Aufruf (im Projektordner):  .venv/bin/python collect_licenses.py
 Vor jedem Release erneut laufen lassen, wenn sich Abhaengigkeiten geaendert haben.
@@ -27,6 +28,8 @@ LICENSE_NAME = re.compile(r"(licen[cs]e|copying|notice|authors)", re.I)
 # Homebrew-Formeln der Bibliotheken in vendor/libs.
 BREW = ["ffmpeg", "x264", "x265", "lame", "mpg123", "opus", "libvpx", "dav1d",
         "svt-av1", "libvmaf", "openssl@4", "xz"]
+# Weitere Homebrew-Bibliotheken im Bundle, die nicht zu FFmpeg gehoeren.
+NATIVE = ["libomp"]
 
 
 def brew_prefix(name):
@@ -44,7 +47,7 @@ def copy_files(files, dest):
 
 def main():
     # Nur die erzeugten Ordner neu aufbauen -- licenses/ui/ wird von Hand gepflegt.
-    for generated in ("gnu", "python", "ffmpeg-libs"):
+    for generated in ("gnu", "python", "ffmpeg-libs", "native"):
         shutil.rmtree(OUT / generated, ignore_errors=True)
 
     ff = brew_prefix("ffmpeg")
@@ -83,6 +86,16 @@ def main():
             files = [prefix / "LICENSE.md"]
         copy_files([f for f in files if f.exists()], OUT / "ffmpeg-libs" / formula)
 
+    # libomp (OpenMP fuer LightGBM, Auto-Cue-Training): kommt ueber den rpath von
+    # lib_lightgbm.dylib aus Homebrew ins Bundle (tracktab.spec).
+    for formula in NATIVE:
+        prefix = brew_prefix(formula)
+        if not prefix:
+            print("Homebrew-Formel nicht gefunden:", formula)
+            continue
+        copy_files([p for p in prefix.iterdir() if p.is_file() and LICENSE_NAME.search(p.name)],
+                   OUT / "native" / formula)
+
     (OUT / "README.md").write_text(
         "# Lizenztexte\n\nLizenztexte der Drittanbieter-Software, die TrackTab nutzt oder "
         "mitliefert. Uebersicht und Quellen: [../THIRD_PARTY_LICENSES.md](../THIRD_PARTY_LICENSES.md). "
@@ -90,6 +103,7 @@ def main():
         "- `gnu/` — GPL-2.0, GPL-3.0, LGPL-2.1, LGPL-3.0\n"
         "- `python/` — Python-Pakete (je Paket ein Ordner)\n"
         "- `ffmpeg-libs/` — FFmpeg und seine Bibliotheken in `vendor/libs`\n"
+        "- `native/` — weitere native Bibliotheken (libomp fuer das Auto-Cue-Training)\n"
         "- `ui/` — Bestandteile der Oberflaeche (von Hand gepflegt)\n",
         encoding="utf-8")
     n = sum(1 for _ in OUT.rglob("*") if _.is_file())

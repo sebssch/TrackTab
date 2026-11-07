@@ -1,10 +1,10 @@
 """
 Werkzeug fuers Training: LightGBM, isotonische Kalibrierung und Faltungen.
 
-LightGBM ist die einzige zusaetzliche Abhaengigkeit des Trainings
-(requirements-train.txt) und wird nur hier importiert -- die App selbst wertet die
-Baeume ohne LightGBM aus (app/autocue/trees.py) und bekommt es nie ins Bundle
-(tracktab.spec: excludes). scikit-learn brauchte das Original nur fuer zwei
+LightGBM ist die einzige zusaetzliche Abhaengigkeit des Trainings und wird nur
+hier importiert -- Auto Cue selbst wertet die Baeume ohne LightGBM aus
+(app/autocue/trees.py). Im Bundle ist es enthalten, damit die App trainieren kann
+(Einstellungen -> Auto Cue -> Training), geladen wird es aber erst beim Training. scikit-learn brauchte das Original nur fuer zwei
 Kleinigkeiten, die hier in numpy stehen:
 
   Isotonic   sklearn IsotonicRegression(y_min=0, y_max=1, out_of_bounds="clip"):
@@ -29,11 +29,29 @@ class MissingLightGBM(RuntimeError):
 def lightgbm():
     try:
         import lightgbm as lgb
-    except ImportError as exc:
+    except (ImportError, OSError) as exc:          # OSError: libomp nicht ladbar
         raise MissingLightGBM(
-            "LightGBM fehlt -- fuer das Training einmalig installieren: "
-            ".venv/bin/pip install -r requirements-train.txt") from exc
+            "LightGBM fehlt oder laesst sich nicht laden -- im Entwicklungsordner: "
+            ".venv/bin/pip install -r requirements.txt") from exc
     return lgb
+
+
+_AVAILABLE: bool | None = None
+
+
+def available() -> bool:
+    """Laesst sich LightGBM hier wirklich laden? Echter Import (rund 0,1 s, einmal je
+    Prozess): im Bundle haengt das an libomp und scipy, deren Builds ein
+    Mindest-macOS haben, das ueber dem der App liegen kann. Dann gibt es eben kein
+    Training, der Rest der App laeuft weiter."""
+    global _AVAILABLE
+    if _AVAILABLE is None:
+        try:
+            lightgbm()
+            _AVAILABLE = True
+        except Exception:                          # noqa: BLE001 -- jede Ladeursache heisst: nicht verfuegbar
+            _AVAILABLE = False
+    return _AVAILABLE
 
 
 def threads() -> int:

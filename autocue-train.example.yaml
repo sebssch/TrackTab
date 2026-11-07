@@ -11,13 +11,21 @@ instance: installed
 training_playlist: "Training"     # aus diesen Tracks wird gelernt (je mehr, desto besser)
 check_playlist: "Prüfliste"       # an diesen Tracks wird gemessen, nie gelernt
 
-# Wohin das neue Modell nach der Rueckfrage kommt:
-#   vendor    vendor/models/autocue/ -- geht mit der naechsten DMG mit
-#   instance  <instance>/models/autocue/ -- dort sofort aktiv
-# Eine ZIP zum Laden in der App (Einstellungen -> Auto Cue -> Modell laden)
-# entsteht immer, mit Protokoll und Modell in autocue-training/runs/<zeit>/
-# in diesem Ordner (gitignored).
-targets: [vendor]
+# Name des neuen Modells (Liste unter Einstellungen -> Auto Cue -> Modelle).
+name: ""
+
+# Was gelernt wird, kommt aus der Slot-Belegung der Instanz (Einstellungen ->
+# Auto Cue), wie in der App. Drop 2 und Break 1 muessen dort auf einem Hot Cue
+# liegen. Nur zum Ausprobieren laesst sich hier eine feste Hot-Cue-Zuordnung
+# setzen (A..H); Pflicht drop2 + break1, optional drop1, break2, outro_start --
+# die uebrigen lernen dann aus den Memory Cues.
+# label_slots: {drop2: C, break1: A}
+
+# Nach der Rueckfrage kommt das neue Modell in die Modellbibliothek der Instanz
+# und wird dort ausgewaehlt (ein mitgeliefertes Modell gibt es nicht). Eine ZIP
+# zum Laden in der App (Einstellungen -> Auto Cue -> Modell importieren) entsteht
+# immer, mit Protokoll und Modell in autocue-training/runs/<zeit>/ in diesem
+# Ordner (gitignored).
 
 # Faltungen der Kreuzvalidierung und Prozesse (0 = Kerne minus 2).
 folds: 5

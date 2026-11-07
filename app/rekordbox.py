@@ -30,6 +30,11 @@ from . import tags as tags_mod
 
 _BACKUP_PREFIX = "rekordbox-master-"
 _BACKUP_KEEP = 10
+# Sicherungen beim Neuoeffnen der Lese-Verbindung: eigener Praefix (sonst
+# verdraengen sie die vor einem Schreibzugriff), seltener, weniger behalten.
+_READ_BACKUP_PREFIX = "rekordbox-read-"
+_READ_BACKUP_KEEP = 3
+_READ_BACKUP_EVERY = 30 * 60
 
 _HOT_CUE_LETTERS = "ABCDEFGH"
 
@@ -193,33 +198,142 @@ def _stub_pyrekordbox_config(pyrekordbox_mod) -> None:
             pyrb_config.__config__[section] = {"_tracktab_stub": True}
 
 
-def _backup_master_db(src: Path) -> Path:
+def _db_stamp(db_path: Path | None = None) -> tuple:
+    """Stand von master.db UND master.db-wal (mtime, Groesse). Rekordbox laeuft im
+    WAL-Modus: was seit dem letzten Checkpoint geschrieben wurde, steht nur in der
+    Nebendatei, die Hauptdatei behaelt ihren alten Zeitstempel (an echtem Material:
+    Hauptdatei einen Tag aelter als die Nebendatei)."""
+    db_path = db_path or _resolve_master_db_path()
+    out = []
+    for p in (db_path, Path(f"{db_path}-wal")):
+        try:
+            st = p.stat()
+            out.append((st.st_mtime_ns, st.st_size))
+        except OSError:
+            out.append(None)
+    return tuple(out)
+
+
+def _prune_backups(dest_dir: Path, prefix: str, keep: int) -> None:
+    backups = sorted(dest_dir.glob(f"{prefix}*.db"))
+    for p in backups[:-keep] if keep else backups:
+        p.unlink(missing_ok=True)
+        Path(f"{p}-wal").unlink(missing_ok=True)
+
+
+def _backup_master_db(src: Path, db=None, prefix: str = _BACKUP_PREFIX,
+                      keep: int = _BACKUP_KEEP) -> Path:
     """
-    Rohe Dateikopie von master.db bei JEDEM Oeffnen -- lesend wie schreibend,
-    nicht nur vor einem Schreibzugriff. Behaelt die juengsten
-    _BACKUP_KEEP Stueck, aeltere werden automatisch geloescht.
+    Vollstaendige Sicherung der master.db samt dem, was nur im WAL steht. Mit
+    offener Verbindung 'db' ueber VACUUM INTO (wie rbxport: eine eigenstaendige,
+    weiterhin verschluesselte Datei aus einem konsistenten Lese-Stand, auch wenn
+    Rekordbox gerade schreibt; an echtem Material rund 1 s fuer 110 MB). Ohne
+    Verbindung oder wenn VACUUM scheitert: master.db UND master.db-wal roh kopiert
+    (zusammen wieder lesbar; konsistent nur, solange niemand schreibt). Frueher
+    wurde nur master.db kopiert -- der Sicherung fehlte dadurch alles seit dem
+    letzten Checkpoint. Behaelt die juengsten 'keep' Stueck je Praefix.
     """
     dest_dir = cfgmod.resolve("backup") / "rekordbox"
     dest_dir.mkdir(parents=True, exist_ok=True)
-    dest = dest_dir / f"{_BACKUP_PREFIX}{time.strftime('%Y%m%d-%H%M%S')}.db"
-    shutil.copyfile(src, dest)
-    backups = sorted(dest_dir.glob(f"{_BACKUP_PREFIX}*.db"))
-    for p in backups[:-_BACKUP_KEEP]:
-        p.unlink(missing_ok=True)
+    base = f"{prefix}{time.strftime('%Y%m%d-%H%M%S')}"
+    dest = dest_dir / f"{base}.db"
+    n = 1
+    while dest.exists():
+        n += 1
+        dest = dest_dir / f"{base}-{n}.db"
+    done = False
+    if db is not None:
+        tmp = dest_dir / f".{dest.name}.tmp"
+        tmp.unlink(missing_ok=True)
+        try:
+            raw = db.engine.raw_connection()
+            try:
+                cur = raw.cursor()
+                cur.execute("VACUUM INTO ?", (str(tmp),))
+                cur.close()
+            finally:
+                raw.close()
+            os.replace(tmp, dest)
+            done = True
+        except Exception:                              # noqa: BLE001
+            tmp.unlink(missing_ok=True)
+    if not done:
+        shutil.copyfile(src, dest)
+        wal = Path(f"{src}-wal")
+        if wal.is_file() and wal.stat().st_size:
+            shutil.copyfile(wal, Path(f"{dest}-wal"))
+    _prune_backups(dest_dir, prefix, keep)
     return dest
 
 
-def _open(pyrekordbox_mod):
+# Eine Sicherung je Nutzeraktion statt je Schreibzugriff (Sammelaktionen oeffnen
+# die master.db je Abschnitt neu). Der Server klammert eine Aktion mit
+# backup_session(token); innerhalb desselben Tokens wird nur dann erneut
+# gesichert, wenn sich master.db seit unserem letzten Schreiben veraendert hat
+# (Rekordbox zwischendurch gestartet und wieder beendet). So bleibt die Sicherung
+# genau der Stand VOR der Aktion, ohne fremde Aenderungen zu verlieren.
+_session = threading.local()
+_session_backup = {"token": None, "stamp": None}
+_session_lock = threading.Lock()
+
+
+class backup_session:
+    """with rekordbox.backup_session(token): ... -- leeres Token = ohne Klammer."""
+
+    def __init__(self, token: str | None):
+        self.token = str(token or "") or None
+
+    def __enter__(self):
+        self.prev = getattr(_session, "token", None)
+        _session.token = self.token
+        return self
+
+    def __exit__(self, *exc):
+        _session.token = self.prev
+        return False
+
+
+def _needs_backup() -> bool:
+    token = getattr(_session, "token", None)
+    if not token:
+        return True
+    with _session_lock:
+        return not (_session_backup["token"] == token and _session_backup["stamp"] is not None
+                    and _session_backup["stamp"] == _db_stamp())
+
+
+def _note_session(stamp: tuple | None) -> None:
+    token = getattr(_session, "token", None)
+    with _session_lock:
+        if not token:
+            _session_backup.update(token=None, stamp=None)
+        else:
+            _session_backup.update(token=token, stamp=stamp)
+
+
+def _open(pyrekordbox_mod, backup: bool = True):
+    """Frische Verbindung fuer einen Schreibzugriff, vorher (s.o.) eine Sicherung."""
     try:
         db_path = _resolve_master_db_path()
-        _backup_master_db(db_path)
         _stub_pyrekordbox_config(pyrekordbox_mod)
-        return pyrekordbox_mod.MasterDatabase(path=db_path)
+        db = pyrekordbox_mod.MasterDatabase(path=db_path)
     except RekordboxUnavailable:
         raise
     except Exception as exc:                          # noqa: BLE001
         raise RekordboxUnavailable(
             f"Rekordbox-Datenbank konnte nicht geoeffnet werden: {exc}") from exc
+    if backup and _needs_backup():
+        try:
+            _backup_master_db(db_path, db)
+        except Exception as exc:                      # noqa: BLE001
+            # Ohne Sicherung wird nicht geschrieben.
+            try:
+                db.close()
+            except Exception:                         # noqa: BLE001
+                pass
+            raise RekordboxUnavailable(f"Sicherung der Rekordbox-Datenbank fehlgeschlagen: {exc}") from exc
+        _note_session(None)
+    return db
 
 
 def _with_malformed_retry(pyrekordbox_mod, fn):
@@ -238,7 +352,7 @@ def _with_malformed_retry(pyrekordbox_mod, fn):
     """
     db = _open(pyrekordbox_mod)
     try:
-        return fn(db)
+        result = fn(db)
     except Exception as exc:                          # noqa: BLE001
         if not _is_stale_cache_error(exc):
             raise
@@ -247,13 +361,17 @@ def _with_malformed_retry(pyrekordbox_mod, fn):
         except Exception:                              # noqa: BLE001
             pass
         time.sleep(1.0)
-        db = _open(pyrekordbox_mod)
-        return fn(db)
+        db = _open(pyrekordbox_mod, backup=False)     # Sicherung von eben gilt
+        result = fn(db)
     finally:
         try:
             db.close()
         except Exception:                              # noqa: BLE001
             pass
+    # Stand nach UNSEREM Schreiben (nach dem Schliessen: SQLite checkpointet dabei
+    # ggf. das WAL), siehe backup_session.
+    _note_session(_db_stamp())
+    return result
 
 
 def _live(row) -> bool:
@@ -330,7 +448,8 @@ def collection_paths() -> set[str]:
         lambda db: {c.FolderPath for c in db.get_content() if c.FolderPath and _live(c)})
 
 
-_cached_db = None            # (MasterDatabase, master_db_path, mtime)
+_cached_db = None            # (MasterDatabase, master_db_path, _db_stamp())
+_last_read_backup = 0.0
 _cache_lock = threading.Lock()
 # Die gecachte Verbindung ist EINE SQLAlchemy-Session -- nicht thread-sicher.
 # Der Server bedient Anfragen parallel (mehrere aufgeklappte Zeilen holen
@@ -349,21 +468,31 @@ def _open_cached(pyrekordbox_mod):
     Abfrage (potenziell eine pro im Player aufgeklappter Zeile) unnoetig
     teuer.
     """
-    global _cached_db
+    global _cached_db, _last_read_backup
     db_path = _resolve_master_db_path()
-    mtime = db_path.stat().st_mtime
+    # Schluessel mit WAL: Rekordbox schreibt laufend nur in master.db-wal, ein Blick
+    # auf die Hauptdatei allein sah diese Aenderungen nie. Neu geoeffnet wird auch
+    # deshalb, weil eine lange offene Sitzung auf einem alten Lese-Stand stehen kann.
+    stamp = _db_stamp(db_path)
     with _cache_lock:
-        if _cached_db is not None and _cached_db[1] == db_path and _cached_db[2] == mtime:
+        if _cached_db is not None and _cached_db[1] == db_path and _cached_db[2] == stamp:
             return _cached_db[0]
         if _cached_db is not None:
             try:
                 _cached_db[0].close()
             except Exception:                          # noqa: BLE001
                 pass
-        _backup_master_db(db_path)
         _stub_pyrekordbox_config(pyrekordbox_mod)
         db = pyrekordbox_mod.MasterDatabase(path=db_path)
-        _cached_db = (db, db_path, mtime)
+        # Lesend nur selten sichern und getrennt von den Sicherungen vor einem
+        # Schreibzugriff (die sonst von Lese-Sicherungen verdraengt wuerden).
+        if time.time() - _last_read_backup > _READ_BACKUP_EVERY:
+            try:
+                _backup_master_db(db_path, db, _READ_BACKUP_PREFIX, _READ_BACKUP_KEEP)
+                _last_read_backup = time.time()
+            except Exception:                          # noqa: BLE001
+                pass
+        _cached_db = (db, db_path, stamp)
         return db
 
 
@@ -1081,6 +1210,38 @@ def _grid_from_start(beats: list[list], audio_start_ms: int = 0) -> list[list]:
     return head + beats
 
 
+def _update_in(db, path: str, cues, beats, phrases, now) -> dict:
+    """Kern von update_track() in einer offenen Sitzung, ohne commit. beats schon
+    ueber _grid_from_start() auf Rekordbox' Achse."""
+    content = _live_content(db, path)
+    if content is None:
+        raise RuntimeError("Der Track steht nicht in der Rekordbox-Sammlung.")
+    written: list[str] = []
+    skipped: list[str] = []
+    if cues is not None:
+        _write_cues(db, content, cues, now)
+        written.append("cues")
+    wants_analysis = beats is not None or phrases is not None
+    if wants_analysis and not (content.Analysed and content.AnalysisDataPath):
+        skipped += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
+    elif wants_analysis:
+        _write_analysis(db, content, beats, phrases, now)
+        fields: dict = {"AnalysisUpdated": str(int(content.AnalysisUpdated or 0) + 1)}
+        if phrases is not None:
+            fields["ContentLink"] = int(content.ContentLink or 0) | _CONTENT_LINK_PSSI
+        if beats:
+            # Tempo des Tracks = haeufigstes Tempo im Grid, wie Rekordbox es anzeigt.
+            from collections import Counter
+            fields["BPM"] = int(round(Counter(round(b[2], 2) for b in beats).most_common(1)[0][0] * 100))
+        _touch(db, [content], now, **fields)
+        written += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
+    # Sperren, damit Rekordbox das Geschriebene nicht neu analysiert. Noch nicht
+    # analysierte Tracks nicht: das braeuchten sie erst noch.
+    if written and content.Analysed and not int(content.Analysed) & _ANALYSIS_LOCK_BIT:
+        _touch(db, [content], now, Analysed=int(content.Analysed) | _ANALYSIS_LOCK_BIT)
+    return {"written": written, "skipped": skipped}
+
+
 def update_track(path: str, *, cues: list[dict] | None = None,
                  beats: list[list] | None = None, phrases: list[dict] | None = None,
                  audio_start_ms: int = 0) -> dict:
@@ -1091,6 +1252,7 @@ def update_track(path: str, *, cues: list[dict] | None = None,
     Cues gehen immer (DjmdCue + contentCue). Beatgrid und Phrasen brauchen die ANLZ-
     Dateien, also eine Analyse durch Rekordbox: fehlt sie, stehen sie in "skipped".
     audio_start_ms: wo der Ton auf Rekordbox' Achse beginnt, siehe _grid_from_start().
+    Viele Tracks auf einmal: update_tracks().
     """
     _check_writable()
     pyrekordbox_mod = _import_pyrekordbox()
@@ -1099,35 +1261,61 @@ def update_track(path: str, *, cues: list[dict] | None = None,
 
     def _run(db):
         import datetime
-        now = datetime.datetime.now()
-        content = _live_content(db, path)
-        if content is None:
-            raise RuntimeError("Der Track steht nicht in der Rekordbox-Sammlung.")
-        written: list[str] = []
-        skipped: list[str] = []
-        if cues is not None:
-            _write_cues(db, content, cues, now)
-            written.append("cues")
-        wants_analysis = beats is not None or phrases is not None
-        if wants_analysis and not (content.Analysed and content.AnalysisDataPath):
-            skipped += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
-        elif wants_analysis:
-            _write_analysis(db, content, beats, phrases, now)
-            fields: dict = {"AnalysisUpdated": str(int(content.AnalysisUpdated or 0) + 1)}
-            if phrases is not None:
-                fields["ContentLink"] = int(content.ContentLink or 0) | _CONTENT_LINK_PSSI
-            if beats:
-                # Tempo des Tracks = haeufigstes Tempo im Grid, wie Rekordbox es anzeigt.
-                from collections import Counter
-                fields["BPM"] = int(round(Counter(round(b[2], 2) for b in beats).most_common(1)[0][0] * 100))
-            _touch(db, [content], now, **fields)
-            written += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
-        # Sperren, damit Rekordbox das Geschriebene nicht neu analysiert. Noch nicht
-        # analysierte Tracks nicht: das braeuchten sie erst noch.
-        if written and content.Analysed and not int(content.Analysed) & _ANALYSIS_LOCK_BIT:
-            _touch(db, [content], now, Analysed=int(content.Analysed) | _ANALYSIS_LOCK_BIT)
+        result = _update_in(db, path, cues, beats, phrases, datetime.datetime.now())
         db.commit()
-        return {"written": written, "skipped": skipped}
+        return result
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def update_tracks(items: list[dict]) -> dict:
+    """
+    update_track() fuer viele Tracks in EINER Sitzung: einmal oeffnen, einmal
+    sichern, je Track eine eigene Transaktion (wie rbxport: ein Fehler kostet nur
+    diesen Track, und pyrekordbox' commit() prueft vor jedem Track erneut, ob
+    Rekordbox gestartet wurde). items: {path, cues, beats, phrases, audio_start_ms}.
+    Liefert {"results": {pfad: {written, skipped}}, "errors": {pfad: meldung},
+    "stopped": meldung oder ""} -- "stopped": Rekordbox laeuft, Rest nicht geschrieben.
+    """
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+    prepared = []
+    for item in items:
+        beats = item.get("beats")
+        if beats:
+            beats = _grid_from_start(beats, item.get("audio_start_ms") or 0)
+        prepared.append((item["path"], item.get("cues"), beats, item.get("phrases")))
+
+    def _run(db):
+        import datetime
+        results: dict = {}
+        errors: dict = {}
+        stopped = ""
+        for path, cues, beats, phrases in prepared:
+            if path in results:
+                continue
+            try:
+                if is_running() or agent_running():
+                    raise RekordboxRunning(
+                        "Rekordbox wurde zwischendurch gestartet. Rekordbox beenden und erneut versuchen.")
+                results[path] = _update_in(db, path, cues, beats, phrases, datetime.datetime.now())
+                db.commit()
+            except RekordboxRunning as exc:
+                db.rollback()
+                results.pop(path, None)
+                stopped = str(exc)
+                break
+            except Exception as exc:                  # noqa: BLE001
+                try:
+                    db.rollback()
+                except Exception:                     # noqa: BLE001
+                    pass
+                results.pop(path, None)
+                if "Rekordbox is running" in str(exc):
+                    stopped = "Rekordbox wurde zwischendurch gestartet. Rekordbox beenden und erneut versuchen."
+                    break
+                errors[path] = str(exc)[:300]
+        return {"results": results, "errors": errors, "stopped": stopped}
 
     return _with_malformed_retry(pyrekordbox_mod, _run)
 
@@ -1193,81 +1381,109 @@ def _authored_analysis(path: str, beats: list[list], phrases: list[dict] | None,
     return built
 
 
-def add_track(path: str, row, cues: list[dict] | None, *, beats: list[list] | None = None,
-              phrases: list[dict] | None = None, lead: int | None = None,
-              audio_start_ms: int = 0) -> dict:
-    """Nimmt einen Track in die Rekordbox-Sammlung auf, mit Tags aus unserer DB-Zeile und
-    unseren Cues. Mit beats und bekanntem lead (Samples, anlzwrite.lead_samples()) auch mit
-    eigenen Analysedateien und Cover, Rekordbox muss dann nicht erst analysieren; ohne das
-    koennen Beatgrid und Phrasen erst nach Rekordbox' eigener Analyse folgen. Zeiten schon
-    auf Rekordbox' Achse. Liefert {"added", "written", "skipped"}."""
-    _check_writable()
-    pyrekordbox_mod = _import_pyrekordbox()
+def _prepare_new_track(path: str, *, beats: list[list] | None = None,
+                       phrases: list[dict] | None = None, lead: int | None = None,
+                       audio_start_ms: int = 0) -> dict:
+    """Schwerer Teil vor dem Oeffnen der master.db: eigene Analysedateien und Cover,
+    nur mit beats und bekanntem lead (Samples, anlzwrite.lead_samples()). Ergebnis
+    geht an _insert_track()."""
     authored = None
     if beats and lead is not None:
         beats = _grid_from_start(beats, audio_start_ms)
         authored = _authored_analysis(path, beats, phrases, lead)
-    cover = _cover_files(path) if authored else {}
+    return {"beats": beats, "phrases": phrases, "authored": authored,
+            "cover": _cover_files(path) if authored else {}}
+
+
+def _insert_track(db, path: str, row, cues: list[dict] | None, prep: dict, made: list[Path]):
+    """Legt einen der Sammlung noch unbekannten Track an: Tags aus unserer DB-Zeile,
+    mit prep (_prepare_new_track()) auch Analysedateien, Cover und Cues. Ohne commit;
+    angelegte Ordner landen in 'made', der Aufrufer raeumt sie bei einem Fehler weg.
+    Liefert (content, written)."""
+    import datetime
+    from collections import Counter
+    from pathlib import PurePosixPath
+
+    beats, phrases = prep.get("beats"), prep.get("phrases")
+    authored, cover = prep.get("authored"), prep.get("cover") or {}
+    content = _add_content_fresh(db, path, **_content_tag_kwargs(db, row))
+    if row is not None:
+        if row["sample_rate"]:
+            content.SampleRate = row["sample_rate"]
+        if row["declared_kbps"]:
+            content.BitRate = row["declared_kbps"]
+    written: list[str] = []
+    if authored:
+        content.BPM = int(round(Counter(round(b[2], 2) for b in beats).most_common(1)[0][0] * 100))
+        content.BitDepth = authored["depth"]
+        content.Length = int(round((row["duration_s"] if row is not None else 0) or authored["seconds"]))
+        rel = PurePosixPath("/PIONEER/USBANLZ") / _uuid_dir(content.UUID)
+        content.AnalysisDataPath = str(rel / "ANLZ0000.DAT")
+        content.Analysed = 105     # Rekordbox' Wert fuer vollstaendig analysiert
+        if phrases:
+            content.ContentLink = int(content.ContentLink or 0) | _CONTENT_LINK_PSSI
+        db.flush()
+        anlz_dir = Path(db.get_anlz_dir(content))
+        anlz_dir.mkdir(parents=True, exist_ok=False)
+        made.append(anlz_dir)
+        files: list[tuple[str, Path]] = []
+        for name, data in authored["files"].items():
+            (anlz_dir / name).write_bytes(data)
+            files.append((str(rel / name), anlz_dir / name))
+        if cover:
+            art_rel = PurePosixPath("/PIONEER/Artwork") / _uuid_dir(content.UUID)
+            art_dir = anlz_dir.parents[2] / "Artwork" / _uuid_dir(content.UUID)
+            art_dir.mkdir(parents=True, exist_ok=False)
+            made.append(art_dir)
+            for name, data in cover.items():
+                (art_dir / name).write_bytes(data)
+                files.append((str(art_rel / name), art_dir / name))
+            content.ImagePath = str(art_rel / "artwork.jpg")
+        template = _template_for_content_files(db)
+        if template is not None:
+            _add_content_files(db, template, content, files)
+        written.append("grid")
+        if phrases:
+            written.append("phrases")
+    db.flush()
+    if cues:
+        _write_cues(db, content, cues, datetime.datetime.now())
+        written.append("cues")
+    return content, written
+
+
+def _new_track_skipped(prep: dict, written: list[str]) -> list[str]:
+    """Felder, die mitkommen sollten, aber erst nach Rekordbox' eigener Analyse gehen."""
+    return [f for f, v in (("grid", prep.get("beats")), ("phrases", prep.get("phrases")))
+            if v and f not in written]
+
+
+def add_track(path: str, row, cues: list[dict] | None, *, beats: list[list] | None = None,
+              phrases: list[dict] | None = None, lead: int | None = None,
+              audio_start_ms: int = 0) -> dict:
+    """Nimmt einen Track in die Rekordbox-Sammlung auf (keine Playlist), mit Tags aus
+    unserer DB-Zeile und unseren Cues. Mit beats und bekanntem lead (Samples,
+    anlzwrite.lead_samples()) auch mit eigenen Analysedateien und Cover, Rekordbox muss
+    dann nicht erst analysieren; ohne das koennen Beatgrid und Phrasen erst nach
+    Rekordbox' eigener Analyse folgen. Zeiten schon auf Rekordbox' Achse. Liefert
+    {"added", "written", "skipped"}. Derselbe Weg wie add_tracks_to_playlist(prepared=...)."""
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+    prep = _prepare_new_track(path, beats=beats, phrases=phrases, lead=lead,
+                              audio_start_ms=audio_start_ms)
 
     def _run(db):
-        import datetime
-        from collections import Counter
-        from pathlib import PurePosixPath
-
         if _live_content(db, path) is not None:
             return {"added": False, "written": [], "skipped": []}
-        content = _add_content_fresh(db, path, **_content_tag_kwargs(db, row))
-        if row is not None:
-            if row["sample_rate"]:
-                content.SampleRate = row["sample_rate"]
-            if row["declared_kbps"]:
-                content.BitRate = row["declared_kbps"]
-        written: list[str] = []
         made: list[Path] = []
         try:
-            if authored:
-                content.BPM = int(round(Counter(round(b[2], 2) for b in beats).most_common(1)[0][0] * 100))
-                content.BitDepth = authored["depth"]
-                content.Length = int(round((row["duration_s"] if row is not None else 0) or authored["seconds"]))
-                rel = PurePosixPath("/PIONEER/USBANLZ") / _uuid_dir(content.UUID)
-                content.AnalysisDataPath = str(rel / "ANLZ0000.DAT")
-                content.Analysed = 105     # Rekordbox' Wert fuer vollstaendig analysiert
-                if phrases:
-                    content.ContentLink = int(content.ContentLink or 0) | _CONTENT_LINK_PSSI
-                db.flush()
-                anlz_dir = Path(db.get_anlz_dir(content))
-                anlz_dir.mkdir(parents=True, exist_ok=False)
-                made.append(anlz_dir)
-                files: list[tuple[str, Path]] = []
-                for name, data in authored["files"].items():
-                    (anlz_dir / name).write_bytes(data)
-                    files.append((str(rel / name), anlz_dir / name))
-                if cover:
-                    art_rel = PurePosixPath("/PIONEER/Artwork") / _uuid_dir(content.UUID)
-                    art_dir = anlz_dir.parents[2] / "Artwork" / _uuid_dir(content.UUID)
-                    art_dir.mkdir(parents=True, exist_ok=False)
-                    made.append(art_dir)
-                    for name, data in cover.items():
-                        (art_dir / name).write_bytes(data)
-                        files.append((str(art_rel / name), art_dir / name))
-                    content.ImagePath = str(art_rel / "artwork.jpg")
-                template = _template_for_content_files(db)
-                if template is not None:
-                    _add_content_files(db, template, content, files)
-                written.append("grid")
-                if phrases:
-                    written.append("phrases")
-            db.flush()
-            if cues:
-                _write_cues(db, content, cues, datetime.datetime.now())
-                written.append("cues")
+            _, written = _insert_track(db, path, row, cues, prep, made)
             db.commit()
         except Exception:
             for folder in made:
                 shutil.rmtree(folder, ignore_errors=True)
             raise
-        skipped = [f for f, v in (("grid", beats), ("phrases", phrases)) if v and f not in written]
-        return {"added": True, "written": written, "skipped": skipped}
+        return {"added": True, "written": written, "skipped": _new_track_skipped(prep, written)}
 
     return _with_malformed_retry(pyrekordbox_mod, _run)
 
@@ -1333,7 +1549,12 @@ def master_db_mtime() -> float | None:
     master.db seit dem letzten Statistik-Bau geaendert hat. None bei jedem
     Fehler (kein pyrekordbox, keine Installation gefunden)."""
     try:
-        return _resolve_master_db_path().stat().st_mtime
+        db_path = _resolve_master_db_path()
+        times = [db_path.stat().st_mtime]
+        wal = Path(f"{db_path}-wal")
+        if wal.exists():
+            times.append(wal.stat().st_mtime)      # Aenderungen stehen oft nur im WAL
+        return max(times)
     except Exception:                                  # noqa: BLE001
         return None
 
@@ -1805,7 +2026,8 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
                             metadata: dict | None = None,
                             playlist_id: str | None = None,
                             mytags: dict | None = None,
-                            mytag_category: str = "") -> dict:
+                            mytag_category: str = "",
+                            prepared: dict | None = None) -> dict:
     """
     Fuegt Tracks zu einer BESTEHENDEN Rekordbox-Playlist hinzu. Legt die
     Playlist nicht an -- ein unbekannter Name ist ein Fehler, kein Auto-Create.
@@ -1824,21 +2046,46 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
     bleiben unberuehrt. Fehlt die Spalte, werden die Tracks trotzdem
     hinzugefuegt; der Grund steht dann in "mytag_error".
 
+    'prepared' (optional, Pfad -> {cues, beats, phrases, lead, audio_start_ms}, alles
+    schon auf Rekordbox' Achse, siehe server._dj_rb_prepare()) gilt nur fuer Tracks,
+    die Rekordbox noch nicht kennt: sie kommen wie ueber add_track() mit eigenen
+    Analysedateien, Cover und Cues an. Schlaegt das Anlegen eines solchen Tracks fehl,
+    wird nichts geschrieben (sonst bliebe ein als analysiert markierter Track ohne
+    Analysedateien zurueck).
+
     Liefert {"added": [...], "skipped": [...], "errors": {pfad: meldung},
+    "created": [...], "written": {pfad: [felder]}, "partial": {pfad: [felder]},
     "playlist": name, "mytags": {"tracks", "added", "removed"},
-    "mytag_error": meldung oder None}.
+    "mytag_error": meldung oder None}. "created" = neu in der Sammlung.
     """
     metadata = metadata or {}
     playlist_name = (playlist_name or "").strip()
     playlist_id = str(playlist_id or "").strip()
     if not playlist_name and not playlist_id:
-        raise ValueError("Keine Rekordbox-Playlist eingestellt (Einstellungen -> "
-                          "Externe Programme).")
+        raise ValueError("Keine Rekordbox-Playlist angegeben.")
     _check_writable()
 
     pyrekordbox_mod = _import_pyrekordbox()
 
+    # Schwerer Teil (Analysedateien, Cover) vor dem Oeffnen der master.db.
+    preps: dict[str, dict] = {}
+    for path, item in (prepared or {}).items():
+        try:
+            preps[path] = {**_prepare_new_track(
+                path, beats=item.get("beats"), phrases=item.get("phrases"),
+                lead=item.get("lead"), audio_start_ms=item.get("audio_start_ms") or 0),
+                "cues": item.get("cues")}
+        except Exception:                                # noqa: BLE001
+            # Ohne eigene Analyse: nur Tags und Cues, Grid/Phrasen nach Rekordbox' Analyse.
+            preps[path] = {"beats": item.get("beats"), "phrases": item.get("phrases"),
+                           "authored": None, "cover": {}, "cues": item.get("cues")}
+    made: list[Path] = []
+
     def _run(db):
+        # Zweiter Versuch von _with_malformed_retry(): Reste des ersten wegraeumen.
+        for folder in made:
+            shutil.rmtree(folder, ignore_errors=True)
+        made.clear()
         if playlist_id:
             # Mit ID= liefert pyrekordbox direkt das Objekt (bzw. None), nicht
             # eine Abfrage mit .first().
@@ -1880,12 +2127,26 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
         added: list[str] = []
         skipped: list[str] = []
         errors: dict[str, str] = {}
+        created: list[str] = []
+        written: dict[str, list[str]] = {}
+        partial: dict[str, list[str]] = {}
         for path in paths:
+            content = _live_content(db, path)
+            if content is None and path in preps:
+                # Bewusst ohne eigenen try: ein Fehler bricht den ganzen Vorgang ab.
+                prep = preps[path]
+                content, fields = _insert_track(db, path, (metadata or {}).get(path),
+                                                prep.get("cues"), prep, made)
+                created.append(path)
+                written[path] = fields
+                missing = _new_track_skipped(prep, fields)
+                if missing:
+                    partial[path] = missing
             try:
-                content = _live_content(db, path)
                 if content is None:
                     content = _add_content_fresh(
                         db, path, **_content_tag_kwargs(db, metadata.get(path)))
+                    created.append(path)
                 if category is not None:
                     # Eigener try: ein Fehler bei den My Tags soll den Track
                     # nicht aus der Playlist halten.
@@ -1916,10 +2177,16 @@ def add_tracks_to_playlist(paths: list[str], playlist_name: str,
             _renumber(db, _live_songs(db, playlist.ID), now)
         db.commit()
         return {"added": added, "skipped": skipped, "errors": errors,
+                "created": created, "written": written, "partial": partial,
                 "playlist": playlist.Name or playlist_name,
                 "mytags": mytag_stats, "mytag_error": mytag_error}
 
-    return _with_malformed_retry(pyrekordbox_mod, _run)
+    try:
+        return _with_malformed_retry(pyrekordbox_mod, _run)
+    except Exception:
+        for folder in made:
+            shutil.rmtree(folder, ignore_errors=True)
+        raise
 
 
 def _playlist_by_id(db, playlist_id: str):
@@ -2039,6 +2306,170 @@ def reorder_playlist(playlist_id: str, entry_ids: list[str]) -> dict:
         _renumber(db, ordered, now)
         db.commit()
         return {"order": [str(s.ID) for s in ordered], "playlist": playlist.Name or ""}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def _node_by_id(db, node_id: str):
+    """Lebender Playlist-Knoten (Playlist, Ordner, Smart) per ID oder PlaylistNotFound."""
+    node = db.get_playlist(ID=str(node_id))
+    if node is not None and hasattr(node, "first"):
+        node = node.first()
+    if node is None or not _live(node):
+        raise PlaylistNotFound(
+            "Die Playlist existiert in Rekordbox nicht mehr. "
+            "Playlist-Ansicht neu laden und erneut versuchen.")
+    return node
+
+
+def _parent_folder(db, parent_id: str | None):
+    """None = oberste Ebene, sonst ein lebender Ordner."""
+    if not parent_id:
+        return None
+    parent = _node_by_id(db, parent_id)
+    if parent.Attribute != _RB_FOLDER:
+        raise PlaylistNotFound(f"„{parent.Name}“ ist kein Ordner.")
+    return parent
+
+
+def _live_children(db, parent_id: str | None) -> list:
+    """Lebende Knoten einer Ebene in ihrer Reihenfolge."""
+    nodes = [n for n in db.get_playlist(ParentID=str(parent_id or "root")) if _live(n)]
+    return sorted(nodes, key=lambda n: (n.Seq or 0, str(n.ID)))
+
+
+def _renumber_siblings(db, parent_id: str, now, nodes: list | None = None) -> None:
+    """Seq der lebenden Knoten einer Ebene lueckenlos 1..n, in der Reihenfolge von
+    'nodes' (sonst der bisherigen). pyrekordbox zaehlt beim Anlegen/Verschieben tote
+    Knoten mit; Rekordbox selbst nummeriert lueckenlos ab 1 (an echtem Material)."""
+    if nodes is None:
+        nodes = _live_children(db, parent_id)
+    changed = []
+    with db.registry.disabled():
+        for no, node in enumerate(nodes, start=1):
+            if node.Seq != no:
+                node.Seq = no
+                node.updated_at = now
+                changed.append(node)
+    if changed:
+        db.registry.on_move(changed)
+
+
+def create_playlist(name: str, parent_id: str | None = None, folder: bool = False) -> dict:
+    """Legt eine normale Playlist oder einen Ordner an, am Ende der Ebene (oberste
+    Ebene oder Ordner 'parent_id'). Smart Playlists legt TrackTab nicht an.
+    Liefert {"id", "name", "kind"}."""
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("Kein Name angegeben.")
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+
+    def _run(db):
+        import datetime
+        now = datetime.datetime.now()
+        parent = _parent_folder(db, parent_id)
+        make = db.create_playlist_folder if folder else db.create_playlist
+        node = make(name, parent=parent)
+        db.flush()
+        _renumber_siblings(db, parent.ID if parent is not None else "root", now)
+        db.commit()
+        return {"id": str(node.ID), "name": node.Name or name,
+                "kind": "folder" if folder else "playlist"}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def rename_playlist(node_id: str, name: str) -> dict:
+    """Benennt eine Playlist, einen Ordner oder eine Smart Playlist um."""
+    name = str(name or "").strip()
+    if not name:
+        raise ValueError("Kein Name angegeben.")
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+
+    def _run(db):
+        node = _node_by_id(db, node_id)
+        old = node.Name or ""
+        db.rename_playlist(node, name)
+        db.commit()
+        return {"id": str(node.ID), "name": name, "old": old}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def move_playlist(node_id: str, parent_id: str | None = None, before_id: str | None = None) -> dict:
+    """Verschiebt eine Playlist, einen Ordner oder eine Smart Playlist an eine neue
+    Stelle: in den Ordner 'parent_id' (None = oberste Ebene), vor den Knoten
+    'before_id' (None = ans Ende). Eigene Umsetzung statt pyrekordbox'
+    move_playlist(): die zaehlt tote Knoten bei Seq mit und laesst ParentId in
+    masterPlaylists6.xml stehen. Liefert {"id", "name", "parent"}."""
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+
+    def _run(db):
+        import datetime
+        now = datetime.datetime.now()
+        node = _node_by_id(db, node_id)
+        parent = _parent_folder(db, parent_id)
+        new_pid = str(parent.ID) if parent is not None else "root"
+        # Kein Ordner in sich selbst oder einen seiner Unterordner.
+        probe = parent
+        while probe is not None:
+            if str(probe.ID) == str(node.ID):
+                raise ValueError("Ein Ordner kann nicht in sich selbst verschoben werden.")
+            up = probe.ParentID
+            probe = None if up in (None, "", "root") else _node_by_id(db, up)
+        old_pid = str(node.ParentID or "root")
+        order = [n for n in _live_children(db, new_pid) if str(n.ID) != str(node.ID)]
+        at = next((i for i, n in enumerate(order) if before_id and str(n.ID) == str(before_id)), len(order))
+        order.insert(at, node)
+        if old_pid != new_pid:
+            _touch(db, [node], now, ParentID=new_pid)
+            if db.playlist_xml is not None and db.playlist_xml.get(node.ID) is not None:
+                db.playlist_xml.update(node.ID, parent_id=new_pid)
+        db.flush()
+        _renumber_siblings(db, new_pid, now, order)
+        if old_pid != new_pid:
+            _renumber_siblings(db, old_pid, now)
+        db.commit()
+        return {"id": str(node.ID), "name": node.Name or "",
+                "parent": None if new_pid == "root" else new_pid}
+
+    return _with_malformed_retry(pyrekordbox_mod, _run)
+
+
+def delete_playlist(node_id: str) -> dict:
+    """Loescht eine Playlist oder einen Ordner samt Inhalt WEICH wie Rekordbox selbst
+    (_soft_delete(): Knoten, alle Unterknoten und ihre Eintraege bleiben als tote
+    Zeilen stehen), nicht ueber pyrekordbox' delete_playlist() (loescht hart). Die
+    Tracks bleiben in der Sammlung. masterPlaylists6.xml fuehrt nur lebende Knoten
+    (an echtem Material: Rekordbox 7.2 pflegt sie weiter), die Knoten fliegen dort
+    raus. Liefert {"id", "name", "playlists", "entries"}."""
+    _check_writable()
+    pyrekordbox_mod = _import_pyrekordbox()
+
+    def _run(db):
+        import datetime
+        now = datetime.datetime.now()
+        node = _node_by_id(db, node_id)
+        nodes, todo = [], [node]
+        while todo:
+            current = todo.pop()
+            nodes.append(current)
+            todo.extend(c for c in db.get_playlist(ParentID=str(current.ID)) if _live(c))
+        songs = [s for n in nodes for s in db.get_playlist_songs(PlaylistID=str(n.ID)) if _live(s)]
+        _soft_delete(db, songs, now)
+        _soft_delete(db, nodes, now)
+        if db.playlist_xml is not None:
+            for n in nodes:
+                if db.playlist_xml.get(n.ID) is not None:
+                    db.playlist_xml.remove(n.ID)
+        db.flush()
+        _renumber_siblings(db, node.ParentID or "root", now)
+        db.commit()
+        return {"id": str(node.ID), "name": node.Name or "", "playlists": len(nodes),
+                "entries": len(songs)}
 
     return _with_malformed_retry(pyrekordbox_mod, _run)
 
@@ -2206,6 +2637,38 @@ _STEM_ANLZ_FILES = ("ANLZ0000.DAT", "ANLZ0000.EXT", "ANLZ0000.2EX")
 _WAVE_COLS_PER_S = 150
 
 
+def _pwv3_heights(path: str) -> bytes | None:
+    """Rohe Hoehenwerte der PWV3-Wellenform, an der playback_lead() misst. None =
+    nicht analysiert oder nicht lesbar."""
+    from pyrekordbox.anlz import AnlzFile
+
+    def _heights(db):
+        content = _live_content(db, path)
+        if content is None or not content.Analysed:
+            return None
+        ext = db.get_anlz_dir(content) / "ANLZ0000.EXT"
+        if not ext.is_file():
+            return None
+        anlz = AnlzFile.parse_file(ext)
+        if "PWV3" not in anlz:
+            return None
+        return bytes(anlz.get_tag("PWV3").content.entries)
+
+    return _query_cached(_import_pyrekordbox(), _heights)
+
+
+def lead_stamp(path: str) -> str:
+    """Pruefsumme dessen, wovon playback_lead() auf Rekordbox' Seite abhaengt (PWV3).
+    Gleich = der gemessene Versatz gilt noch, auch nach eigenen Schreibzugriffen
+    (die PWV3 nie anfassen); anders = Rekordbox hat neu analysiert. "" = nichts da."""
+    import hashlib
+    try:
+        raw = _pwv3_heights(path)
+    except Exception:                                   # noqa: BLE001
+        return "?"
+    return hashlib.md5(raw).hexdigest() if raw else ""
+
+
 def playback_lead(path: str, mix, sr: int = 44100) -> int:
     """Um wie viele Samples (bei `sr`) Rekordbox den Track `path` SPAETER
     abspielt, als ffmpeg ihn dekodiert (`mix`: (2, n) bzw. (n,) wie
@@ -2222,21 +2685,8 @@ def playback_lead(path: str, mix, sr: int = 44100) -> int:
     Kreuzkorrelation ueber -100..+200 ms, parabolisch verfeinert."""
     try:
         import numpy as np
-        from pyrekordbox.anlz import AnlzFile
 
-        def _heights(db):
-            content = _live_content(db, path)
-            if content is None or not content.Analysed:
-                return None
-            ext = db.get_anlz_dir(content) / "ANLZ0000.EXT"
-            if not ext.is_file():
-                return None
-            anlz = AnlzFile.parse_file(ext)
-            if "PWV3" not in anlz:
-                return None
-            return bytes(anlz.get_tag("PWV3").content.entries)
-
-        raw = _query_cached(_import_pyrekordbox(), _heights)
+        raw = _pwv3_heights(path)
         if not raw:
             return 0
         rb = (np.frombuffer(raw, dtype=np.uint8) & 0x1F).astype(np.float64)

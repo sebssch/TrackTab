@@ -355,23 +355,59 @@ def _model_phrases(data: dict, sr: int, ov: tuple, duration: float, beats: list)
     return out, mi
 
 
+def _check_length(path: str, max_seconds: float) -> None:
+    if not max_seconds:
+        return
+    try:
+        from mutagen import File
+        if float(File(path).info.length or 0) > max_seconds:
+            raise TooLongError(path)
+    except TooLongError:
+        raise
+    except Exception:                                  # noqa: BLE001
+        pass
+
+
+def _phrases_for(path: str, beats: list) -> tuple:
+    """(Phrasen, Stimmung) zu einer fertigen Beat-Liste (Zeit, Nummer, BPM)."""
+    sr, data = _decode_bands(path)
+    duration = len(data["st"]) / 2 / sr
+    return _model_phrases(data, sr, _overview(data), duration, beats)
+
+
+def analyse_on_grid(path: str, beats_tempo: list, max_seconds: float = 0.0) -> dict | None:
+    """Nur Phrasen, auf einem vorhandenen Beatgrid (Bearbeitung, Uebernahme aus Rekordbox
+    oder fruehere Messung) statt einem neu gemessenen. beats_tempo: [[ms, Nummer, BPM]]
+    wie gridstore.beats_with_tempo() (mit lead=0, also auf eigener Zeitachse). Fuer Tracks, bei denen
+    beatgrid.analyse() kein Tempo findet (Tempowechsel, Uebergaenge), deren Grid aber
+    von Hand gesetzt ist -- und damit die Phrasen genau auf dem Grid liegen, das gilt.
+
+    Antwort im Format von analyse(), aber ohne eigenes Grid ("beats" leer): gespeichert
+    wird es nur als Phrasen-Ergebnis, das Grid bleibt, wo es ist. None ohne Ergebnis."""
+    _check_length(path, max_seconds)
+    beats = [(b[0] / 1000.0, int(b[1]), float(b[2])) for b in beats_tempo]
+    if len(beats) < 2:
+        return None
+    phrases, mood = _phrases_for(path, beats)
+    tempos = sorted(b[2] for b in beats)
+    bpm = tempos[len(tempos) // 2]
+    # Das Modell kennt nur ein festes Raster (siehe Modulkopf): wechselt das Tempo
+    # spuerbar, ist das Ergebnis unsicher.
+    varies = tempos[int(0.95 * (len(tempos) - 1))] - tempos[int(0.05 * (len(tempos) - 1))] > bpm * 0.01
+    downbeat = next((b[0] for b in beats if b[1] == 1), beats[0][0])
+    return {"mode": "grid", "used": "grid", "bpm": round(float(bpm), 3), "confidence": None,
+            "first_beat": float(beats[0][0]), "downbeat": float(downbeat), "changes": [],
+            "phrases": phrases, "mood": mood, "uncertain": bool(varies), "beats": [],
+            "version": ANALYSIS_VERSION}
+
+
 def analyse(path: str, mode: str = "auto", max_seconds: float = 0.0) -> dict | None:
     """Beatgrid + Phrasen einer Datei. None, wenn sich kein Tempo finden laesst."""
-    if max_seconds:
-        try:
-            from mutagen import File
-            if float(File(path).info.length or 0) > max_seconds:
-                raise TooLongError(path)
-        except TooLongError:
-            raise
-        except Exception:                              # noqa: BLE001
-            pass
+    _check_length(path, max_seconds)
     grid = beatgrid.analyse(path, mode)
     if not grid:
         return None
-    sr, data = _decode_bands(path)
-    duration = len(data["st"]) / 2 / sr
-    phrases, mood = _model_phrases(data, sr, _overview(data), duration, grid["beats"])
+    phrases, mood = _phrases_for(path, grid["beats"])
     # float()/bool(): numpy-Werte lassen sich nicht als JSON senden.
     confidence = float(grid["confidence"])
     changes = [[round(float(t), 3), round(float(b), 2)] for t, b in grid["changes"]]

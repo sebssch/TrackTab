@@ -1,6 +1,8 @@
 """
-Format wechseln: MP3 320 kbit/s CBR (maximale LAME-Qualitaetsstufe) oder
-AIFF (verlustfrei, Bittiefe der Quelle erhalten).
+Format wechseln: MP3 320 kbit/s CBR (maximale LAME-Qualitaetsstufe), AAC
+256 kbit/s CBR in .m4a (Apples Encoder ueber afconvert wie Music.app,
+Rueckfall ffmpegs 'aac', siehe media.encode_aac()) oder AIFF (verlustfrei,
+Bittiefe der Quelle erhalten).
 
 Wie rewrite.py zuerst komplett bauen und pruefen, dann erst das Original
 anfassen -- hier zusaetzlich: die neue Datei traegt eine andere Endung,
@@ -29,8 +31,11 @@ from . import tags as tags_mod
 _ENCODE_TIMEOUT_S = 600
 
 TARGET_MP3_320 = "mp3_320"
+TARGET_AAC_256 = "aac_256"
 TARGET_AIFF = "aiff"
-TARGETS = (TARGET_MP3_320, TARGET_AIFF)
+TARGETS = (TARGET_MP3_320, TARGET_AAC_256, TARGET_AIFF)
+# 256 kbit/s = "iTunes Plus", die Qualitaet der Apple-Downloads.
+_AAC_KBPS = 256
 
 
 class ConvertError(RuntimeError):
@@ -63,6 +68,10 @@ def decide(codec_family: str, declared_kbps: int, suffix: str, target: str) -> t
     konvertiert werden"). Liegt sie schon als MP3 mit >= 320 kbit vor, gibt
     es nichts zu gewinnen (Generationsverlust ohne Nutzen).
 
+    Ziel AAC 256: dieselbe Regel mit 256 statt 320 -- verlustfrei immer,
+    verlustbehaftet nur ab 256 kbit deklariert (eine MP3 320 darf also nach
+    AAC 256). Eine AAC ab 256 liegt schon im Zielformat.
+
     Liefert (decision, reason) mit decision in {'allow', 'skip'} und reason
     in {'', 'upscale', 'already_target'}.
     """
@@ -79,13 +88,19 @@ def decide(codec_family: str, declared_kbps: int, suffix: str, target: str) -> t
         if codec_family == "lossy_mp3":
             return ("skip", "already_target") if declared_kbps >= 320 else ("skip", "upscale")
         return ("allow", "") if declared_kbps >= 320 else ("skip", "upscale")
+    if target == TARGET_AAC_256:
+        if codec_family == "lossless":
+            return "allow", ""
+        if codec_family == "lossy_aac":
+            return ("skip", "already_target") if declared_kbps >= _AAC_KBPS else ("skip", "upscale")
+        return ("allow", "") if declared_kbps >= _AAC_KBPS else ("skip", "upscale")
     raise ValueError(f"Unbekanntes Ziel: {target}")
 
 
 def convert_format(path: str, target: str, cfg: dict,
                     db_fallback: dict | None = None,
                     trash_original: bool = True) -> dict:
-    """Konvertiert 'path' nach 'target' (TARGET_MP3_320 | TARGET_AIFF).
+    """Konvertiert 'path' nach 'target' (TARGET_MP3_320 | TARGET_AAC_256 | TARGET_AIFF).
 
     db_fallback: optionale Metadaten aus der DB-Zeile (artist/title/album/
     album_artist/composer/genre/year/bpm/comment), fuer Felder, die die
@@ -130,13 +145,15 @@ def convert_format(path: str, target: str, cfg: dict,
         raise ConvertSkip("already_target", "Datei liegt bereits im Zielformat.")
 
     orig_duration = orig_probe.duration_s
-    target_suffix = ".mp3" if target == TARGET_MP3_320 else ".aiff"
+    target_suffix = {TARGET_MP3_320: ".mp3", TARGET_AAC_256: ".m4a"}.get(target, ".aiff")
     new_path = _unique_target(src.parent, src.stem, target_suffix)
 
     tmp = src.with_name(f".{src.stem}.aqc-{uuid.uuid4().hex[:8]}{target_suffix}")
     try:
         if target == TARGET_MP3_320:
             _encode_mp3_320(src, tmp, orig_probe.sample_rate)
+        elif target == TARGET_AAC_256:
+            _encode_aac(src, tmp)
         else:
             bit_depth = probe_mod.source_bit_depth(str(src))
             _encode_aiff(src, tmp, bit_depth)
@@ -147,7 +164,7 @@ def convert_format(path: str, target: str, cfg: dict,
                 f"Neu kodierte Datei wirkt beschädigt (Dauer {new_duration:.1f}s "
                 f"statt {orig_duration:.1f}s) — Original wurde nicht angefasst.")
 
-        _transfer_tags(src, tmp, orig_probe, db_fallback)
+        _transfer_tags(src, tmp, orig_probe, db_fallback, cfg)
 
         # Ab hier ist die neue Datei geprueft und vollstaendig -- erst jetzt
         # wird das Original beruehrt (bzw. bewusst NICHT, siehe trash_original).
@@ -262,6 +279,17 @@ def _mark_cbr(dst: Path) -> None:
             fh.write(b"Info")
 
 
+def _encode_aac(src: Path, dst: Path) -> None:
+    """AAC-LC 256 kbit/s CBR in .m4a ueber media.encode_aac() -- derselbe Weg
+    wie "Bitrate korrigieren" und calibrate: Apples Encoder ueber afconvert
+    (Float-Eingang, kein Clipping lauter Quellen), sonst ffmpegs 'aac'. Tags
+    und Cover kommen danach ueber _transfer_tags()."""
+    try:
+        media.encode_aac(src, dst, _AAC_KBPS, timeout=_ENCODE_TIMEOUT_S)
+    except media.EncodeError as exc:
+        raise ConvertError(str(exc)) from exc
+
+
 def _encode_aiff(src: Path, dst: Path, bit_depth: int) -> None:
     # AIFF ist ein Big-Endian-Container -- anders als WAV (Little-Endian).
     # pcm_s16le/pcm_s24le liefert ffmpeg dafuer klaglos eine kaputte Datei
@@ -292,7 +320,8 @@ _DB_FIELD_MAP = {
 }
 
 
-def _transfer_tags(src: Path, dst: Path, orig_probe, db_fallback: dict | None) -> None:
+def _transfer_tags(src: Path, dst: Path, orig_probe, db_fallback: dict | None,
+                   cfg: dict | None = None) -> None:
     """Metadaten und Cover von 'src' (bzw. der DB-Zeile als Rueckfallebene)
     auf 'dst' (die neu kodierte, noch namenlose Zieldatei) uebertragen.
 
@@ -303,6 +332,12 @@ def _transfer_tags(src: Path, dst: Path, orig_probe, db_fallback: dict | None) -
     ueberschreiben die generischen Feld-Writes unten gezielt die
     normalisierten Felder -- GEOB/PRIV bleiben davon unberuehrt, write_tags()
     setzt/loescht nur benannte Frames.
+
+    Tonart: der Wert aus der Datei unveraendert (key_raw, dieselbe
+    Schreibweise wie im Original), sonst aus der DB-Zeile (Camelot) in der
+    eingestellten Schreibweise (tags.key_file_value()). Stimmung: nur aus der
+    Datei (tags.read_mood()) -- ins Ziel kommt nur, was das Original schon
+    traegt, die Analyse schreibt die Stimmung ausschliesslich nach Einstellung.
 
     Fuer jede andere Quelle/Ziel-Kombination gibt es nichts zu bruecken:
     MP3/AAC/ALAC/FLAC-Container kennen kein GEOB/PRIV (ID3-exklusiv), und ein
@@ -334,6 +369,10 @@ def _transfer_tags(src: Path, dst: Path, orig_probe, db_fallback: dict | None) -
     if not track_total:
         track_total = fallback.get("track_total") or 0
 
+    key = (extra.get("key_raw") or "").strip()
+    if not key and fallback.get("key"):
+        key = tags_mod.key_file_value(fallback["key"], cfg or {})
+
     fields = {
         "artist": pick("artist", orig_probe.artist),
         "title": pick("title", orig_probe.title),
@@ -347,6 +386,11 @@ def _transfer_tags(src: Path, dst: Path, orig_probe, db_fallback: dict | None) -
         "track_no": track_no,
         "track_total": track_total,
     }
+    if key:
+        fields["key"] = key
+    mood = tags_mod.read_mood(str(src))
+    if mood:
+        fields["mood"] = mood
     tags_mod.write_tags(str(dst), fields)
 
     cover = tags_mod.read_cover(str(src))

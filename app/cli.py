@@ -501,16 +501,16 @@ def build_parser() -> argparse.ArgumentParser:
     at = sub.add_parser(
         "autocue-train",
         help="Auto Cue neu trainieren (Einstellungen in autocue-train.yaml, braucht "
-             "requirements-train.txt)")
+             "lightgbm aus requirements.txt; in der App: Einstellungen -> Auto Cue -> Training)")
     at.add_argument("--config", help="Konfigurationsdatei (Standard: autocue-train.yaml im Projektordner)")
     at.add_argument("--instance", help="Instanz statt der aus der Datei: dev, installed, build oder ein Ordner")
-    at.add_argument("--target", help="Ziele statt der aus der Datei: vendor, instance oder beides mit Komma")
     at.add_argument("--gold-file", help="Prüfliste aus einer Textdatei (ein Pfad je Zeile), nur zum Testen")
     at.add_argument("--force", action="store_true", help="Datensatz komplett neu rechnen")
     at.add_argument("--limit", type=int, default=0, help="Nur N Trainingstracks (Testlauf)")
     at.add_argument("--folds", type=int, default=0, help="Faltungen statt der aus der Datei")
     at.add_argument("--workers", type=int, default=0, help="Prozesse statt der aus der Datei")
-    at.add_argument("--yes", action="store_true", help="Ohne Rueckfrage installieren")
+    at.add_argument("--yes", action="store_true",
+                    help="Ohne Rueckfrage in die Modellbibliothek der Instanz uebernehmen")
     at.add_argument("--probe", action="store_true",
                     help="Probelauf ab 3 Tracks: prueft nur, ob alles durchlaeuft, installiert nie")
     at.set_defaults(func=cmd_autocue_train)
@@ -518,7 +518,8 @@ def build_parser() -> argparse.ArgumentParser:
     ae = sub.add_parser("autocue-eval", help="Auto-Cue-Modelle auf der Prüfliste bewerten")
     ae.add_argument("--config", help="Konfigurationsdatei (Standard: autocue-train.yaml)")
     ae.add_argument("--instance", help="Instanz statt der aus der Datei")
-    ae.add_argument("--model", help="aktiv, vendor, instance oder Ordner, mehrere mit Komma (Standard: aktiv)")
+    ae.add_argument("--model", help="aktiv, id eines Bibliothekseintrags oder Ordner, mehrere mit Komma "
+                                    "(Standard: aktiv)")
     ae.add_argument("--gold-file", help="Prüfliste aus einer Textdatei, nur zum Testen")
     ae.add_argument("--workers", type=int, default=0)
     ae.set_defaults(func=cmd_autocue_eval)
