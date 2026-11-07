@@ -6,6 +6,18 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 ## [2.0.0] - 2026-11-01
 
 ### Added
+- Seitenbaum überarbeitet: TrackTab, Music App und Rekordbox sind Abschnittsköpfe, die sich per Klick ein- und ausblenden lassen. Jede Liste trägt ein farbiges Quadrat (ohne Farbe hellgrau), Ordner zeigen offen/zu. Neu anlegen und M3U-Import liegen im „…“-Menü von TrackTab (die Knöpfe im Kopf entfallen), die Menüs sind in beschriftete Gruppen gegliedert. Ein aufgeklappter Music-/Rekordbox-Ast lädt seine Listen von selbst, auch beim Start.
+- Feste Ansichten (Alle, Genre, Album, Duplikate …) und der Ordner Prüflisten verhalten sich wie eigene Listen: verschiebbar auch in Ordner, Farbe änderbar; der Ordner Prüflisten lässt sich zudem umbenennen und nimmt eigene Playlisten auf. Status-Listen behalten Name, Symbol und Statusfarbe.
+- Neue feste Ansicht „Zuletzt hinzugefügt“ (alle Tracks, nach „Hinzugefügt“ absteigend).
+- Rechtsklick auf Tracks und Listen im Baum öffnet dasselbe Menü wie „…“.
+- Spaltenbreite per Doppelklick auf den Rand der Überschrift an den breitesten Eintrag anpassen.
+- Ladeplatzhalter passend zur Ansicht (Bearbeiten, Player, DJ) für Tabelle und Baum; Nachladen und Wechsel der Playlist zeigen Platzhalter statt einer leeren Fläche.
+- Statistik, Quellen und Datei öffnen sind in allen drei Ansichten erreichbar; „Datei öffnen“ und „Bibliothek scannen“ wechseln dafür nach Bearbeiten.
+- Eigene Tooltips im Stil von Tippy.js (Titel fett, Erklärung darunter); Einstellungen: kurze Hilfetexte als ?-Symbol am Label.
+- Einstellungen als Seitennavigation mit Suche statt Akkordeons.
+- Suchen und Sortieren in großen Tabellen deutlich schneller (vorberechnete Sortierschlüssel, zwischengespeicherter Suchbereich je Zeile, gemessen an 10.822 Zeilen: Wertvorschläge der Suche 161 → 8 ms, Sortierung nach Datei 54 → 32 ms).
+- Wellenform: Zeichnen aus einer gemeinsamen Bildschleife, Balken in einer zwischengespeicherten Ebene, Cue-Marker behalten beim Abspielen ihre Farbe.
+- Server: gzip für große Antworten (Report 9,8 → 2,5 MB), Freigabe-Cache für reine Ausliefer-Endpunkte, Report-Neubau gebündelt im Hintergrund.
 - Neue Auffälligkeit „Tonart-Schreibweise weicht von der Einstellung ab“ mit Quick Fix (gleicht die Schreibweise in der Datei an). Der Hinweis unter Einstellungen → Tonart-Feld hat dazu einen Link „Anzeigen“, der die betroffenen Dateien in der Liste Auffälligkeiten öffnet.
 - DJ-Ansicht, Sammelleiste: „BPM & Tonart“ und „Genre & Stimmung“ analysieren für markierte Tracks (dieselben Analysen wie in Bearbeiten).
 - Smart Playlists: neue Regel „Playlist ist in / ist nicht in …“, z. B. „alle House-Tracks, die noch nicht in Set Freitag stehen“. Wählbar sind alle eigenen Listen, auch Merklisten, andere Smart Playlists und Ordner.

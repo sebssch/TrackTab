@@ -1395,14 +1395,14 @@ _SYSTEM_PLAYLISTS = [
 def _seed_system_playlists(conn: sqlite3.Connection) -> None:
     """Haelt die festen Status-Listen auf Stand. Laeuft bei jedem connect().
 
-    Was uns gehoert, wird bei jedem Start neu gesetzt: Name, Symbol, Farbe und
-    Regelsatz. Der Nutzer kann daran ohnehin nichts aendern (der Server weist
-    es ab), und so wirkt eine spaetere Korrektur an der Definition auch auf
-    bestehende Datenbanken.
+    Was uns gehoert, wird bei jedem Start neu gesetzt: Art, Symbol und
+    Regelsatz, bei den Status-Listen auch Name und Farbe. Der Nutzer kann
+    daran nichts aendern (der Server weist es ab), und so wirkt eine spaetere
+    Korrektur an der Definition auch auf bestehende Datenbanken.
 
-    Was dem Nutzer gehoert, bleibt unangetastet: 'parent_id' und 'seq'. Beides
-    laesst sich im Baum per Drag & Drop aendern -- wuerden wir es hier
-    zuruecksetzen, spraenge die Anordnung bei jedem Start zurueck.
+    Was dem Nutzer gehoert, bleibt unangetastet: 'parent_id', 'seq' und beim
+    Ordner Name und Farbe (im Bearbeiten-Dialog aenderbar). Wuerden wir es
+    hier zuruecksetzen, spraenge es bei jedem Start zurueck.
 
     Ein versehentlich verlorener Knoten kommt darueber ebenfalls zurueck.
     """
@@ -1412,9 +1412,11 @@ def _seed_system_playlists(conn: sqlite3.Connection) -> None:
         rules_json = json.dumps(rules, ensure_ascii=False) if rules else None
         if pid in have:
             conn.execute(
-                "UPDATE playlists SET kind = ?, name = ?, icon = ?, color = ?, "
-                "rules = ?, system = 1 WHERE id = ?",
-                (kind, name, icon, color, rules_json, pid))
+                "UPDATE playlists SET kind = ?, icon = ?, rules = ?, system = 1, "
+                "name = CASE WHEN ? = 'folder' AND TRIM(COALESCE(name, '')) != '' "
+                "THEN name ELSE ? END, "
+                "color = CASE WHEN ? = 'folder' THEN color ELSE ? END WHERE id = ?",
+                (kind, icon, rules_json, kind, name, kind, color, pid))
         else:
             conn.execute(
                 "INSERT INTO playlists (id, parent_id, kind, name, icon, color, rules, "

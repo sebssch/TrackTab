@@ -6886,13 +6886,19 @@ class _Handler(BaseHTTPRequestHandler):
         current = db_mod.playlist_by_id(conn, node_id)
         if current is None:
             raise ValueError("Diese Liste existiert nicht mehr.")
-        # Feste Listen: Name, Symbol, Farbe und Regelwerk gehoeren uns (sie
-        # werden bei jedem Start aus db._SYSTEM_PLAYLISTS neu gesetzt), und
-        # geloescht werden koennen sie nicht. Ihre POSITION im Baum gehoert
-        # dagegen dem Nutzer -- 'move' und 'reorder' sind deshalb ausdruecklich
-        # erlaubt (reorder laeuft ohnehin schon oben durch).
-        if current.get("system") and op in ("update", "delete"):
-            raise ValueError("Feste Listen lassen sich nicht umbenennen oder löschen.")
+        # Feste Listen: Symbol, Regelwerk, Name und Farbe der Status-Listen
+        # gehoeren uns (bei jedem Start aus db._SYSTEM_PLAYLISTS neu gesetzt);
+        # geloescht werden koennen sie nicht. Dem Nutzer gehoeren Position
+        # ('move'/'reorder'), Sperre und beim Ordner Name und Farbe.
+        if current.get("system"):
+            if op == "delete":
+                raise ValueError("Feste Listen lassen sich nicht löschen.")
+            if op == "update":
+                erlaubt = {"color", "name"} if current["kind"] == "folder" else set()
+                gesperrt = [k for k in ("name", "icon", "color", "rules", "merkliste")
+                            if k in payload and k not in erlaubt]
+                if gesperrt:
+                    raise ValueError("Symbol, Name und Farbe fester Listen sind gesperrt.")
 
         if op == "lock":
             current["locked"] = 1 if payload.get("locked") else 0

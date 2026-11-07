@@ -793,7 +793,21 @@ function genSlotsHtml() {
 function genRenderBody() {
   const arc = document.getElementById("genArc"), list = document.getElementById("genSlots");
   if (arc) arc.innerHTML = genArcSvg();
-  if (list) list.innerHTML = genSlotsHtml();
+  if (list) {
+    // Vorhandene Cover-Elemente uebernehmen statt neu zu laden: ein frisches
+    // <img> blendet sich sichtbar neu ein, auch wenn das Bild im Cache liegt.
+    const oldCovers = new Map();
+    list.querySelectorAll("img.gencov").forEach(im => {
+      const src = im.getAttribute("src");
+      if (!oldCovers.has(src)) oldCovers.set(src, []);
+      oldCovers.get(src).push(im);
+    });
+    list.innerHTML = genSlotsHtml();
+    list.querySelectorAll("img.gencov").forEach(im => {
+      const reuse = (oldCovers.get(im.getAttribute("src")) || []).shift();
+      if (reuse) im.replaceWith(reuse);
+    });
+  }
   genMountSlotWaves();
   const fill = document.querySelector("#generatorPane .genfill");
   if (fill) fill.innerHTML = `<b>${GEN.tracks.filter(Boolean).length}</b>/${GEN.cfg.slots.length}`;
@@ -836,7 +850,19 @@ function genPlay(i) {
   queueState.tracks = rows.slice(idx + 1);
   queueState.manual = true;
   loadQueueTrack(r);
-  genRenderBody();
+  genSyncPlaying();
+}
+
+// Markiert den gerade laufenden Slot, ohne die Liste neu zu bauen (Cover und
+// Waveforms bleiben stehen). Auch von queueAudio.onplay in app.js gerufen,
+// damit der naechste Track der Warteschlange markiert wird.
+function genSyncPlaying() {
+  if (!GEN) return;
+  const playing = queueState.current && queueState.current.p;
+  document.querySelectorAll("#genSlots .genslot[data-slot]").forEach(el => {
+    const r = GEN.tracks[Number(el.dataset.slot)];
+    el.classList.toggle("playing", !!(r && playing === r.p));
+  });
 }
 
 // ── Waveform je Slot ──────────────────────────────────────────────────────
@@ -887,7 +913,7 @@ function genMountSlotWaves() {
       const rect = canvas.getBoundingClientRect();
       const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
       if (isCurrent()) {
-        if (isFinite(queueAudio.duration)) queueAudio.currentTime = frac * queueAudio.duration;
+        if (isFinite(queueAudio.duration)) queueSeek(frac * queueAudio.duration);
         if (queueAudio.paused) queueAudio.play().catch(err => playFailed(queueAudio, err));
         requestWavePaint();
       } else {

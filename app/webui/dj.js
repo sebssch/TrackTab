@@ -421,12 +421,31 @@ function djMountRowCells(ed) {
   ed.bpmCell = row.querySelector(".bpmcell");
   ed.rbCell = row.querySelector(".rbcell");
 }
+// Zelle der Zeile ueber dem Editor. Die beim Oeffnen gemerkte Zelle veraltet,
+// sobald render() die Tabelle neu baut: der Editor wandert dann an die neue
+// Zeile (expandedByIdx in render()), die gemerkte Zelle haengt aber nicht mehr
+// im Dokument -- Status, Dauer und BPM landeten unsichtbar in der alten Zeile
+// (z. B. blieb Rekordbox nach "Rekordbox Update" rot, bis man den Track neu
+// oeffnete). Deshalb hier bei Bedarf neu suchen; die Anzeige-Caches
+// (_tenth/_bpmCell) zuruecksetzen, damit die neue Zelle sofort gefuellt wird.
+function djRowCell(ed, key, sel) {
+  const cached = ed[key];
+  if (cached && cached.isConnected) return cached;
+  const row = ed.det && ed.det.previousElementSibling;
+  const cell = row && row.classList.contains("row") ? row.querySelector(sel) : null;
+  ed[key] = cell;
+  if (cell && cached !== undefined) { ed._tenth = null; ed._bpmCell = null; }
+  return cell;
+}
+
 // Beim Schliessen: die Dauer wie in der Liste, das BPM bleibt, wenn es geaendert wurde.
 function djRestoreRowCells(ed) {
-  if (ed.timeCell) ed.timeCell.textContent = fmtTime(ed.r.du);
+  const timeCell = djRowCell(ed, "timeCell", ".ducell");
+  if (timeCell) timeCell.textContent = fmtTime(ed.r.du);
   ed.r.djBp = ed.edited.grid ? djEditedBpm(djMainBpm(ed), ed.r.bp) : 0;
   djStoreTempo(ed);
-  if (ed.bpmCell) ed.bpmCell.innerHTML = bpmCellHtml(ed.r.bp, ed.r.djBp, ed.r.gridTempo);
+  const bpmCell = djRowCell(ed, "bpmCell", ".bpmcell");
+  if (bpmCell) bpmCell.innerHTML = bpmCellHtml(ed.r.bp, ed.r.djBp, ed.r.gridTempo);
 }
 // Tempo-Spanne merken, damit die Liste auch ohne offenen Editor weiss, ob die Datei
 // zum Beatgrid passt. Nur, wenn sich etwas geaendert hat.
@@ -943,9 +962,10 @@ function djSyncLabels(ed) {
   const pos = djPos(ed), tenth = Math.floor(pos * 10);
   // Hat der Track begonnen, kommt die zweite Zeit dazu und zaehlt herunter.
   const running = !ed.audio.paused || pos > 0.05;
-  if ((tenth !== ed._tenth || running !== ed._running) && ed.timeCell) {
+  const timeCell = djRowCell(ed, "timeCell", ".ducell");
+  if ((tenth !== ed._tenth || running !== ed._running) && timeCell) {
     ed._tenth = tenth; ed._running = running;
-    ed.timeCell.innerHTML = running
+    timeCell.innerHTML = running
       ? `<b title="${esc(t("dj.elapsed"))}">${djFmtTenth(pos)}</b> <span class="dj-remain" title="${esc(t("dj.remaining"))}">-${djFmtTenth(Math.max(0, ed.dur - pos))}</span>`
       : fmtTime(ed.r.du);
   }
@@ -954,9 +974,10 @@ function djSyncLabels(ed) {
   // Die Liste aendert sich nur, wenn das Beatgrid bearbeitet wurde und wirklich abweicht.
   const shown = ed.edited.grid ? djEditedBpm(bpm, ed.r.bp) : 0;
   const cellKey = `${shown}|${ed.tempoSpan}`;
-  if (cellKey !== ed._bpmCell && ed.bpmCell) {
+  const bpmCell = djRowCell(ed, "bpmCell", ".bpmcell");
+  if (cellKey !== ed._bpmCell && bpmCell) {
     ed._bpmCell = cellKey;
-    ed.bpmCell.innerHTML = bpmCellHtml(ed.r.bp, shown, ed.tempoSpan);
+    bpmCell.innerHTML = bpmCellHtml(ed.r.bp, shown, ed.tempoSpan);
   }
   if (seg !== ed._segShown || bpm !== ed._bpmShown) {
     ed._segShown = seg; ed._bpmShown = bpm;
@@ -1527,7 +1548,8 @@ function djRenderRekordbox(ed) {
   if (!rb || !rb.available) { box.hidden = true; banner.hidden = true; return; }
   ed.r.rb = rb.present ? 1 : 0;
   ed.r.rbDiff = [...new Set([...rb.pending, ...rb.changed])];
-  if (ed.rbCell) ed.rbCell.innerHTML = rbSyncMark(ed.r);
+  const rbCell = djRowCell(ed, "rbCell", ".rbcell");
+  if (rbCell) rbCell.innerHTML = rbSyncMark(ed.r);
   const names = list => list.map(f => t("dj.field_" + f)).join(", ");
   box.hidden = false;
   if (!rb.present) {

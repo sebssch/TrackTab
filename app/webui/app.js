@@ -109,6 +109,9 @@ const VIEWS = [
   {id: "corrected", label: t("views.corrected"), test: r => !!r.mc},
   {id: "gone",      label: t("views.missing"),   test: r => !!r.gone},
   {id: "all",       label: t("views.all"),       test: () => true},
+  // Alle Tracks, beim Oeffnen nach "Hinzugefuegt" absteigend sortiert
+  // (selectView(), enterRecentSort()); Tracks ohne Datum stehen hinten.
+  {id: "recent",    label: t("views.recent"),    test: () => true},
   {id: "duplicates",label: t("views.duplicates"),
    test: r => !!r.dg && !merkPlaylists().some(n => PLAYLIST_SETS[n.id] && PLAYLIST_SETS[n.id].has(r.p))},
   {id: "tag_issues", label: t("views.tag_issues"), test: r => hasAnyTagIssues(r)},
@@ -129,7 +132,7 @@ const VIEWS = [
 // "duplicates" ist bewusst NICHT mehr Teil davon -- sie zieht in den
 // "Aufraeumen"-Ordner (siehe cleanupKids in treeRoots()), bleibt aber Teil
 // von VIEWS, sonst findet currentView() sie beim Umschalten nicht mehr.
-const VIEW_TABS = ["all", "ignored", "gone"];
+const VIEW_TABS = ["all", "recent", "ignored", "gone"];
 
 
 // ── Tonart ────────────────────────────────────────────────────────────────
@@ -284,7 +287,16 @@ const SYSTEM_PLAYLIST_LABELS = {
   sys_v_unknown: "verdict.unclear",
   sys_v_corrected: "chip.manual_corrected",
 };
-const playlistLabel = n => SYSTEM_PLAYLIST_LABELS[n.id] ? t(SYSTEM_PLAYLIST_LABELS[n.id]) : n.name;
+// Der Ordner "Pruefliste" laesst sich umbenennen (server._playlist_apply()):
+// weicht sein Name von der Vorgabe aus db._SYSTEM_PLAYLISTS ab, gilt der
+// eigene, sonst die Uebersetzung.
+const SYSTEM_RENAMABLE_DEFAULTS = {sys_verdicts: "Prüflisten"};
+const playlistLabel = n => {
+  if (!SYSTEM_PLAYLIST_LABELS[n.id]) return n.name;
+  const def = SYSTEM_RENAMABLE_DEFAULTS[n.id];
+  if (def && n.name && n.name !== def) return n.name;
+  return t(SYSTEM_PLAYLIST_LABELS[n.id]);
+};
 
 // Als Merkliste markierte Playlisten (playlists.fav_slot, siehe db.py) --
 // Nachfolger der frueheren, fest konfigurierten FAVORITE_LISTS. Sortiert nach
@@ -305,6 +317,20 @@ const flColorTok = n => n.color || "fl1";
 const isCustomColor = c => /^#[0-9a-f]{6}$/i.test(c || "");
 const plColor = c => isCustomColor(c) ? c : `var(--${esc(c)})`;
 const plColorBg = c => isCustomColor(c) ? `${c}2e` : `var(--${esc(c)}-bg)`;
+// Icon-Farbe auf einer Listenfarbe: weiss, auf hellen Toenen dunkel. Fuer
+// Palettentoken ueber CSS (--flN-on, je Theme in app.css, Rueckfall weiss) --
+// so stimmt sie auch nach einem Themenwechsel ohne Neuaufbau. Eigene Farben
+// (#rrggbb) sind theme-unabhaengig und werden hier nach Leuchtdichte gewaehlt.
+const PL_ON_DARK = "#1b1e23";
+function plOnColor(c) {
+  if (!isCustomColor(c)) return `var(--${esc(c)}-on, #fff)`;
+  const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+  const [r, g, b] = [1, 3, 5].map(i => lin(parseInt(c.slice(i, i + 2), 16)));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.36 ? PL_ON_DARK : "#fff";
+}
+// Inline-Stil eines Listen-Badges: Listenfarbe + passende Icon-Farbe. Ohne
+// Farbe kein Stil -- .tbadge.tplain zeigt dann das sanfte Grau.
+const plBadgeStyle = c => c ? ` style="background:${plColor(c)};color:${plOnColor(c)}"` : "";
 
 function rebuildPlaylistIndex() {
   PLAYLIST_SETS = {};
@@ -463,6 +489,16 @@ let state = {
   // Innerhalb von Ordnern gibt es dieses Problem nicht -- dort sind alle
   // Knoten Datenbankzeilen und die Reihenfolge liegt in 'playlists.seq'.
   treeOrder: [],
+  // Feste Ansichten ohne Datenbankzeile (Alle, Genre, Duplikate, ...) lassen
+  // sich wie Listen in Ordner legen und einfaerben. Beides liegt wie
+  // treeOrder nur hier: viewPlace {viewId: Ordner-ID oder null = oberste
+  // Ebene; fehlt = Vorgabe aus VIEW_DEFAULT_PLACE}, viewColors {viewId:
+  // Farbtoken/#hex}, folderOrder {Ordner-ID: [Baum-IDs]} = angezeigte
+  // Reihenfolge eines Ordners, sobald darin eine Ansicht liegt oder etwas
+  // neben eine gezogen wurde (ohne Eintrag gilt playlists.seq).
+  viewPlace: {},
+  viewColors: {},
+  folderOrder: {},
 };
 
 // Spalten-Reihenfolge/-Sichtbarkeit/-Breite je Ansicht (Bearbeiten/Player,
@@ -605,6 +641,8 @@ function saveFilters() {
       editFilterSnapshot: state.editFilterSnapshot || null,
       sidebarW: state.sidebarW, treeClosed: state.treeClosed,
       treeOrder: state.treeOrder,
+      viewPlace: state.viewPlace, viewColors: state.viewColors, folderOrder: state.folderOrder,
+      sortBeforeRecent: state.sortBeforeRecent || null,
       // Warteschlange selbst bleibt bewusst Session-only (wie state.selected)
       // -- nur die Wiedergabe-Vorlieben ueberleben einen Neustart.
       shuffle: queueState.shuffle, repeatTrack: queueState.repeatTrack, repeatList: queueState.repeatList,
@@ -786,6 +824,8 @@ function applyLayout(next) {
   // Die erste markierte Zeile wird nach dem Neuaufbau ins Bild geholt.
   state.layout = next;
   document.body.setAttribute("data-layout", state.layout);
+  // Ladeplatzhalter folgen der Ansicht (app.css, html[data-skel-layout]).
+  document.documentElement.setAttribute("data-skel-layout", state.layout);
   state.shown = PAGE;
   syncLayoutSwitch();
   syncControls();
@@ -1019,6 +1059,11 @@ function loadFilters() {
     if (typeof s.sidebarW === "number") state.sidebarW = s.sidebarW;
     if (Array.isArray(s.treeClosed)) state.treeClosed = s.treeClosed.filter(x => typeof x === "string");
     if (Array.isArray(s.treeOrder)) state.treeOrder = s.treeOrder.filter(x => typeof x === "string");
+    const isObj = o => o && typeof o === "object" && !Array.isArray(o);
+    if (isObj(s.viewPlace)) state.viewPlace = s.viewPlace;
+    if (isObj(s.viewColors)) state.viewColors = s.viewColors;
+    if (isObj(s.folderOrder)) state.folderOrder = s.folderOrder;
+    if (s.view === "recent" && isObj(s.sortBeforeRecent)) state.sortBeforeRecent = s.sortBeforeRecent;
     if (s.columnsByLayout && typeof s.columnsByLayout === "object") {
       for (const layout of ["edit", "player"]) {
         const saved = s.columnsByLayout[layout];
@@ -1254,7 +1299,11 @@ const ICONS = {
   save: SVG(LUCIDE_ICONS["save"]),
   rulerDimensionLine: SVG(LUCIDE_ICONS["ruler-dimension-line"]),
   arrowRightLeft: SVG(LUCIDE_ICONS["arrow-right-left"]),
-  columns3: SVG(LUCIDE_ICONS["columns-3"]),
+  // Spaltenansicht (Nutzervorgabe: table-properties) -- Menue, Einstellungen,
+  // Spalten-Knoepfe in index.html.
+  columnView: SVG(LUCIDE_ICONS["table-properties"]),
+  // Verknuepfte Playlisten abgleichen (Nutzervorgabe: refresh-ccw).
+  linkSync: SVG(LUCIDE_ICONS["refresh-ccw"]),
   listRestart: SVG(LUCIDE_ICONS["list-restart"]),
   listChecks: SVG(LUCIDE_ICONS["list-checks"]),
   stickyNotes: SVG(LUCIDE_ICONS["sticky-notes"]),
@@ -1268,7 +1317,8 @@ const ICONS = {
   bookDown: SVG(LUCIDE_ICONS["book-down"]),
   // Einstellungen: "Zuruecksetzen" (Vorschlag, Tausch nur hier) und das ?
   // hinter einem Feld-Label (kurzer Hinweis im Tooltip, siehe settingHelpBtn()).
-  resetDefault: SVG(LUCIDE_ICONS["rotate-ccw"]),
+  // "Zuruecksetzen" in den Einstellungen (Nutzervorgabe: book-down).
+  resetDefault: SVG(LUCIDE_ICONS["book-down"]),
   helpQ: SVG(LUCIDE_ICONS["circle-question-mark"]),
   // Auto-Cue-Modell laden (Einstellungen); Vorschlag, Tausch nur hier.
   modelLoad: SVG(LUCIDE_ICONS["file-up"]),
@@ -1557,7 +1607,7 @@ const counted = () => DATA.filter(r => !r.ig && !r.mc && !r.removed && !r.ext);
 // abgerundetes Quadrat in ihrer Listenfarbe (.tbadge.tsquare), damit Baum und
 // Zeilen-Badge (.flbtn/.fltag) dieselbe Form und Farbe zeigen.
 const TREE_ICONS = {
-  all: SVG(LUCIDE_ICONS.music), ignored: SVG(LUCIDE_ICONS.ban),
+  all: SVG(LUCIDE_ICONS.music), recent: SVG(LUCIDE_ICONS["clock-4"]), ignored: SVG(LUCIDE_ICONS.ban),
   gone: SVG(LUCIDE_ICONS["triangle-alert"]), duplicates: SVG(LUCIDE_ICONS.copy),
   corrected: SVG(LUCIDE_ICONS.check),
   "grp:genre": SVG(LUCIDE_ICONS.tag), "grp:album": SVG(LUCIDE_ICONS["disc-2"]),
@@ -1639,10 +1689,25 @@ function playlistIconValue(node) {
 // rund, wenn die Playlist als Merkliste markiert ist (node.fav_slot), sonst
 // rund wie jede andere eigene Liste.
 function playlistBadgeHtml(node) {
-  const color = node.color ? plColor(node.color) : "var(--dim)";
   const shape = node.fav_slot ? "tsquare" : "tcircle";
-  return `<span class="tbadge ${shape}" style="background:${color}">` +
+  return `<span class="tbadge ${shape}${node.color ? "" : " tplain"}"${plBadgeStyle(node.color)}>` +
     `${iconGlyphHtml(playlistIconValue(node))}</span>`;
+}
+
+// Ordner im Seitenbaum: geschlossen/offen statt eines Aufklapp-Pfeils
+// (Vorschlag, Lucide "folder"/"folder-open" -- Tausch nur hier).
+const TREE_FOLDER_ICONS = {closed: "sym:folder", open: "sym:folder-open"};
+
+// Badge eines Baumknotens (ausser den Wurzeln): JEDE Liste traegt ein
+// Quadrat -- in ihrer Farbe oder, ohne Farbe, im sanften Grau (.tplain).
+// n.icon ist "sym:"/"emoji:"-codiert (eigene/fremde Listen) oder fertiges
+// SVG-Markup (TREE_ICONS der festen Ansichten).
+function treeBadgeHtml(n, open) {
+  const isFolder = (n.node && n.node.kind === "folder") || (n.ext && n.ext.kind === "folder");
+  const icon = isFolder ? TREE_FOLDER_ICONS[open ? "open" : "closed"] : n.icon;
+  const glyph = !icon ? ""
+    : (icon.startsWith("<") ? `<span class="tsym tsvg">${icon}</span>` : iconGlyphHtml(icon));
+  return `<span class="tbadge tsquare${n.color ? "" : " tplain"}"${plBadgeStyle(n.color)}>${glyph}</span>`;
 }
 
 
@@ -1733,15 +1798,15 @@ function extRootNode(source, labelKey) {
   return {
     id: EXT_SOURCES[source].root, view: null, label: t(labelKey),
     icon: EXT_SOURCES[source].icon, count: null,
-    // Solange nichts geladen ist, bekommt der Knoten trotzdem ein Kind-Signal,
-    // damit der Aufklapp-Pfeil sichtbar ist und den Ladevorgang ausloest.
+    // Kein "zum Laden aufklappen" mehr (Nutzervorgabe): ein aufgeklappter
+    // Ast laedt von selbst (autoLoadExtTrees() nach renderTree()), ein
+    // zugeklappter bleibt zu. Waehrend des Ladens pulsiert der Kopf (.loading),
+    // nur ein Fehler steht als Hinweiszeile darunter.
     lazy: source, loading: st.loading, error: st.error,
-    kids: kids.length ? kids : (st.loaded ? [] : [{
-      id: `${source}:__lade__`, view: null, label: st.loading
-        ? t("tree.loading") : (st.error ? t("tree.load_failed", {error: st.error})
-                                        : t("tree.expand_to_load")),
+    kids: kids.length || !st.error ? kids : [{
+      id: `${source}:__lade__`, view: null, label: t("tree.load_failed", {error: st.error}),
       icon: "", count: null, kids: [], hint: true,
-    }]),
+    }],
   };
 }
 
@@ -1749,8 +1814,8 @@ function extRootNode(source, labelKey) {
 // nicht vorkommen -- eine gerade angelegte Liste, eine neu hinzugekommene
 // Merkliste -- behalten ihre Ausgangsreihenfolge und haengen sich hinten an,
 // statt an einer zufaelligen Stelle aufzutauchen.
-function sortByTreeOrder(nodes) {
-  const pos = new Map(state.treeOrder.map((id, i) => [id, i]));
+function sortByTreeOrder(nodes, order = state.treeOrder) {
+  const pos = new Map((order || []).map((id, i) => [id, i]));
   return nodes
     .map((n, i) => ({n, i, p: pos.has(n.id) ? pos.get(n.id) : Number.MAX_SAFE_INTEGER}))
     .sort((a, b) => (a.p - b.p) || (a.i - b.i))
@@ -1797,8 +1862,12 @@ function treeRoots() {
   const tagIssuesNode = {id: "view:tag_issues", view: "tag_issues", label: tagIssuesView.label,
                           icon: TREE_ICONS.tag_issues, count: live().filter(tagIssuesView.test).length,
                           kids: [], top: true};
-  const ownWithDuplicates = own.map(n =>
-    n.node && n.node.id === "sys_verdicts" ? {...n, kids: [...n.kids, dupNode, tagIssuesNode]} : n);
+  // Alle festen Ansichten sind Knoten wie Listen: Farbe aus state.viewColors,
+  // Platz aus state.viewPlace (Vorgabe VIEW_DEFAULT_PLACE), Reihenfolge in
+  // einem Ordner aus state.folderOrder (siehe placeViewNodes()).
+  const viewNodes = [...sys, ...groupNodes, dupNode, tagIssuesNode]
+    .map(n => ({...n, color: state.viewColors[n.view] || null}));
+  const {top: topViews, own: ownWithDuplicates} = placeViewNodes(own, viewNodes);
   // Music.app/Rekordbox nur, wenn dort ueberhaupt ein Programm ausgewaehlt
   // bzw. gefunden ist (MUSIC_NAME/REKORDBOX_NAME) -- sonst ein Ast fuer ein
   // Programm, das der Nutzer nie eingerichtet hat. Untereinander per
@@ -1815,9 +1884,67 @@ function treeRoots() {
   return [
     {id: "root:tracktab", view: null, label: t("tree.root_tracktab"),
      icon: `<img class="appicon" src="/icon-192.png" alt="">`,
-     count: null, kids: sortByTreeOrder([...sys, ...ownWithDuplicates, ...groupNodes])},
+     count: null, kids: sortByTreeOrder([...topViews, ...ownWithDuplicates])},
     ...extRoots,
   ];
+}
+
+// Vorgabe-Platz einer festen Ansicht: Duplikate und Auffaelligkeiten im
+// Ordner "Pruefliste", alles andere oben. state.viewPlace ueberschreibt das.
+const VIEW_DEFAULT_PLACE = {duplicates: "sys_verdicts", tag_issues: "sys_verdicts"};
+function viewPlaceOf(viewId) {
+  const place = Object.prototype.hasOwnProperty.call(state.viewPlace, viewId)
+    ? state.viewPlace[viewId] : (VIEW_DEFAULT_PLACE[viewId] || null);
+  // Ordner geloescht -> zurueck nach oben (die Ansicht selbst geht nie verloren).
+  return place && PLAYLISTS.some(n => n.id === place && n.kind === "folder") ? place : null;
+}
+
+// Haengt die festen Ansichten in ihre Ordner und sortiert jeden Ordner nach
+// state.folderOrder. Liefert die Ansichten der obersten Ebene getrennt
+// zurueck (die sortiert treeRoots() zusammen mit den Listen nach treeOrder).
+function placeViewNodes(own, viewNodes) {
+  const byFolder = new Map();
+  const top = [];
+  for (const v of viewNodes) {
+    const place = viewPlaceOf(v.view);
+    if (!place) { top.push(v); continue; }
+    if (!byFolder.has(place)) byFolder.set(place, []);
+    byFolder.get(place).push(v);
+  }
+  const attach = nodes => nodes.map(n => {
+    if (!n.node || n.node.kind !== "folder") return n;
+    const kids = [...attach(n.kids), ...(byFolder.get(n.node.id) || [])];
+    return {...n, kids: sortByTreeOrder(kids, state.folderOrder[n.node.id])};
+  });
+  return {top, own: attach(own)};
+}
+
+// Baum-ID -> Ordner-ID (null = oberste Ebene von TrackTab) fuer alle Knoten
+// unter der TrackTab-Wurzel, so wie sie gerade angezeigt werden.
+function trackTabParentMap() {
+  const map = new Map();
+  const walk = (nodes, parent) => {
+    for (const n of nodes) {
+      map.set(n.id, parent);
+      if (n.node && n.node.kind === "folder") walk(n.kids, n.node.id);
+    }
+  };
+  walk(treeRoots()[0].kids, null);
+  return map;
+}
+function trackTabChildIds(parent) {
+  let nodes = treeRoots()[0].kids;
+  if (parent) {
+    const find = list => {
+      for (const n of list) {
+        if (n.node && n.node.id === parent) return n.kids;
+        if (n.kids && n.kids.length) { const r = find(n.kids); if (r) return r; }
+      }
+      return null;
+    };
+    nodes = find(nodes) || [];
+  }
+  return nodes.map(n => n.id);
 }
 
 // Bewusst als FLACHE Liste gerendert (Einrueckung ueber --depth in app.css),
@@ -1828,30 +1955,25 @@ function renderTree() {
   if (!host) return;
   const out = [];
   const walk = (n, depth) => {
-    const hasKids = n.kids && n.kids.length > 0;
+    // Music/Rekordbox-Koepfe (n.lazy) sind immer auf-/zuklappbar, auch bevor
+    // ihr Inhalt geladen ist.
+    const hasKids = (n.kids && n.kids.length > 0) || !!n.lazy;
     const open = !state.treeClosed.includes(n.id);
-    // Eigene Playlisten/Smart Playlists tragen ihre Farbe+Icon als farbiges
-    // Abzeichen -- eckig statt rund, wenn die Playlist als Merkliste markiert
-    // ist (n.node.fav_slot, siehe playlistBadgeHtml()), sonst rund. Fremde
-    // Aeste (Music.app/Rekordbox) und Ordner behalten die schlichte
-    // Textdarstellung.
-    const isOwnList = n.node && n.node.kind !== "folder";
-    const badge = isOwnList
-      ? `<span class="tbadge ${n.node.fav_slot ? "tsquare" : "tcircle"}" style="background:${n.color ? plColor(n.color) : "var(--dim)"}">` +
-        // Feste Verdikt-Playlisten (system=1) tragen ihr Icon fest ueber
-        // _SYSTEM_PLAYLISTS (db.py) -- nicht editierbar (nodeMenuItems()
-        // blendet fuer sie "Bearbeiten" aus), aber genau wie bei eigenen
-        // Listen gerendert.
-        `${iconGlyphHtml(n.icon)}</span>`
-      : `<span class="ticon"${n.color ? ` style="color:${plColor(n.color)}"` : ""}>` +
-        // n.icon ist hier entweder fertiges Markup (TREE_ICONS/appIcon()) oder
-        // ein "sym:"-codierter Lucide-Name (PLAYLIST_ICONS fuer Ordner/fremde
-        // Playlisten/Smart Playlists) -- anders als bei eigenen Listen (oben,
-        // isOwnList) kein iconGlyphHtml(), weil das einen Farbkreis erzeugen
-        // wuerde, den Ordner/fremde Aeste nicht haben sollen.
-        `${n.icon && n.icon.startsWith("sym:") ? SVG(LUCIDE_ICONS[n.icon.slice(4)] || "") : n.icon}</span>`;
+    // Wurzeln (TrackTab/Music/Rekordbox) sind Abschnittskoepfe mit
+    // Programmsymbol; auf/zu per Klick auf den Kopf, beim Ueberfahren steht
+    // rechts "Ausblenden"/"Einblenden" (wie die Seitenleiste im Finder), ein
+    // zugeklappter Kopf ist gedimmt. Darunter traegt jede Liste ein Quadrat
+    // (treeBadgeHtml()), Ordner zeigen offen/zu ueber ihr Symbol, die Tiefe
+    // zeigen Fuehrungslinien (#tree .treenode::before in app.css).
+    const badge = depth === 0
+      ? `<span class="ticon">${n.icon || ""}</span>`
+      : treeBadgeHtml(n, hasKids && open);
+    const chev = depth === 0 && hasKids
+      ? `<span class="tsectoggle" data-twist="1">${esc(t(open ? "tree.section_hide" : "tree.section_show"))}</span>` : "";
+    if (depth === 0 && out.length) out.push(`<div class="tsep" aria-hidden="true"></div>`);
     out.push(
-      `<button class="treenode${depth === 0 ? " root" : ""}` +
+      `<button class="treenode${depth === 0 ? " root" : ""}${depth === 0 && !open ? " closed" : ""}` +
+      `${n.lazy && n.loading ? " loading" : ""}` +
       `${n.hint ? " hint" : ""}${n.locked ? " locked" : ""}${extBusyClass(n)}` +
       `${n.view && state.view === n.view ? " on" : ""}" ` +
       `data-id="${esc(n.id)}"${n.view ? ` data-view="${esc(n.view)}"` : ""}` +
@@ -1861,15 +1983,16 @@ function renderTree() {
       `${n.ext ? ` data-ext="${esc(n.ext.source)}" data-extkind="${esc(n.ext.kind)}"` : ""}` +
       `${n.lazy === "rekordbox" ? ` title="${esc(t("tree.rekordbox_dnd_hint"))}"` : ""}` +
       `${n.top ? ' data-top="1"' : ""}` +
-      `${n.lazy ? ` data-lazy="${esc(n.lazy)}"` : ""} style="--depth:${depth}">` +
-      `<span class="twist${hasKids ? (open ? " open" : "") : " leaf"}"` +
-      `${hasKids ? " data-twist=\"1\"" : ""}>&#9654;</span>` +
+      `${n.lazy ? ` data-lazy="${esc(n.lazy)}"` : ""} style="--depth:${Math.max(0, depth - 1)}">` +
       badge +
       `<span class="tlabel">${esc(n.label)}</span>` +
-      (n.count == null ? "" : `<span class="tcount">${n.count.toLocaleString("de-DE")}</span>`) +
+      // Verknuepfung und Schloss stehen LINKS der Anzahl (Nutzervorgabe), damit
+      // die Zahlen buendig untereinander bleiben.
       linkBadgeHtml(n) +
       (n.userLocked ? `<span class="tlock" title="${esc(t("tree.user_locked"))}">${ICONS.lock}</span>` : "") +
       (n.locked ? `<span class="tlock" title="${esc(t("tree.readonly"))}">${ICONS.lock}</span>` : "") +
+      (n.count == null ? "" : `<span class="tcount">${n.count.toLocaleString("de-DE")}</span>`) +
+      chev +
       (n.node && apiMode && nodeMenuItems(n.node).length
         ? `<span class="tmenu" data-nodemenu="${esc(n.node.id)}">&#8943;</span>`
         // Musik.app/Rekordbox-Wurzelknoten tragen .lazy (siehe extRootNode())
@@ -1885,13 +2008,22 @@ function renderTree() {
         // Musik.app/Rekordbox-Fremdaesten ab, die ebenfalls .view aber kein
         // .top tragen und bewusst ohne dieses Menue bleiben.
         : n.view && !n.node && n.top && apiMode
-        ? `<span class="tmenu" data-viewmenu="${esc(n.view)}">&#8943;</span>` : "") +
+        ? `<span class="tmenu" data-viewmenu="${esc(n.view)}">&#8943;</span>`
+        // TrackTab-Wurzel: Neu anlegen/Importieren, gleich aufgebaut wie das
+        // Menue der Music/Rekordbox-Wurzeln (frueher Knoepfe in .treehead).
+        : n.id === "root:tracktab" && apiMode
+        ? `<span class="tmenu" data-rootmenu="tracktab">&#8943;</span>` : "") +
       `</button>`);
+    if (n.lazy && n.loading && open && !(n.kids && n.kids.length)) {
+      out.push(`<div class="treeskel" aria-hidden="true">${
+        '<div class="tsk-row"><i class="tsk-ico"></i><i class="tsk-txt"></i><i class="tsk-num"></i></div>'.repeat(4)}</div>`);
+    }
     if (hasKids && open) for (const kid of n.kids) walk(kid, depth + 1);
   };
   for (const root of treeRoots()) walk(root, 0);
   host.innerHTML = out.join("");
   renderPlaylistHeader();
+  autoLoadExtTrees();
 
   host.querySelectorAll(".treenode").forEach(b => b.onclick = ev => {
     if (ev.target.closest("[data-nodemenu], [data-viewmenu], [data-extnode]")) return;   // eigener Handler
@@ -1921,6 +2053,10 @@ function renderTree() {
   host.querySelectorAll("[data-extmenu]").forEach(el => el.onclick = ev => {
     ev.stopPropagation();
     openExtMenu(el.dataset.extmenu, el);
+  });
+  host.querySelectorAll("[data-rootmenu]").forEach(el => el.onclick = ev => {
+    ev.stopPropagation();
+    openContextMenu(tracktabRootMenuItems(), el);
   });
   host.querySelectorAll("[data-extnode]").forEach(el => el.onclick = ev => {
     ev.stopPropagation();
@@ -2209,6 +2345,21 @@ function extSourceOfView(viewId) {
     if (String(viewId).startsWith(src.prefix)) return key;
   }
   return null;
+}
+
+// Aufgeklappte, noch nicht geladene Music/Rekordbox-Aeste laden selbst (beim
+// Start, wenn der Ast vom letzten Mal offen ist). Nach einem Fehler nicht
+// erneut -- sonst liefe bei einem dauerhaften Fehler jede Neuzeichnung eine
+// neue Abfrage an; "Neu laden" im Menue des Kopfes versucht es wieder.
+function autoLoadExtTrees() {
+  if (!apiMode) return;
+  for (const source of Object.keys(EXT_SOURCES)) {
+    const st = EXT_TREES[source];
+    if (st.loaded || st.loading || st.error) continue;
+    if (source === "music" ? !MUSIC_NAME : !REKORDBOX_NAME) continue;
+    if (state.treeClosed.includes(EXT_SOURCES[source].root)) continue;
+    setTimeout(() => loadExtTree(source), 0);
+  }
 }
 
 async function loadExtTree(source) {
@@ -3126,9 +3277,10 @@ async function dropTreeNode(dragId, btn, where) {
 
   const dbId = id => id.startsWith("node:") ? id.slice(5) : null;
   const dragDb = dbId(dragId);
+  const dragView = dragId.startsWith("view:") ? dragId.slice(5) : null;
+  if (!dragDb && !dragView) return;
   const targetDb = dbId(targetId);
   const target = targetDb ? PLAYLISTS.find(n => n.id === targetDb) : null;
-  const zielIstOben = btn.dataset.top === "1" || targetId === "root:tracktab";
 
   // Gesperrtes bleibt, wo es ist; ein gesperrter Ordner nimmt nichts auf.
   const dragNode = dragDb ? PLAYLISTS.find(n => n.id === dragDb) : null;
@@ -3137,47 +3289,61 @@ async function dropTreeNode(dragId, btn, where) {
     note(t("tree.locked_folder"), "soft"); return;
   }
 
-  // Eine feste Ansicht hat keine Datenbankzeile -- sie kann nur ihre Position
-  // auf der obersten Ebene aendern, nicht in einen Ordner wandern.
-  if (!dragDb && (!zielIstOben || where === "into")) return;
+  // Zielebene: in einen Ordner hinein, auf die Wurzel = oberste Ebene, sonst
+  // die Ebene des Ziels. Feste Ansichten wandern wie Listen (state.viewPlace),
+  // nur ohne Server.
+  const parents = trackTabParentMap();
+  let parent;
+  if (where === "into") {
+    if (targetId === "root:tracktab") parent = null;
+    else if (target && target.kind === "folder") parent = target.id;
+    else return;
+  } else {
+    if (!parents.has(targetId)) return;
+    parent = parents.get(targetId);
+  }
+  if (dragNode && parent && !playlistCanReparent(dragNode.id, parent)) return;
 
   try {
     if (dragDb) {
-      const inOrdner = where === "into" && target && target.kind === "folder";
-      const parent = inOrdner ? target.id
-                   : (where === "into" ? null : (target ? (target.parent_id || null) : null));
       await playlistApi("/api/playlist", {op: "move", id: dragDb, parent_id: parent});
-      // Innerhalb eines Ordners zaehlt 'seq': die Ebene wird komplett neu
-      // durchnummeriert, sonst blieben Luecken und Dubletten.
-      if (parent && where !== "into" && target) {
-        const geschwister = PLAYLISTS
-          .filter(n => (n.parent_id || null) === parent && n.id !== dragDb)
-          .map(n => n.id);
-        const at = geschwister.indexOf(target.id);
-        geschwister.splice(where === "before" ? at : at + 1, 0, dragDb);
-        await playlistApi("/api/playlist",
-          {op: "reorder", parent_id: parent, ids: geschwister});
-      }
       await reloadPlaylists();
+    } else {
+      state.viewPlace = {...state.viewPlace, [dragView]: parent};
     }
-
-    // Oberste Ebene: Reihenfolge aus der aktuellen Anzeige neu festschreiben.
-    // Ueberschreibt state.treeOrder komplett -- die Reihenfolge der fremden
-    // Wurzeln (siehe oben) muss deshalb ausdruecklich erhalten bleiben, sie
-    // steht im selben Array, gehoert aber zu einer anderen Geschwisterebene.
-    if (zielIstOben && where !== "into") {
-      const oben = treeRoots()[0].kids.map(n => n.id).filter(id => id !== dragId);
-      const at = oben.indexOf(targetId);
-      if (at !== -1) {
-        oben.splice(where === "before" ? at : at + 1, 0, dragId);
-        state.treeOrder = [...oben, ...state.treeOrder.filter(id => extRootIds.includes(id))];
-        saveFilters();
-      }
+    // Reihenfolge der Zielebene aus der Anzeige neu festschreiben: oben in
+    // state.treeOrder (die Reihenfolge der fremden Wurzeln steht im selben
+    // Array und bleibt erhalten), in einem Ordner in state.folderOrder und
+    // fuer die Datenbankzeilen zusaetzlich als 'seq' (andere Programme/
+    // Geraete ohne diesen localStorage sehen sonst die alte Folge).
+    const ids = trackTabChildIds(parent).filter(id => id !== dragId);
+    const at = where === "into" ? -1 : ids.indexOf(targetId);
+    if (at === -1) ids.push(dragId);
+    else ids.splice(where === "before" ? at : at + 1, 0, dragId);
+    if (parent) {
+      state.folderOrder = {...state.folderOrder, [parent]: ids};
+      const dbIds = ids.map(dbId).filter(Boolean);
+      if (dbIds.length) await playlistApi("/api/playlist", {op: "reorder", parent_id: parent, ids: dbIds});
+      await reloadPlaylists();
+    } else {
+      state.treeOrder = [...ids, ...state.treeOrder.filter(id => extRootIds.includes(id))];
     }
+    saveFilters();
     updateCards(); render();
   } catch (err) {
     note(t("tree.move_failed", {error: err.message}), true);
   }
+}
+
+// Darf ein Ordner/eine Liste nach 'parent'? Nicht in sich selbst oder einen
+// eigenen Unterordner (der Server prueft das ebenfalls).
+function playlistCanReparent(id, parent) {
+  for (let p = parent, i = 0; p && i < 20; i++) {
+    if (p === id) return false;
+    const n = PLAYLISTS.find(x => x.id === p);
+    p = n ? (n.parent_id || null) : null;
+  }
+  return true;
 }
 
 function toggleTreeNode(id) {
@@ -3192,6 +3358,21 @@ function toggleTreeNode(id) {
 // zu sehen, weil state.sort mit "co" vorbelegt ist. Beim Verlassen kommt sie
 // zurueck; ein Klick auf einen Spaltenkopf innerhalb der Playlist sortiert
 // wie ueberall und schaltet die manuelle Reihenfolge voruebergehend ab.
+// "Zuletzt hinzugefuegt": beim Betreten nach Hinzugefuegt absteigend
+// sortieren, beim Verlassen die vorige Sortierung zurueck (wie bei Playlisten
+// mit state.sortBeforePlaylist). Ein Klick auf einen Spaltenkopf darin
+// sortiert wie ueberall.
+function enterRecentSort() {
+  state.sortBeforeRecent = {sort: state.sort, dir: state.dir};
+  state.sort = "da"; state.dir = -1;
+}
+function leaveRecentSort() {
+  if (!state.sortBeforeRecent) return;
+  state.sort = state.sortBeforeRecent.sort;
+  state.dir = state.sortBeforeRecent.dir;
+  state.sortBeforeRecent = undefined;
+}
+
 function selectView(id) {
   // Eine fremde Liste wird beim Anklicken geholt (Fokus-Ereignis) -- ihr
   // Inhalt liegt in Music.app bzw. Rekordbox, nicht bei uns.
@@ -3203,6 +3384,8 @@ function selectView(id) {
   // Verknuepfte Liste geoeffnet: abgleichen (Auslöser "beim Öffnen").
   const openedId = String(id).replace(/^(pl|sm):/, "");
   if (openedId !== String(id) && linksFor(openedId)) scheduleLinkSync(openedId, 0);
+  const wasRecent = state.view === "recent";
+  if (wasRecent && id !== "recent") leaveRecentSort();
   const wasPl = String(state.view).startsWith("pl:");
   const isPl = String(id).startsWith("pl:");
   if (isPl && !wasPl) {
@@ -3212,6 +3395,7 @@ function selectView(id) {
     state.sort = state.sortBeforePlaylist === undefined ? "co" : state.sortBeforePlaylist;
     state.sortBeforePlaylist = undefined;
   }
+  if (id === "recent" && !wasRecent) enterRecentSort();
   state.view = id;
   state.shown = PAGE;
   // Beide gelten nur innerhalb der Liste, in der sie gesetzt wurden --
@@ -3242,10 +3426,13 @@ function selectView(id) {
 async function openExtPlaylist(viewId) {
   const source = extSourceOfView(viewId);
   const id = viewId.slice(EXT_SOURCES[source].prefix.length);
+  const stopLoading = showListLoading();
   try {
     const entry = await loadExtPlaylist(source, id);
+    stopLoading();
     ensureExtView(viewId);
     rebuildPlaylistIndex();          // neue Ersatzzeilen in ROW_BY_PATH
+    if (state.view === "recent") leaveRecentSort();
     if (!String(state.view).startsWith("pl:") && !extSourceOfView(state.view)) {
       state.sortBeforePlaylist = state.sort;
     }
@@ -3261,8 +3448,28 @@ async function openExtPlaylist(viewId) {
     renderPlaylistHeader();
     if (entry.unsupported) note(t("tree.smart_unsupported"), "soft");
   } catch (err) {
+    stopLoading();
     note(t("tree.load_failed", {error: err.message}), true);
   }
+}
+
+// Ladeplatzhalter im Hauptfenster, solange eine Liste vom Server kommt
+// (Music-/Rekordbox-Playlist). Erst nach 120 ms, sonst blitzt er bei einer
+// schon geladenen Liste kurz auf. Liefert die Funktion zum Beenden.
+function showListLoading() {
+  const timer = setTimeout(() => {
+    document.body.classList.add("listloading");
+    window.scrollTo(0, 0);
+  }, 120);
+  return () => { clearTimeout(timer); document.body.classList.remove("listloading"); };
+}
+
+// Platzhalterzeilen wie #bootSkel (index.html), fuer das Nachladen.
+function skelRowsHtml(n) {
+  const row = '<div class="bsk-row"><i class="bsk-box"></i><i class="bsk-cov"></i>' +
+    '<div class="bsk-txt"><i></i><i></i></div><i class="bsk-num"></i><i class="bsk-pill"></i>' +
+    '<i class="bsk-pill s"></i><i class="bsk-bar"></i><i class="bsk-acts"></i></div>';
+  return `<div class="bootskel moreskel" aria-hidden="true">${row.repeat(n)}</div>`;
 }
 
 // ── Eigene Listen anlegen, umbenennen, loeschen ───────────────────────────
@@ -3339,7 +3546,7 @@ const MAX_FAV_SLOTS = 4;
 // (server._playlist_apply() laesst fav_slot dann unangetastet).
 function askPlaylistProps(title, current, withStyle = true, columnsView = undefined,
                           withName = true, autocompleteKey = null, titleIconHtml = null,
-                          withMerkliste = false) {
+                          withMerkliste = false, opts = {}) {
   return new Promise(resolve => {
     const ov = document.getElementById("nameOverlay");
     const input = document.getElementById("nameInput");
@@ -3393,6 +3600,9 @@ function askPlaylistProps(title, current, withStyle = true, columnsView = undefi
 
     // Ordner tragen kein eigenes Symbol -- ihr Ordnersinnbild ist die Aussage.
     styleRows.style.display = withStyle ? "" : "none";
+    // Feste Listen (opts.iconLocked): Symbol nur als Vorschau, waehlbar
+    // bleibt die Farbe (#nameStyleRows.iconlocked in app.css).
+    styleRows.classList.toggle("iconlocked", !!opts.iconLocked);
     // Zwei Modi wie bei Apples Erinnerungen: eine feste Symbol-Bibliothek
     // (einfarbig, nimmt die Badge-Vordergrundfarbe an) oder ein frei
     // gewaehltes Emoji (behaelt seine eigene Farbe -- deshalb faerbt hier
@@ -3400,9 +3610,9 @@ function askPlaylistProps(title, current, withStyle = true, columnsView = undefi
     let iconMode = (parseIcon(icon) || {}).type === "emoji" ? "emoji" : "sym";
     const emojiInput = document.getElementById("nameEmojiInput");
     const drawPreview = () => {
+      const glyph = icon && icon.startsWith("<") ? `<span class="tsym tsvg">${icon}</span>` : iconGlyphHtml(icon);
       document.getElementById("nameIconPreview").innerHTML =
-        `<span class="tbadge tcircle" style="background:${color ? plColor(color) : "var(--dim)"}">` +
-        `${iconGlyphHtml(icon)}</span>`;
+        `<span class="tbadge tsquare${color ? "" : " tplain"}"${plBadgeStyle(color)}>${glyph}</span>`;
     };
     const symInput = document.getElementById("nameSymInput");
     const symHint = document.getElementById("nameSymHint");
@@ -3523,11 +3733,13 @@ async function createPlaylistNode(kind) {
       : kind === "smart" ? t("tree.dialog_new_smart")
       : kind === "generator" ? t("gen.dialog_new")
       : t("tree.dialog_new_playlist"),
-    // Ordner haben keine eigene Tabelle -- weder Symbol/Farbe noch eine
-    // Spaltenansicht ergeben dort einen Sinn. Ein Generator zeigt statt der
-    // Tabelle seine Slots (generator.js), also ebenfalls keine Spaltenansicht.
-    null, kind !== "folder", kind === "folder" || kind === "generator" ? undefined : null,
-    true, null, null, kind === "playlist");
+    // Ordner haben kein eigenes Symbol (die Vorschau zeigt den Ordner,
+    // waehlbar ist nur die Hintergrundfarbe) und keine Tabelle, also keine
+    // Spaltenansicht. Ein Generator zeigt statt der Tabelle seine Slots
+    // (generator.js), also ebenfalls keine Spaltenansicht.
+    kind === "folder" ? {name: "", icon: TREE_FOLDER_ICONS.closed} : null, true,
+    kind === "folder" || kind === "generator" ? undefined : null,
+    true, null, null, kind === "playlist", {iconLocked: kind === "folder"});
   if (!props) return;
   const name = props.name;
   // In einen aufgeklappten Ordner hinein anlegen, wenn gerade eine Liste
@@ -3537,7 +3749,7 @@ async function createPlaylistNode(kind) {
   try {
     const data = await playlistApi("/api/playlist", {
       op: "create", kind: kind, name: name, parent_id: parent,
-      icon: props.icon, color: props.color, merkliste: props.merkliste,
+      icon: kind === "folder" ? null : props.icon, color: props.color, merkliste: props.merkliste,
       // Ein neuer Generator startet mit einer Vorlage statt leer (siehe
       // genDefaultConfig() in generator.js).
       ...(kind === "generator" ? {rules: genDefaultConfig()} : {}),
@@ -3601,10 +3813,70 @@ async function setNodeColumnView(node) {
   if (state.view === viewId) repaintColumns();
 }
 
+// Menuepunkt "Duplizieren" -- fuer eigene wie feste Listen gleich.
+function duplicateNodeItem(node) {
+  return {
+    icon: ICONS.stickyNotes, label: t("tree.duplicate"),
+    action: async () => {
+      try {
+        const isSmart = node.kind === "smart";
+        // Smart Playlists haben keine festen Eintraege -- die Kopie
+        // bekommt stattdessen Regelwerk, Symbol und Farbe des Originals.
+        // Ein Generator braucht beides: Einstellungen UND Belegung.
+        const withRules = isSmart || node.kind === "generator";
+        const copy = await playlistApi("/api/playlist", {
+          op: "create", kind: node.kind, parent_id: node.parent_id || null,
+          name: t("tree.copy_name", {name: playlistLabel(node)}),
+          ...(withRules ? {icon: node.icon, color: node.color, rules: node.rules} : {}),
+        });
+        const paths = isSmart ? [] : (PLAYLIST_ITEMS[node.id] || []);
+        if (paths.length) {
+          await playlistApi("/api/playlist-items",
+            {op: "set", id: copy.node.id, paths: paths});
+        }
+        await reloadPlaylists();
+        renderTree();
+        note(t("tree.created", {name: copy.node.name}));
+      } catch (err) { note(t("tree.create_failed", {error: err.message}), true); }
+    },
+  };
+}
+
+// Bearbeiten des festen Ordners "Pruefliste": Name und Hintergrundfarbe,
+// das Symbol (Ordner) steht gesperrt im Dialog (iconLocked).
+async function editSystemNode(node) {
+  const props = await askPlaylistProps(t("tree.dialog_edit"),
+    {...node, name: playlistLabel(node), icon: TREE_FOLDER_ICONS.closed}, true, undefined, true,
+    null, null, false, {iconLocked: true});
+  if (!props) return;
+  try {
+    await playlistApi("/api/playlist", {
+      op: "update", id: node.id, color: props.color, name: props.name,
+    });
+    await reloadPlaylists();
+    updateCards(); render();
+  } catch (err) { note(t("tree.rename_failed", {error: err.message}), true); }
+}
+
+// Bearbeiten einer festen Ansicht ohne Datenbankzeile (Alle, Genre, ...): nur
+// die Farbe, gespeichert wie ihre Position in state (state.viewColors).
+async function editViewNode(view) {
+  const props = await askPlaylistProps(t("tree.dialog_edit"),
+    {name: view.label, icon: TREE_ICONS[view.id] || "", color: state.viewColors[view.id] || null},
+    true, undefined, false, null, null, false, {iconLocked: true});
+  if (!props) return;
+  const colors = {...state.viewColors};
+  if (props.color) colors[view.id] = props.color; else delete colors[view.id];
+  state.viewColors = colors;
+  saveFilters(); renderTree(); renderPlaylistHeader();
+}
+
 function nodeMenuItems(node) {
-  // Feste Listen (db._SYSTEM_PLAYLISTS) bekommen nur, was nichts an ihnen
-  // aendert -- Bearbeiten, Duplizieren und Loeschen weist auch der Server ab.
-  // Ihre Position im Baum laesst sich trotzdem per Drag & Drop aendern.
+  // Feste Listen (db._SYSTEM_PLAYLISTS) verhalten sich so weit wie moeglich
+  // wie eigene: verschieben, sperren, duplizieren; der Ordner "Pruefliste"
+  // zusaetzlich umbenennen und einfaerben. Gesperrt bleiben Symbol, Name und
+  // Farbe der Status-Listen, Regeln und das Loeschen -- dieselbe Grenze zieht
+  // der Server.
   const locked = !!node.system;
   const spielbar = node.kind === "playlist" || node.kind === "smart" || node.kind === "generator";
 
@@ -3619,21 +3891,31 @@ function nodeMenuItems(node) {
   const entfernen = [];
 
   const userLocked = !!node.locked;
-  if (!locked) {
-    listeSelbst.push({
-      icon: userLocked ? ICONS.lockOpen : ICONS.lock,
-      label: t(userLocked ? "tree.unlock" : "tree.lock"),
-      action: async () => {
-        try {
-          await playlistApi("/api/playlist", {op: "lock", id: node.id, locked: !userLocked});
-          await reloadPlaylists();
-          renderTree(); render();
-        } catch (err) { note(err.message, true); }
-      },
-    });
-  }
+  listeSelbst.push({
+    icon: userLocked ? ICONS.lockOpen : ICONS.lock,
+    label: t(userLocked ? "tree.unlock" : "tree.lock"),
+    action: async () => {
+      try {
+        await playlistApi("/api/playlist", {op: "lock", id: node.id, locked: !userLocked});
+        await reloadPlaylists();
+        renderTree(); render();
+      } catch (err) { note(err.message, true); }
+    },
+  });
   if (!locked && (node.kind === "playlist" || node.kind === "smart") && apiMode && (MUSIC_NAME || REKORDBOX_NAME)) {
     listeSelbst.push({icon: ICONS.link, label: t("link.menu"), action: () => openLinkDialog(node)});
+    if (linksFor(node.id)) {
+      listeSelbst.push({icon: ICONS.linkSync, label: t("link.sync_now"),
+        action: () => syncLinkedPlaylist(node.id, true)});
+    }
+  }
+  // Feste Listen: nur der Ordner "Pruefliste" ist bearbeitbar (Name +
+  // Hintergrundfarbe); die Status-Listen behalten Symbol und Farbe.
+  if (locked && !userLocked && node.kind === "folder") {
+    listeSelbst.push({icon: ICONS.edit, label: t("tree.edit"), action: () => editSystemNode(node)});
+  }
+  if (spielbar && locked && !userLocked) {
+    listeSelbst.push(duplicateNodeItem(node));
   }
   if (!locked && !userLocked) {
     listeSelbst.push({
@@ -3642,14 +3924,18 @@ function nodeMenuItems(node) {
         // Spaltenansicht bewusst NICHT hier -- eigener Menuepunkt weiter unten
         // (spielbar-Block), gemeinsam mit den festen Listen, statt an zwei
         // Stellen dieselbe Einstellung aendern zu koennen.
-        const props = await askPlaylistProps(t("tree.dialog_edit"), node,
-                                             node.kind !== "folder", undefined, true, null, null,
-                                             node.kind === "playlist");
+        // Ordner: Symbol fest (Ordner), nur Name und Hintergrundfarbe.
+        const isFolder = node.kind === "folder";
+        const props = await askPlaylistProps(t("tree.dialog_edit"),
+                                             isFolder ? {...node, icon: TREE_FOLDER_ICONS.closed} : node,
+                                             true, undefined, true, null, null,
+                                             node.kind === "playlist", {iconLocked: isFolder});
         if (!props) return;
         try {
           await playlistApi("/api/playlist", {
             op: "update", id: node.id,
-            name: props.name, icon: props.icon, color: props.color,
+            name: props.name, color: props.color,
+            ...(isFolder ? {} : {icon: props.icon}),
             merkliste: props.merkliste,
           });
           await reloadPlaylists();
@@ -3664,45 +3950,17 @@ function nodeMenuItems(node) {
         action: () => openRulesDialog(node),
       });
     }
-    if (node.kind === "playlist" || node.kind === "smart" || node.kind === "generator") {
-      listeSelbst.push({
-        icon: ICONS.stickyNotes, label: t("tree.duplicate"),
-        action: async () => {
-          try {
-            const isSmart = node.kind === "smart";
-            // Smart Playlists haben keine festen Eintraege -- die Kopie
-            // bekommt stattdessen Regelwerk, Symbol und Farbe des Originals.
-            // Ein Generator braucht beides: Einstellungen UND Belegung.
-            const withRules = isSmart || node.kind === "generator";
-            const copy = await playlistApi("/api/playlist", {
-              op: "create", kind: node.kind, parent_id: node.parent_id || null,
-              name: t("tree.copy_name", {name: node.name}),
-              ...(withRules ? {icon: node.icon, color: node.color, rules: node.rules} : {}),
-            });
-            const paths = isSmart ? [] : (PLAYLIST_ITEMS[node.id] || []);
-            if (paths.length) {
-              await playlistApi("/api/playlist-items",
-                {op: "set", id: copy.node.id, paths: paths});
-            }
-            await reloadPlaylists();
-            renderTree();
-            note(t("tree.created", {name: copy.node.name}));
-          } catch (err) { note(t("tree.create_failed", {error: err.message}), true); }
-        },
-      });
-    }
+    if (spielbar) listeSelbst.push(duplicateNodeItem(node));
   }
 
   // Eigener Menuepunkt fuer JEDE spielbare Liste -- normale wie feste
   // (setNodeColumnView() baut sich die viewId selbst ueber nodeViewId() und
-  // ist damit fuer beide gleichermassen generisch). Bei festen Listen ist das
-  // der einzige Weg (Name/Symbol/Farbe sind dort gesperrt, kein Bearbeiten-
-  // Punkt); bei normalen Listen bewusst getrennt vom Bearbeiten-Dialog, damit
-  // es pro Einstellung nur eine Stelle gibt.
+  // ist damit fuer beide gleichermassen generisch). Bewusst getrennt vom
+  // Bearbeiten-Dialog, damit es pro Einstellung nur eine Stelle gibt.
   // Ein Generator zeigt keine Tabelle (generator.js) -- keine Spaltenansicht.
   if (spielbar && node.kind !== "generator") {
     ansicht.push({
-      icon: ICONS.columns3, label: t("cols.view_menu"),
+      icon: ICONS.columnView, label: t("cols.view_menu"),
       action: () => setNodeColumnView(node),
     });
   }
@@ -3759,10 +4017,42 @@ function nodeMenuItems(node) {
     });
   }
 
-  // Leere Gruppen fallen samt ihrer Trennlinie weg -- bei einer festen Liste
-  // bleibt so nur die Inhalts-Gruppe uebrig, ganz ohne Linie.
-  const gruppen = [listeSelbst, ansicht, inhalt, entfernen].filter(g => g.length);
-  return gruppen.flatMap((g, i) => i === 0 ? g : [{sep: true}, ...g]);
+  // Beschriftete Gruppen wie im Zeilenmenue (rowMoreMenuItems()); leere
+  // fallen samt Ueberschrift weg.
+  return menuGroups([
+    {head: t("bulk.group_edit"), items: listeSelbst},
+    {head: t("tree.group_view"), items: ansicht},
+    {head: t("tree.group_content"), items: inhalt},
+    {head: t("bulk.group_delete"), items: entfernen},
+  ]);
+}
+
+// Gruppen {head, items} -> Menueeintraege mit Ueberschrift ({head}, gerendert
+// von openContextMenu()). Leere Gruppen und falsy Eintraege fallen weg.
+function menuGroups(groups) {
+  const out = [];
+  for (const g of groups) {
+    const list = g.items.filter(Boolean);
+    if (list.length) out.push({head: g.head}, ...list);
+  }
+  return out;
+}
+
+// "..."-Menue der TrackTab-Wurzel: Neu anlegen + M3U-Import (frueher eine
+// Knopfleiste im Kopf der Seitenleiste), aufgebaut wie extMenuItems().
+function tracktabRootMenuItems() {
+  return menuGroups([
+    {head: t("tree.group_new"), items: [
+      {icon: ICONS.listPlus, label: t("tree.new_playlist"), action: () => createPlaylistNode("playlist")},
+      {icon: SVG(LUCIDE_ICONS["book-a"]), label: t("tree.new_smart"), action: () => createPlaylistNode("smart")},
+      {icon: SVG(LUCIDE_ICONS["book-headphones"]), label: t("gen.new"), action: () => createPlaylistNode("generator")},
+      {icon: ICONS.folder, label: t("tree.new_folder"), action: () => createPlaylistNode("folder")},
+    ]},
+    {head: t("tree.group_import"), items: [
+      {icon: SVG(LUCIDE_ICONS["file-up"]), label: t("tree.import_m3u"),
+       action: () => document.getElementById("m3uImportFile").click()},
+    ]},
+  ]);
 }
 
 function openNodeMenu(node, el) {
@@ -3791,11 +4081,11 @@ function viewRows(view) {
 // Nur fuer Listen exportierbar, bei denen ein Export als Playlist Sinn
 // ergibt -- "gone" (Datei fehlt) haette keine spielbaren Pfade, "corrected"
 // deckt der Toolbar-Knopf "Playlist Export" (M3U8) bereits ab.
-const SYS_EXPORTABLE_VIEWS = new Set(["all", "ignored", "duplicates", "grp:genre", "grp:album", "grp:artist"]);
+const SYS_EXPORTABLE_VIEWS = new Set(["all", "recent", "ignored", "duplicates", "grp:genre", "grp:album", "grp:artist"]);
 function sysMenuItems(view) {
-  const items = [{icon: ICONS.columns3, label: t("cols.view_menu"), action: () => setViewColumnView(view)}];
+  const ansicht = [{icon: ICONS.columnView, label: t("cols.view_menu"), action: () => setViewColumnView(view)}];
+  const items = [];
   const exportable = SYS_EXPORTABLE_VIEWS.has(view.id);
-  if (exportable) items.push({sep: true});
   // "Zur Warteschlange hinzufuegen" fuer die drei "Aufraeumen"-Listen --
   // anders als der Export ergibt das fuer Ausgeblendet/Duplikate keinen
   // typischen Zweck. Fuer Merklisten uebernimmt das der normale
@@ -3826,7 +4116,11 @@ function sysMenuItems(view) {
       },
     });
   }
-  return items;
+  return menuGroups([
+    {head: t("bulk.group_edit"), items: [{icon: ICONS.edit, label: t("tree.edit"), action: () => editViewNode(view)}]},
+    {head: t("tree.group_view"), items: ansicht},
+    {head: t("tree.group_content"), items},
+  ]);
 }
 function openViewMenu(view, el) {
   openContextMenu(sysMenuItems(view), el);
@@ -3836,12 +4130,15 @@ function openViewMenu(view, el) {
 // von selbst neu (st.loaded bleibt stehen, siehe loadExtTree()) -- einziger
 // Menuepunkt stoesst das gezielt wieder an.
 function extMenuItems(source) {
-  return [
-    {icon: ICONS.listPlus, label: t("tree.dialog_new_playlist"), action: () => createExtNode(source, null, false)},
-    {icon: ICONS.folder, label: t("tree.dialog_new_folder"), action: () => createExtNode(source, null, true)},
-    {sep: true},
-    {icon: ICONS.reanalyse, label: t("tree.reload"), action: () => reloadExtTree(source)},
-  ];
+  return menuGroups([
+    {head: t("tree.group_new"), items: [
+      {icon: ICONS.listPlus, label: t("tree.dialog_new_playlist"), action: () => createExtNode(source, null, false)},
+      {icon: ICONS.folder, label: t("tree.dialog_new_folder"), action: () => createExtNode(source, null, true)},
+    ]},
+    {head: t("tree.group_source"), items: [
+      {icon: ICONS.reanalyse, label: t("tree.reload"), action: () => reloadExtTree(source)},
+    ]},
+  ]);
 }
 
 // ── Verknuepfte Playlisten (playlistsync.py) ───────────────────────────────
@@ -3903,7 +4200,7 @@ function renderLinkHeader(node) {
   el.hidden = false;
   el.innerHTML = `${ICONS.link}<span>${esc(Object.values(links).map(l => t(l.source === "music" ? "tree.root_music" : "tree.root_rekordbox")).join(" + "))}</span>
     <span${state !== "ok" ? ' class="warn"' : ""}>${esc(state === "ok" ? t("link.synced_at", {when}) : t("link.state_" + state))}</span>
-    <button type="button" class="act small" id="plHeadLinkSync">${esc(t(LINK_RUNNING.has(String(node.id)) ? "link.syncing" : "link.sync_now"))}</button>`;
+    <button type="button" class="act small" id="plHeadLinkSync"><span class="btnicon">${ICONS.linkSync}</span> ${esc(t(LINK_RUNNING.has(String(node.id)) ? "link.syncing" : "link.sync_now"))}</button>`;
   const btn = document.getElementById("plHeadLinkSync");
   btn.disabled = LINK_RUNNING.has(String(node.id));
   btn.onclick = () => syncLinkedPlaylist(node.id, true);
@@ -4153,19 +4450,23 @@ function extBusyClass(n) {
 // muss geschlossen sein, weiches Loeschen wie Rekordbox selbst), Music.app per
 // AppleScript. Smart Playlists lassen sich nur umbenennen und loeschen.
 function extNodeMenuItems(source, node) {
-  const items = [];
-  if (node.kind === "folder") {
-    items.push({icon: ICONS.listPlus, label: t("tree.dialog_new_playlist"), action: () => createExtNode(source, node.id, false)});
-    items.push({icon: ICONS.folder, label: t("tree.dialog_new_folder"), action: () => createExtNode(source, node.id, true)});
-    items.push({sep: true});
-  }
-  if (source === "rekordbox" && node.kind === "playlist") {
-    items.push({icon: djIcon("upload"), label: t("rbpush.menu"), action: () => pushRekordboxPlaylist(node)});
-    items.push({sep: true});
-  }
-  items.push({icon: ICONS.edit, label: t("tree.rename"), action: () => renameExtNode(source, node)});
-  items.push({icon: ICONS.trash, cls: "del", label: t("tree.delete"), action: () => deleteExtNode(source, node)});
-  return items;
+  const folder = node.kind === "folder";
+  return menuGroups([
+    {head: t("tree.group_new"), items: [
+      folder && {icon: ICONS.listPlus, label: t("tree.dialog_new_playlist"), action: () => createExtNode(source, node.id, false)},
+      folder && {icon: ICONS.folder, label: t("tree.dialog_new_folder"), action: () => createExtNode(source, node.id, true)},
+    ]},
+    {head: t("bulk.group_rekordbox"), items: [
+      source === "rekordbox" && node.kind === "playlist" &&
+        {icon: ICONS.linkSync, label: t("rbpush.menu"), action: () => pushRekordboxPlaylist(node)},
+    ]},
+    {head: t("bulk.group_edit"), items: [
+      {icon: ICONS.edit, label: t("tree.rename"), action: () => renameExtNode(source, node)},
+    ]},
+    {head: t("bulk.group_delete"), items: [
+      {icon: ICONS.trash, cls: "del", label: t("tree.delete"), action: () => deleteExtNode(source, node)},
+    ]},
+  ]);
 }
 
 // Baum-Kennung "<source>:<id>" -> {source, node} eines fremden Knotens, sonst null.
@@ -4788,11 +5089,6 @@ async function initStorage() {
       // Ohne Server gibt es nichts zu beenden -- dann bleibt der Knopf weg,
       // statt beim Klick in einen Netzwerkfehler zu laufen.
       document.getElementById("btnQuit").style.display = "";
-      // Ohne Server laesst sich keine Liste speichern -- dann bleiben die
-      // Knoepfe weg, statt beim Klick in einen Netzwerkfehler zu laufen
-      // (gleiche Regel wie bei btnQuit). Der Baum selbst funktioniert auch
-      // ohne Server, er zeigt dann nur die festen Knoten.
-      document.querySelector(".treehead-actions").style.display = "";
       await syncMarks();
       loadPlaylistLinks().then(() => setTimeout(syncAllLinks, 3000));
       fetch("/api/settings").then(r => r.json()).then(s => {
@@ -5468,6 +5764,39 @@ function syncDetailWidth() {
 window.addEventListener("resize", syncDetailWidth);
 window.addEventListener("resize", syncStickyHeadPosition);
 
+// Breite einer Spalte an den breitesten Inhalt der gerade gezeichneten Zeilen
+// anpassen (Doppelklick auf den Griff). Gemessen wird ueber scrollWidth bei
+// voruebergehend minimaler Breite: Zellen haben overflow:hidden, ihr Inhalt
+// laeuft dann ueber und scrollWidth nennt seine volle Breite -- so kann die
+// Spalte auch schmaler werden. Kopfzeile zaehlt mit (Titel + Sortierpfeil).
+// Zeilen mit anderer Zellenzahl (Gruppenkoepfe, Detailzeilen) fallen weg.
+// Gilt fuer die Tabelle, in der der Griff sitzt (Bibliothek oder
+// Einzelpruefungen), nie fuer die angeheftete Kopie der Kopfzeile.
+function autoFitColumn(th) {
+  const k = th.dataset.k;
+  const table = th.closest("table");
+  if (!table || !k) return;
+  // Ausgeblendete Spalten haben einen (unsichtbaren) Kopf, aber keine Zelle.
+  const ths = [...th.parentNode.children].filter(h => h.style.display !== "none");
+  const idx = ths.indexOf(th);
+  if (idx === -1) return;
+  const MIN = 40, MAX = 900;
+  th.style.width = MIN + "px";
+  syncTableWidths(false);
+  let w = th.scrollWidth;
+  for (const tr of table.tBodies[0] ? table.tBodies[0].rows : []) {
+    if (tr.cells.length !== ths.length || tr.classList.contains("detail")) continue;
+    const td = tr.cells[idx];
+    if (td && td.offsetParent !== null) w = Math.max(w, td.scrollWidth);
+  }
+  w = Math.min(MAX, Math.max(MIN, Math.ceil(w) + 2));
+  state.colWidths[k] = w;
+  th.style.width = w + "px";
+  syncTableWidths();
+  syncStickyHeadContent();
+  saveColumns();
+}
+
 function initColumnResize(ths) {
   const list = ths || document.querySelectorAll("table thead th[data-k]:not([data-reorder])");
   list.forEach(th => {
@@ -5475,6 +5804,8 @@ function initColumnResize(ths) {
     const handle = document.createElement("span");
     handle.className = "colresize";
     handle.onclick = e => e.stopPropagation();   // sonst sortiert ein Klick auf den Griff mit
+    // Doppelklick: Spalte so breit wie ihr breitester angezeigter Inhalt (wie Excel).
+    handle.ondblclick = e => { e.preventDefault(); e.stopPropagation(); autoFitColumn(th); };
     handle.onmousedown = e => {
       e.preventDefault();
       e.stopPropagation();
@@ -7272,10 +7603,30 @@ let lastSelPos = null;      // Shift-Klick-Anker — verfällt bei jeder neuen Z
 // Stand als freshFrom, damit render() nur die neu hinzugekommenen Zeilen mit
 // der Fade-in-Klasse "fresh" versieht (nicht die schon sichtbaren, sonst
 // wuerde z.B. auch ein Sortierklick alte Zeilen erneut einfaden lassen).
+// Nachladen: erst Platzhalterzeilen in #more zeichnen lassen, dann im
+// naechsten Bild rendern -- ein render() fuer viele Zeilen haelt den Thread
+// sonst ohne sichtbare Rueckmeldung an. loadMorePending verhindert, dass
+// Endlos-Scrollen waehrenddessen ein zweites Nachladen anstoesst.
+let loadMorePending = false;
 function beginLoadMore(rows, targetShown) {
-  freshFrom = state.shown;
-  state.shown = Math.min(targetShown, rows.length);
-  render();
+  if (loadMorePending) return;
+  loadMorePending = true;
+  const more = document.getElementById("more");
+  if (more) more.innerHTML = skelRowsHtml(Math.min(4, Math.max(1, targetShown - state.shown)));
+  // Bild abwarten, damit die Platzhalter gezeichnet sind. In einem
+  // Hintergrund-Tab feuert requestAnimationFrame nicht -- der Zeitgeber
+  // springt dann ein, sonst bliebe das Nachladen haengen.
+  let done = false;
+  const go = () => {
+    if (done) return;
+    done = true;
+    loadMorePending = false;
+    freshFrom = state.shown;
+    state.shown = Math.min(targetShown, rows.length);
+    render();
+  };
+  requestAnimationFrame(() => setTimeout(go, 0));
+  setTimeout(go, 150);
 }
 
 // ── "Weitere Optionen"-Menue je Zeile ────────────────────────────────────
@@ -7379,7 +7730,21 @@ function rowMoreMenuItems(r) {
       withRb && (rbList || (r.rb && !r.ext)) && {icon: ICONS.delete, cls: "del", label: t("rb.remove_from_collection"),
         action: () => removeFromRekordboxCollection([r])},
     ]});
+    groups.push({head: t("bulk.group_edit"), items: [
+      layout === "dj" && live && {icon: ICONS.edit, label: t("action.edit_tags"), action: () => openTagsPopup(r)},
+      live && {icon: ICONS.convert, title: t("bulk.convert_title"),
+        label: t("rowmenu.convert"), action: () => openConvertPopup([r], false)},
+      live && isFixable(r) && {icon: ICONS.fix, title: t("action.fix_bitrate", {kbps: r.mk}),
+        label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r)},
+      live && !r.ext && {icon: ICONS.renameFile, title: t("action.rename_library_title"),
+        label: t("rowmenu.rename_file"), action: () => renameLibraryRows([r])},
+      apiMode && keyNeedsSync(r) && {icon: ICONS.keySync, title: t("action.write_key_title", {example: keyNotationExample()}),
+        label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r])},
+    ]});
+    // "Track neu analysieren" zuerst (Nutzervorgabe).
     groups.push({head: t("bulk.group_analysis"), items: [
+      live && !r.ext && {icon: ICONS.rescan, title: t("action.rescan"),
+        label: t("rowmenu.rescan"), action: () => rescanRow(r)},
       live && BPMKEY_AVAILABLE && {icon: ICONS.analyseBpmKey, title: t("action.bpmkey_title"),
         label: t("rowmenu.bpmkey"), action: () => analyseBpmKey([r])},
       live && GENREMOOD_AVAILABLE && {icon: ICONS.analyseGenreMood, title: t("action.genremood_title"),
@@ -7392,19 +7757,6 @@ function rowMoreMenuItems(r) {
         label: t("rowmenu.phrases"), action: () => analysePhrases([r], false, "both")},
       live && STEMS_AVAILABLE && {icon: ICONS.splitStems, title: t("action.stems_title"),
         label: t("rowmenu.stems"), action: () => openStemsDialog(r)},
-      live && !r.ext && {icon: ICONS.rescan, title: t("action.rescan"),
-        label: t("rowmenu.rescan"), action: () => rescanRow(r)},
-    ]});
-    groups.push({head: t("bulk.group_edit"), items: [
-      layout === "dj" && live && {icon: ICONS.edit, label: t("action.edit_tags"), action: () => openTagsPopup(r)},
-      live && {icon: ICONS.convert, title: t("bulk.convert_title"),
-        label: t("rowmenu.convert"), action: () => openConvertPopup([r], false)},
-      live && isFixable(r) && {icon: ICONS.fix, title: t("action.fix_bitrate", {kbps: r.mk}),
-        label: t("rowmenu.fix_bitrate"), action: () => openFixPopup(r)},
-      live && !r.ext && {icon: ICONS.renameFile, title: t("action.rename_library_title"),
-        label: t("rowmenu.rename_file"), action: () => renameLibraryRows([r])},
-      apiMode && keyNeedsSync(r) && {icon: ICONS.keySync, title: t("action.write_key_title", {example: keyNotationExample()}),
-        label: t("rowmenu.write_key"), action: () => writeKeyToFiles([r])},
     ]});
     groups.push({head: t("bulk.group_check"), items: [
       !r.gone && {icon: r.mc ? ICONS.uncorrect : ICONS.correct, cls: "corr",
@@ -7446,7 +7798,7 @@ function openRowMoreMenu(r, btn) {
 // Positionierung per getBoundingClientRect() und das Umklappen nach oben
 // gelten dort genauso, und zwei parallele Menue-Implementierungen wuerden
 // beim Schliessen (Klick daneben, Escape, Scrollen) auseinanderlaufen.
-function openContextMenu(items, btn) {
+function openContextMenu(items, btn, point = null) {
   const menu = document.getElementById("rowMoreMenu");
   if (!menu) return;
   const reopening = menu._forBtn === btn;
@@ -7471,12 +7823,18 @@ function openContextMenu(items, btn) {
   menu._forBtn = btn;
   btn.classList.add("open");
   menu.classList.add("show");
-  const rect = btn.getBoundingClientRect();
   const mw = menu.offsetWidth, mh = menu.offsetHeight;
-  let left = rect.right - mw;
-  if (left < 4) left = 4;
-  let top = rect.bottom + 4;
-  if (top + mh > window.innerHeight - 4) top = Math.max(4, rect.top - mh - 4);
+  let left, top;
+  if (point) {
+    // Rechtsklick: an der Maus, nach links/oben umklappen, wenn kein Platz ist.
+    left = point.x + mw > window.innerWidth - 4 ? Math.max(4, point.x - mw) : point.x;
+    top = point.y + mh > window.innerHeight - 4 ? Math.max(4, point.y - mh) : point.y;
+  } else {
+    const rect = btn.getBoundingClientRect();
+    left = Math.max(4, rect.right - mw);
+    top = rect.bottom + 4;
+    if (top + mh > window.innerHeight - 4) top = Math.max(4, rect.top - mh - 4);
+  }
   menu.style.left = `${left}px`;
   menu.style.top = `${top}px`;
 }
@@ -7486,6 +7844,52 @@ document.addEventListener("click", ev => {
       && !ev.target.closest("[data-nodemenu]")) closeRowMoreMenu();
 });
 document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeRowMoreMenu(); });
+
+// Rechtsklick = dasselbe Menue wie der "..."-Knopf, an der Mausposition:
+// Trackzeilen der Tabelle (rowMoreMenuItems()) und jeder Knoten im Listenbaum
+// (Menue je nach Knotenart, siehe treeMenuItemsFor()). Ohne Menue bleibt das
+// Kontextmenue des Browsers.
+document.addEventListener("contextmenu", ev => {
+  const pt = {x: ev.clientX, y: ev.clientY};
+  const node = ev.target.closest("#tree .treenode");
+  if (node) {
+    const span = node.querySelector(".tmenu");
+    const items = span ? treeMenuItemsFor(span) : [];
+    if (!items.length) return;
+    ev.preventDefault();
+    openContextMenu(items, span, pt);
+    return;
+  }
+  const tr = ev.target.closest("#tb tr.row[data-i]");
+  if (!tr || ev.target.closest("input, textarea, select, [contenteditable]")) return;
+  const r = DATA[+tr.dataset.i];
+  const items = r ? rowMoreMenuItems(r) : [];
+  if (!items.length) return;
+  ev.preventDefault();
+  openContextMenu(items, tr, pt);
+});
+
+// Menueeintraege zum "..."-Knopf eines Baumknotens (dieselben Daten-Attribute
+// wie die Klick-Handler in renderTree()).
+function treeMenuItemsFor(span) {
+  const d = span.dataset;
+  if (d.nodemenu) {
+    const node = PLAYLISTS.find(n => n.id === d.nodemenu);
+    return node ? nodeMenuItems(node) : [];
+  }
+  if (d.viewmenu) {
+    const view = VIEWS.find(v => v.id === d.viewmenu);
+    return view ? sysMenuItems(view) : [];
+  }
+  if (d.extmenu) return extMenuItems(d.extmenu);
+  if (d.rootmenu) return tracktabRootMenuItems();
+  if (d.extnode) {
+    const [source, ...rest] = d.extnode.split(":");
+    const node = (EXT_TREES[source] || {nodes: []}).nodes.find(n => String(n.id) === rest.join(":"));
+    return node ? extNodeMenuItems(source, node) : [];
+  }
+  return [];
+}
 window.addEventListener("scroll", closeRowMoreMenu, {passive: true, capture: true});
 window.addEventListener("resize", closeRowMoreMenu);
 
@@ -8298,7 +8702,9 @@ function bulkRekordboxGroup(rows) {
 // reanalyseDrops()), deshalb als Funktion uebergeben.
 function bulkAnalysisGroup(rows, {rescan = null, autocue = false, isDrop = false} = {}) {
   const phrases = bulkPhrasesShown(rows, isDrop), anaHint = t("bulk.dj_analyse_title");
+  // Reihenfolge wie im Zeilenmenue: "Track neu analysieren" zuerst.
   return {label: t("bulk.group_analysis"), items: [
+    rescan && {icon: ICONS.rescan, title: t("action.rescan"), run: rescan},
     bulkBpmKeyShown(rows, isDrop) && {icon: ICONS.analyseBpmKey, title: t("action.bpmkey_title"), run: () => analyseBpmKey(rows, isDrop)},
     bulkGenreMoodShown(rows, isDrop) && {icon: ICONS.analyseGenreMood, title: t("action.genremood_title"), run: () => analyseGenreMood(rows, isDrop)},
     phrases && {icon: ICONS.analyseGrid, title: t("bulk.dj_grid"), hint: anaHint, run: () => analysePhrases(rows, isDrop, "grid")},
@@ -8307,7 +8713,6 @@ function bulkAnalysisGroup(rows, {rescan = null, autocue = false, isDrop = false
       run: () => analysePhrases(rows, isDrop, "both")},
     autocue && apiMode && AUTOCUE_AVAILABLE && {icon: SVG(LUCIDE_ICONS["square-sparkles"] || ""), title: t("bulk.dj_autocue"),
       hint: t("bulk.dj_autocue_title"), run: () => djBulkAutoCue(rows)},
-    rescan && {icon: ICONS.rescan, title: t("action.rescan"), run: rescan},
   ]};
 }
 
@@ -8361,7 +8766,6 @@ function renderBulkBar() {
     bulkListsGroup(rows),
     bulkFavoritesGroup(rows),
     bulkRekordboxGroup(rows),
-    bulkAnalysisGroup(rows, {rescan: () => bulkApply("rescan"), autocue: isDj && apiMode}),
     {label: t("bulk.group_edit"), items: [
       apiMode && {icon: ICONS.edit, title: t("bulk.edit_tags_title"), run: () => {
         if (rows.length === 1) openTagsPopup(rows[0], false);
@@ -8374,6 +8778,7 @@ function renderBulkBar() {
       bulkKeySyncShown(rows, false) && {icon: ICONS.keySync, title: t("action.write_key_title", {example: keyNotationExample()}),
         run: () => writeKeyToFiles(rows, false)},
     ]},
+    bulkAnalysisGroup(rows, {rescan: () => bulkApply("rescan"), autocue: isDj && apiMode}),
     {label: t("bulk.group_check"), items: [
       anyNonGone && {icon: ICONS.correct, title: t("bulk.correct_title"), run: () => bulkApply("correct")},
       anyNonGone && {icon: ICONS.uncorrect, title: t("bulk.uncorrect_title"), run: () => bulkApply("uncorrect")},
@@ -9309,6 +9714,7 @@ function stopPlayerFor(path) {
   // sonst auf der alten URL stehen).
   if (queueState.current && queueState.current.p === path) {
     queueAudio.pause();
+    queueMemDrop();
     queueState.current = null;
     renderPlayerBar();
   }
@@ -12018,7 +12424,7 @@ function renderSettings() {
 const SETTINGS_PAGES = [
   {id: "general", icon: "library-big", nav: "settings.nav_general", label: "settings.page_general",
    groups: ["library", "display", "search"]},
-  {id: "views", icon: "columns-3", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviews"]},
+  {id: "views", icon: "table-properties", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviews"]},
   {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename"]},
   {id: "djview", icon: "disc-3", nav: "settings.nav_general", label: "settings.page_djview", groups: ["djview"]},
   {id: "autocue", icon: "square-sparkles", nav: "settings.nav_general", label: "settings.page_autocue",
@@ -13844,6 +14250,9 @@ let scanRunning = false;
 
 async function startScan(force, extra = {}) {
   if (!apiMode) { note(t("scan.needs_server"), "soft"); return; }
+  // Player und DJ sind waehrend eines Scans gesperrt (applyLayout()); seit
+  // die Quellen dort erreichbar sind, wechselt ein Scan-Start nach Bearbeiten.
+  if (state.layout !== "edit") applyLayout("edit");
   try {
     const res = await fetch("/api/scan", {method: "POST",
       headers: {"Content-Type": "application/json"},
@@ -14972,7 +15381,11 @@ function mountDropPlayer(root, r) {
 // Player-Ansicht bedient. Die Warteschlange haengt an eigenen Arrays --
 // unabhaengig von state.shown/Pagination und davon, was gerade im DOM steht.
 const queueAudio = new Audio();
-queueAudio.preload = "metadata";
+// "auto": den laufenden Track vorpuffern (vom eigenen Server in Sekunden
+// komplett) -- Spruenge in der Wellenform liegen dann im Puffer und brauchen
+// keine neue Range-Anfrage. Eine Quelle bekommt das Element erst beim
+// Abspielen (loadQueueTrack()), vorher laedt es nichts.
+queueAudio.preload = "auto";
 // tracks = Pool der NOCH NICHT gespielten Tracks (Anzeige-/Drag&Drop-
 // Reihenfolge; bei Shuffle wird daraus zufaellig statt der Reihe nach
 // gezogen). current = gerade geladener Track oder null. history = bereits
@@ -15112,10 +15525,82 @@ function flashDoneBtn(btn) {
 // (History bei normalem Vorruecken, zurueck in den Pool bei "Vorheriger" --
 // siehe advanceFromPool()/queuePrev()), deshalb kein impliziter Seiteneffekt
 // hier.
+// ── Speicherkopie fuer schnelle Spruenge (Safari) ─────────────────────────
+// Safari (AVFoundation) laedt bei jedem Sprung in einer HTTP-Quelle neu und
+// wartet spuerbar, bis es weiterspielt; Chromium springt auch ueber HTTP in
+// wenigen Millisekunden. Deshalb laedt der Player in Safari den laufenden
+// Track im Hintergrund einmal komplett (Blob) und schaltet beim ERSTEN Sprung
+// auf diese Kopie um -- jeder weitere Sprung liegt dann im Speicher. Die
+// Wiedergabe startet weiter sofort ueber HTTP (kein Warten auf den Download,
+// und play() bleibt in der Nutzergeste). Grosse Dateien (> QUEUE_MEM_MAX)
+// bleiben bei HTTP. Abgeraeumt bei Trackwechsel und stopPlayerFor().
+// localStorage "tracktab.queueMem" = "1"/"0" erzwingt bzw. sperrt die Kopie
+// in jedem Browser (zum Testen und Vergleichen).
+const QUEUE_MEM_ENABLED = (() => {
+  try {
+    const force = localStorage.getItem("tracktab.queueMem");
+    if (force === "1" || force === "0") return force === "1";
+  } catch (e) { /* kein localStorage -> Browserweiche */ }
+  return /^((?!chrome|chromium|crios|fxios|android|edg).)*safari/i.test(navigator.userAgent);
+})();
+const QUEUE_MEM_MAX = 150 * 1024 * 1024;
+var QUEUE_MEM = {path: null, url: null, ctrl: null};
+
+function queueMemDrop() {
+  if (QUEUE_MEM.ctrl) QUEUE_MEM.ctrl.abort();
+  if (QUEUE_MEM.url) URL.revokeObjectURL(QUEUE_MEM.url);
+  QUEUE_MEM = {path: null, url: null, ctrl: null};
+}
+
+function queueMemPrefetch(r) {
+  if (!QUEUE_MEM_ENABLED || !apiMode || !r || !r.p || r.gone) return;
+  if (QUEUE_MEM.path === r.p) return;
+  queueMemDrop();
+  const mem = QUEUE_MEM = {path: r.p, url: null, ctrl: new AbortController()};
+  fetch("/api/audio?path=" + encodeURIComponent(r.p), {signal: mem.ctrl.signal})
+    .then(res => {
+      const len = Number(res.headers.get("Content-Length") || 0);
+      if (!res.ok || !len || len > QUEUE_MEM_MAX) { mem.ctrl.abort(); return null; }
+      return res.blob();
+    })
+    .then(blob => {
+      if (!blob || QUEUE_MEM !== mem) return;
+      mem.url = URL.createObjectURL(blob);
+      mem.ctrl = null;
+    })
+    .catch(() => {});
+}
+
+// Einziger Weg fuer Spruenge im globalen Player (Wellenform, Fortschritts-
+// balken, Cues, Generator). Liegt die Speicherkopie bereit und spielt der
+// Player noch ueber HTTP, wird umgeschaltet: neue Quelle mit Zielposition
+// (Medienfragment, Rueckfall pendingSeek in onloadedmetadata).
+function queueSeek(t) {
+  if (!isFinite(t)) return;
+  const cur = queueState.current;
+  const mem = QUEUE_MEM;
+  if (cur && mem.url && mem.path === cur.p && !queueAudio.src.startsWith("blob:")) {
+    const wasPlaying = !queueAudio.paused;
+    pendingSeek = t;
+    queueAudio.src = `${mem.url}#t=${Math.max(0, t).toFixed(3)}`;
+    // AbortError = ein weiterer Quellwechsel kam dazwischen, kein Fehler.
+    if (wasPlaying) queueAudio.play().catch(err => { if (err.name !== "AbortError") playFailed(queueAudio, err); });
+    return;
+  }
+  queueAudio.currentTime = t;
+}
+
 function loadQueueTrack(r) {
   if (!r) return;
   queueState.current = r;
-  queueAudio.src = "/api/audio?path=" + encodeURIComponent(r.p);
+  queueMemPrefetch(r);
+  // Klick in die Wellenform/auf einen Cue eines noch nicht geladenen Tracks
+  // (pendingSeek): die Zielposition als Medienfragment mitgeben, dann laedt
+  // der Browser gleich ab dort. Vorher lud er ab 0 und sprang erst nach den
+  // Metadaten -- zwei Ladevorgaenge hintereinander, hoerbar als Verzoegerung.
+  const frag = pendingSeek != null && isFinite(pendingSeek) && pendingSeek > 0
+    ? `#t=${pendingSeek.toFixed(3)}` : "";
+  queueAudio.src = "/api/audio?path=" + encodeURIComponent(r.p) + frag;
   queueAudio.play().catch(err => playFailed(queueAudio, err));
   renderPlayerBar();
   renderQueuePopup();
@@ -15442,7 +15927,7 @@ function mountLibraryPlayer(root, r) {
     const frac = Math.min(1, Math.max(0, (ev.clientX - rect.left) / rect.width));
     const seekTo = hit ? hit.position_s : (isFinite(duration) ? waveTimeAt(entry, frac, duration) : null);
     if (current) {
-      if (seekTo != null) queueAudio.currentTime = seekTo;
+      if (seekTo != null) queueSeek(seekTo);
       if (queueAudio.paused) queueAudio.play().catch(err => playFailed(queueAudio, err));
       requestWavePaint();
     } else {
@@ -15512,7 +15997,7 @@ function setupSeekDrag() {
     moveRaf = 0;
     if (pendingFrac == null) return;
     const d = queueAudio.duration;
-    if (isFinite(d) && d > 0) queueAudio.currentTime = pendingFrac * d;
+    if (isFinite(d) && d > 0) queueSeek(pendingFrac * d);
     pendingFrac = null;
     requestWavePaint();
   };
@@ -16289,7 +16774,6 @@ function renderDropBulkBar() {
   // editierbaren Zielwert ab.
   const canFix = rows.length === 1 && rows[0].nativePath && isFixable(rows[0]);
   const groups = [
-    bulkAnalysisGroup(rows, {isDrop: true, rescan: btn => rescanDropsBulk(btn)}),
     {label: t("bulk.group_edit"), items: [
       {icon: ICONS.edit, title: t("bulk.edit_tags_title"), run: () => {
         const sel = selectedDrops();
@@ -16303,6 +16787,7 @@ function renderDropBulkBar() {
       bulkKeySyncShown(rows, true) && {icon: ICONS.keySync, title: t("action.write_key_title", {example: keyNotationExample()}),
         run: () => writeKeyToFiles(selectedDrops(), true)},
     ]},
+    bulkAnalysisGroup(rows, {isDrop: true, rescan: btn => rescanDropsBulk(btn)}),
     {label: t("action.group_open"), items: [
       MIK_NAME && {icon: appIcon("mik", MIK_NAME), title: t("bulk.open_in_mik_title"), run: async btn => {
         const sel = selectedDrops();
@@ -16577,7 +17062,12 @@ function initDropzone() {
     setDropsVisible(false);
     renderDrops();
   };
-  document.getElementById("btnOpenFile").onclick = () => document.getElementById("dropPick").click();
+  // In allen Ansichten erreichbar (Nutzervorgabe). Der Player hat keine
+  // Einzelpruefung (siehe oben) -- dort wechselt der Knopf erst nach Bearbeiten.
+  document.getElementById("btnOpenFile").onclick = () => {
+    if (state.layout === "player") applyLayout("edit");
+    document.getElementById("dropPick").click();
+  };
   // Ohne Server (Fallback) bleibt nur die Browser-Dateiauswahl -- die
   // verrät nie den echten Pfad (siehe handleDropped/analyseFile), Import in
   // die Music-Bibliothek geht dann nicht (r.nativePath bleibt unset). Läuft der
@@ -16938,8 +17428,8 @@ document.addEventListener("keydown", ev => {
   for (const pl of players.values()) pl.audio.pause();
   if (queueState.current && queueState.current.i === targetR.i) {
     // Markierter Track laeuft bereits im Player -- direkt springen, wie zuvor.
-    queueAudio.currentTime = cue.position_s;
-    queueAudio.play().catch(err => playFailed(queueAudio, err));
+    queueSeek(cue.position_s);
+    if (queueAudio.paused) queueAudio.play().catch(err => playFailed(queueAudio, err));
   } else {
     // Markierter Track ist (noch) nicht geladen -- erst starten, die
     // Zielposition zieht queueAudio.onloadedmetadata dann per pendingSeek
@@ -17028,8 +17518,12 @@ queueAudio.onplay = () => {
   // kein Einzelpruefungs-Player mehr gleichzeitig laufen.
   for (const p of players.values()) p.audio.pause();
   listenTrackStart(queueState.current, queueAudio);
+  // Nach dem Neuladen wiederhergestellter Track (ohne loadQueueTrack()).
+  queueMemPrefetch(queueState.current);
   renderPlayerBar();
   scheduleWavePaint();
+  // Laufenden Slot im Playlist-Generator markieren (generator.js).
+  if (typeof genSyncPlaying === "function") genSyncPlaying();
 };
 queueAudio.onpause = () => { renderPlayerBar(); requestWavePaint(); };
 queueAudio.onseeked = () => requestWavePaint();
@@ -17039,7 +17533,12 @@ queueAudio.onloadedmetadata = () => {
   // Wellenform-/Cue-Klick auf eine noch nicht aktuelle Bibliothekszeile
   // (siehe mountLibraryPlayer()): die Zielposition konnte erst jetzt gesetzt
   // werden, da die Dauer vorher nicht feststand.
-  if (pendingSeek != null) { queueAudio.currentTime = pendingSeek; pendingSeek = null; }
+  // Mit Medienfragment (loadQueueTrack()) steht die Position schon -- dann
+  // nicht erneut setzen, sonst folgt doch noch ein zweiter Sprung.
+  if (pendingSeek != null) {
+    if (Math.abs(queueAudio.currentTime - pendingSeek) > 0.05) queueAudio.currentTime = pendingSeek;
+    pendingSeek = null;
+  }
   // Erst mit der Dauer lassen sich Cue-Marker platzieren. Ein Entwerten der
   // statischen Ebene braucht es dafuer nicht -- die Marker stecken nicht
   // darin, sondern werden pro Bild gezeichnet (siehe paintWaveEntry()), und
@@ -18638,11 +19137,6 @@ setSidebarWidth(state.sidebarW);
 initSidebarResize();
 document.getElementById("plUndo").onclick = () => runUndo("undo");
 document.getElementById("plRedo").onclick = () => runUndo("redo");
-document.getElementById("btnNewPlaylist").onclick = () => createPlaylistNode("playlist");
-document.getElementById("btnNewSmart").onclick = () => createPlaylistNode("smart");
-document.getElementById("btnNewGenerator").onclick = () => createPlaylistNode("generator");
-document.getElementById("btnNewFolder").onclick = () => createPlaylistNode("folder");
-document.getElementById("btnImportM3u").onclick = () => document.getElementById("m3uImportFile").click();
 document.getElementById("m3uImportFile").onchange = async ev => {
   const file = ev.target.files[0];
   ev.target.value = "";

@@ -223,7 +223,7 @@ Für die verlässlichste Wiedergabe aller unterstützten Formate empfiehlt sich 
 
 ## Bibliothek scannen
 
-**Wo ist der Button?** Oben rechts neben „Einstellungen" sitzt eine kompakte Icon-Leiste mit drei Symbolen: **Statistik**, **Quellen** (Datenbank-Symbol) und **Datei öffnen**. „Quellen" öffnet ein Menü mit „Bibliothek scannen", „Rekordbox abgleichen" und „Music.app abgleichen" (die beiden letzten nur, wenn die jeweilige App in den Einstellungen gewählt ist). Ein roter Punkt am Symbol zeigt, dass eine Quelle Handlungsbedarf hat — im geöffneten Menü steht dann am betroffenen Eintrag eine Markierung (aktuell: für Rekordbox vorgemerkte Änderungen). Läuft ein Scan oder Abgleich, erscheint der Fortschritt unter dem Titel „TrackTab".
+**Wo ist der Button?** Oben rechts neben „Einstellungen" sitzt eine kompakte Icon-Leiste mit drei Symbolen: **Statistik**, **Quellen** (Datenbank-Symbol) und **Datei öffnen**. Sie ist in allen drei Ansichten erreichbar; „Datei öffnen“ und „Bibliothek scannen“ wechseln aus Player bzw. DJ nach Bearbeiten, weil die Einzelprüfung und ein laufender Scan nur dort zu sehen sind. „Quellen" öffnet ein Menü mit „Bibliothek scannen", „Rekordbox abgleichen" und „Music.app abgleichen" (die beiden letzten nur, wenn die jeweilige App in den Einstellungen gewählt ist). Ein roter Punkt am Symbol zeigt, dass eine Quelle Handlungsbedarf hat — im geöffneten Menü steht dann am betroffenen Eintrag eine Markierung (aktuell: für Rekordbox vorgemerkte Änderungen). Läuft ein Scan oder Abgleich, erscheint der Fortschritt unter dem Titel „TrackTab".
 
 **Scannen.** TrackTab durchsucht deine konfigurierten Musikordner und analysiert jede noch nicht bekannte oder seither geänderte Datei. Der Button „Bibliothek scannen" öffnet dafür die Scan-Optionen:
 
@@ -301,11 +301,11 @@ Links steht der Listen-Baum. Er ist in der Breite verstellbar — fasse die Kant
 Es gibt drei Bereiche:
 
 **📁 TrackTab** — deine eigene Datenbank. Ganz oben die festen Listen: 
-**Alle**, **Ausgeblendet**, **Datei fehlt**, **Genre**, **Album**, **Künstler**, **Duplikate** und deine **Merklisten**. Darunter der feste Ordner **Prüflisten** mit je einer Liste pro Status, jede mit einem Punkt in ihrer Statusfarbe: ● Korrekt (grün), ● Verdächtig (orange), ● Fake (rot), ● Unklar (grau), ● Manuell korrigiert (blau) — dieselben Farben wie die Status-Abzeichen in der Tabelle. Ebenfalls im Ordner „Prüflisten": **Duplikate** und **Auffälligkeiten** (Metadaten-Probleme statt Audioqualität, siehe [Auffälligkeiten (Metadaten-Probleme)](#auffälligkeiten-metadaten-probleme) weiter unten).
+**Alle**, **Zuletzt hinzugefügt** (alle Tracks, beim Öffnen nach „Hinzugefügt“ sortiert, die neuesten zuerst), **Ausgeblendet**, **Datei fehlt**, **Genre**, **Album**, **Künstler**, **Duplikate** und deine **Merklisten**. Darunter der feste Ordner **Prüflisten** mit je einer Liste pro Status, jede mit einem Punkt in ihrer Statusfarbe: ● Korrekt (grün), ● Verdächtig (orange), ● Fake (rot), ● Unklar (grau), ● Manuell korrigiert (blau) — dieselben Farben wie die Status-Abzeichen in der Tabelle. Ebenfalls im Ordner „Prüflisten": **Duplikate** und **Auffälligkeiten** (Metadaten-Probleme statt Audioqualität, siehe [Auffälligkeiten (Metadaten-Probleme)](#auffälligkeiten-metadaten-probleme) weiter unten).
 
- Diese Listen bringt TrackTab selbst mit und lassen sich nicht umbenennen, ändern oder löschen. **Verschieben lassen sie sich aber**: die Reihenfolge im Baum gehört dir. Darunter stehen die Playlisten, Ordner und Smart Playlists, die du selbst anlegst.
+ Diese Listen bringt TrackTab selbst mit. Sie verhalten sich so weit wie möglich wie deine eigenen: Du kannst sie verschieben, auch in einen Ordner und wieder heraus. Name und Symbol bleiben fest, löschen lassen sie sich nicht. Bei Alle, Genre, Album, Duplikaten usw. änderst du über „…“ → **Bearbeiten** die Farbe; die Status-Listen (Korrekt, Fake …) behalten ihre Statusfarbe. Den Ordner **Prüflisten** kannst du umbenennen, einfärben und eigene Playlisten hineinlegen. Darunter stehen die Playlisten, Ordner und Smart Playlists, die du selbst anlegst.
 
-**🎵 Music App** und **🎛 Rekordbox** — die Playlisten dieser beiden Programme. Die Listen werden erst geladen, wenn du den Ast aufklappst. Normale Playlisten und Ordner bearbeitest du direkt hier, über „…“ am Eintrag:
+**🎵 Music App** und **🎛 Rekordbox** — die Playlisten dieser beiden Programme. Ein aufgeklappter Ast lädt seine Listen von selbst (auch beim Start), ein zugeklappter bleibt zu, bis du ihn öffnest. Normale Playlisten und Ordner bearbeitest du direkt hier, über „…“ am Eintrag:
 - Am Ast selbst und an einem Ordner: **Neue Playlist**, **Neuer Ordner**.
 - An jeder Playlist und jedem Ordner: **Umbenennen**, **Löschen** (mit Rückfrage; ein Ordner geht samt allen Playlisten darin, die Tracks bleiben in der Sammlung bzw. Mediathek).
 - An einer Rekordbox-Playlist zusätzlich **Mit TrackTab abgleichen …** (siehe unten).
@@ -314,6 +314,8 @@ Es gibt drei Bereiche:
 - Während eine Änderung läuft, ist der Ast ausgegraut und gesperrt, die betroffene Playlist pulsiert leicht. Der Baum bleibt dabei aufgeklappt.
 
 Smart Playlists tragen ein Schloss: Ihr Inhalt wird im jeweiligen Programm berechnet, TrackTab zeigt sie nur an. In Rekordbox muss das Programm für jede Änderung geschlossen sein (vorher entsteht automatisch ein Backup). Music.app kann per Fernsteuerung nicht umsortieren, die Reihenfolge änderst du dort nur in Rekordbox-Playlisten. Steht ein Track mehrfach in einer Music-Playlist, nimmt „Entfernen“ alle seine Einträge heraus. 
+
+Ein Klick auf den Kopf eines Bereichs (TrackTab, Music App, Rekordbox) blendet ihn ein oder aus. Beim Überfahren steht rechts „Ausblenden“ bzw. „Einblenden“, ein ausgeblendeter Bereich ist leicht gedimmt.
 
 Jeder Ast erscheint nur, wenn das jeweilige Programm in den Einstellungen ausgewählt ist — ohne das bleibt der Ast ganz weg. Die beiden Äste selbst lassen sich wie deine eigenen Listen im Baum verschieben, TrackTab steht dabei aber immer an erster Stelle. 
 
@@ -329,13 +331,11 @@ Die Liste **Duplikate** zeigt Tracks, die es doppelt gibt — entweder als exakt
 
 ## Playlisten und Ordner
 
-Über die Buttons im Kopf der Seitenleiste legst du an:
+Über „…“ am Kopf **TrackTab** legst du an: **Neue Playlist**, **Neue Smart Playlist** (siehe unten), **Neuer Playlist-Generator** und **Neuer Ordner**; dort steht auch **M3U importieren**. Das ist derselbe Aufbau wie bei Music App und Rekordbox.
 
-- **+** eine Playlist
-- **⚙** eine Smart Playlist (siehe unten)
-- **📁** einen Ordner
+Beim Anlegen wählst du Name, Symbol und Farbe. Ohne Farbe bekommt die Liste ein hellgraues Quadrat. Ordner haben kein eigenes Symbol, bei ihnen wählst du nur die Hintergrundfarbe.
 
-Beim Anlegen wählst du Name, Symbol und Farbe. Ordner dürfen Ordner enthalten.
+**Rechtsklick:** Auf einen Track in der Tabelle oder eine Liste im Baum öffnet sich dasselbe Menü wie über „…“, direkt an der Maus. Ordner dürfen Ordner enthalten. Ein Klick auf einen Ordner klappt ihn auf oder zu, das Ordnersymbol zeigt dabei offen oder geschlossen. Feine Linien links zeigen, wie tief eine Liste verschachtelt ist.
 
 ![Dialog zum Anlegen einer neuen Playlist](docs/015-neue-plalist.png)
 
@@ -484,7 +484,7 @@ Jeder erkannte Parameter erscheint als **Chip** unter dem Suchfeld — ein Klick
 
 ## Spalten anpassen
 
-Jede Spalte lässt sich in der Breite ziehen und in der Reihenfolge verschieben (Überschrift greifen und ziehen). Über „Spalten ▾" blendest du weitere Informationen ein oder aus — z. B. Titel, Künstler, Cover, Album, Genre, Jahr, BPM oder Tonart.
+Jede Spalte lässt sich in der Breite ziehen und in der Reihenfolge verschieben (Überschrift greifen und ziehen). Ein Doppelklick auf den Rand rechts an der Überschrift macht die Spalte so breit wie ihr breitester gerade angezeigter Eintrag, wie in Excel. Über „Spalten ▾" blendest du weitere Informationen ein oder aus — z. B. Titel, Künstler, Cover, Album, Genre, Jahr, BPM oder Tonart.
 
 ![Spalten-Menü](docs/022-spalten-anbpassen.png)
 

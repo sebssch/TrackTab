@@ -43,6 +43,12 @@
     --fl10:var(--dc-brown);    --fl10-bg:var(--dc-brown-bg);
     --fl11:var(--dc-slate);    --fl11-bg:var(--dc-slate-bg);
     --fl12:var(--dc-dustyrose);--fl12-bg:var(--dc-dustyrose-bg);
+    /* Icon-Farbe je Listenfarbe (plOnColor() in app.js): weiss, ausser ein
+       Theme setzt --dc-*-on (helle Toene im Dunkelmodus). */
+    --fl1-on:var(--dc-red-on,#fff);  --fl2-on:var(--dc-orange-on,#fff);  --fl3-on:var(--dc-yellow-on,#fff);
+    --fl4-on:var(--dc-green-on,#fff); --fl5-on:var(--dc-skyblue-on,#fff); --fl6-on:var(--dc-blue-on,#fff);
+    --fl7-on:var(--dc-indigo-on,#fff); --fl8-on:var(--dc-crimson-on,#fff); --fl9-on:var(--dc-purple-on,#fff);
+    --fl10-on:var(--dc-brown-on,#fff); --fl11-on:var(--dc-slate-on,#fff); --fl12-on:var(--dc-dustyrose-on,#fff);
   }
   /* prefers-color-scheme greift nur "automatisch" (kein data-theme gesetzt);
      :root[data-theme] setzt die Wahl aus den Einstellungen (applyTheme() in
@@ -67,6 +73,12 @@
       --dc-brown:#c9a184;     --dc-brown-bg:#4a3222;
       --dc-slate:#94a3b8;     --dc-slate-bg:#1e293b;
       --dc-dustyrose:#d99cae; --dc-dustyrose-bg:#5c2c37;
+      /* Icon-Farbe auf hellen Listenfarben (plOnColor() in app.js): dunkel
+         statt weiss, ab Leuchtdichte ~0,36. */
+      --dc-orange-on:#1b1e23; --dc-yellow-on:#1b1e23; --dc-green-on:#1b1e23;
+      --dc-skyblue-on:#1b1e23; --dc-blue-on:#1b1e23; --dc-brown-on:#1b1e23;
+      --dc-dustyrose-on:#1b1e23; --dc-slate-on:#1b1e23;
+      --ok-on:#1b1e23; --susp-on:#1b1e23; --fake-on:#1b1e23; --unk-on:#1b1e23; --accent-on:#1b1e23;
       --fl1:var(--dc-red);       --fl1-bg:var(--dc-red-bg);
       --fl2:var(--dc-orange);    --fl2-bg:var(--dc-orange-bg);
       --fl3:var(--dc-yellow);    --fl3-bg:var(--dc-yellow-bg);
@@ -100,6 +112,12 @@
     --dc-brown:#c9a184;     --dc-brown-bg:#4a3222;
     --dc-slate:#94a3b8;     --dc-slate-bg:#1e293b;
     --dc-dustyrose:#d99cae; --dc-dustyrose-bg:#5c2c37;
+    /* Icon-Farbe auf hellen Listenfarben (plOnColor() in app.js): dunkel
+       statt weiss, ab Leuchtdichte ~0,36. */
+    --dc-orange-on:#1b1e23; --dc-yellow-on:#1b1e23; --dc-green-on:#1b1e23;
+    --dc-skyblue-on:#1b1e23; --dc-blue-on:#1b1e23; --dc-brown-on:#1b1e23;
+    --dc-dustyrose-on:#1b1e23; --dc-slate-on:#1b1e23;
+    --ok-on:#1b1e23; --susp-on:#1b1e23; --fake-on:#1b1e23; --unk-on:#1b1e23; --accent-on:#1b1e23;
     --fl1:var(--dc-red);       --fl1-bg:var(--dc-red-bg);
     --fl2:var(--dc-orange);    --fl2-bg:var(--dc-orange-bg);
     --fl3:var(--dc-yellow);    --fl3-bg:var(--dc-yellow-bg);
@@ -480,16 +498,6 @@
   /* Waehrend des Ziehens keine Textauswahl im Rest der Seite. */
   body.sidebar-dragging { user-select:none; cursor:col-resize; }
 
-  .treehead { display:flex; align-items:center; justify-content:space-between;
-       gap:8px; font-size:11px; font-weight:600; letter-spacing:.05em;
-       text-transform:uppercase; color:var(--dim); margin:0 0 8px 2px; }
-  .treehead-actions { display:flex; align-items:center; gap:2px; }
-  /* Trennt die drei Listenarten (Playlist, Smart, Generator) vom Ordner. */
-  .treehead-sep { width:1px; height:14px; margin:0 4px; background:var(--line); }
-  .treeadd { border:0; background:none; color:var(--dim); cursor:pointer;
-       width:22px; height:22px; border-radius:6px; font-size:14px; line-height:1;
-       padding:0; }
-  .treeadd:hover { background:var(--accent-bg); color:var(--fg); }
   .tree { display:flex; flex-direction:column; gap:1px; }
   /* Einrueckung ueber --depth statt verschachtelter Container: der Baum wird
      als flache Liste gerendert (siehe renderTree() in app.js), damit das
@@ -504,6 +512,46 @@
   .treenode.on { background:var(--accent-bg); color:var(--accent); font-weight:600; }
   .treenode.root { color:var(--dim); font-weight:600; }
   .treenode.root:hover { background:none; }
+  /* Seitenbaum (#tree), renderTree() in app.js. Wurzeln (TrackTab/Music/
+     Rekordbox) = Abschnittskoepfe, getrennt durch .tsep; auf/zu per Klick,
+     "Ausblenden"/"Einblenden" (.tsectoggle) nur beim Ueberfahren, ein
+     zugeklappter Kopf ist gedimmt. Darunter: jede Liste ein Quadrat
+     (.tbadge, ohne Farbe .tplain = sanftes Grau wie der Hover der
+     Oeffnen-Icons), Ordner zeigen offen/zu ueber ihr Symbol, die Tiefe nur
+     ueber die Einrueckung (keine Fuehrungslinien, Nutzervorgabe). Die aktive
+     Liste ist nur farbig hinterlegt, nicht fett. --depth = Tiefe - 1, Kinder
+     der Wurzeln stehen buendig.
+     Der Auswahl-Baum im Dialog (.treepicklist) bleibt beim alten Aussehen. */
+  #tree { gap:0; font-size:13px; }
+  #tree .treenode { gap:9px; padding:5px 8px;
+       padding-left:calc(8px + var(--depth, 0) * 20px); }
+  #tree .treenode.on { font-weight:inherit; }
+  #tree .tbadge { width:22px; height:22px; margin:0; border-radius:3px; }
+  #tree .tbadge.tplain { background:rgba(127,127,127,.14); color:var(--dim); }
+  #tree .treenode.on .tbadge.tplain { color:var(--accent); }
+  #tree .tsym.tsvg svg { width:15px; height:15px; }
+  #tree .tsym.ttext { font-size:11px; }
+  #tree .tsym.temoji { font-size:13px; }
+  #tree .tcount { font-size:12px; }
+  #tree .tmenu { flex-basis:20px; height:20px; }
+  #tree .treenode.root { color:var(--fg); font-weight:650; font-size:15px;
+       padding:7px 8px; }
+  #tree .treenode.root:hover { background:var(--accent-bg); }
+  #tree .treenode.root.closed .tlabel, #tree .treenode.root.closed .ticon { opacity:.55; }
+  /* Music/Rekordbox laedt (autoLoadExtTrees()): Symbol pulsiert. */
+  #tree .treenode.root.loading .ticon { animation:extpulse 1.1s ease-in-out infinite; }
+  #tree .treenode.root .ticon { flex:0 0 22px; display:flex; align-items:center; justify-content:center; }
+  #tree .treenode.root .appicon { width:22px; height:22px; border-radius:5px; }
+  #tree .treenode.root .ticon svg { width:18px; height:18px; }
+  .tsectoggle { flex:none; font-size:11.5px; font-weight:500; color:var(--dim);
+       visibility:hidden; }
+  #tree .treenode.root:hover .tsectoggle, #tree .treenode.root:focus-visible .tsectoggle {
+       visibility:visible; }
+  /* Bearbeiten-Dialog einer festen Liste: Symbol gesperrt, nur Vorschau. */
+  #nameStyleRows.iconlocked :is(#nameIconTabs, #nameIcons, #nameSymNameRow, #nameSymHint,
+       #nameEmojiInput, #nameEmojiHint) { display:none !important; }
+  .tbadge.tplain { background:rgba(127,127,127,.14); color:var(--dim); }
+  .tsep { height:1px; background:var(--line); margin:8px 4px; flex:none; }
   .twist { flex:0 0 12px; text-align:center; color:var(--dim); font-size:10px;
        line-height:1; transition:transform .12s ease; }
   .twist.open { transform:rotate(90deg); }
@@ -714,6 +762,11 @@
   .styleopt:hover { border-color:var(--accent); }
   .styleopt.on { border-color:var(--accent); box-shadow:inset 0 0 0 1px var(--accent); }
   .styleopt.swatch { border-radius:50%; }
+  /* Farbauswahl im Listen-Dialog: immer EINE Zeile (Nutzervorgabe) -- die
+     14 Kreise teilen sich die Breite und werden bei Bedarf kleiner. */
+  #nameColors { flex-wrap:nowrap; gap:5px; align-items:center; }
+  #nameColors .styleopt.swatch { flex:1 1 0; min-width:0; width:auto; height:auto;
+       max-width:30px; aspect-ratio:1 / 1; padding:0; margin:0; box-sizing:border-box; }
   .styleopt.swatch.none { background:var(--bg); color:var(--dim); }
   .styleopt.swatch.custom { position:relative; display:inline-flex; align-items:center; justify-content:center; background:var(--bg); color:var(--accent); cursor:pointer; overflow:hidden; }
   .styleopt.swatch.custom svg { width:20px; height:20px; stroke-width:2.75; pointer-events:none; }
@@ -896,7 +949,6 @@ button.act.warn-orange:hover { background:var(--dc-orange-bg); }
          justify-content:center; }
 .cbseg + .cbseg::before { content:""; position:absolute; left:-1px; top:9px; bottom:9px;
                           width:1px; background:var(--line); }
-body[data-layout="player"] #btnStats::before { display:none; }
 .cbseg:hover:not(:disabled), .cbseg.open { background:rgba(127,127,127,.14); }
 .cbseg:disabled { opacity:.4; cursor:not-allowed; }
 .cbseg svg { width:18px; height:18px; }
@@ -2204,9 +2256,6 @@ tr.ign td.sel > *, tr.ign td.links > * { opacity:.45; }
 body[data-layout="player"] #dropsPanel,
 body[data-layout="player"] .toolbar,
 body[data-layout="dj"] .toolbar,
-body[data-layout="player"] #btnSources,
-body[data-layout="player"] #btnOpenFile,
-body[data-layout="player"] #sourcesMenu,
 body[data-layout="player"] #csvsel,
 body[data-layout="dj"] #csvsel,
 body[data-layout="player"] #m3usel,
@@ -2937,6 +2986,42 @@ body.booted .bootskel { display:none; }
 .bsk-row:nth-child(4) i { animation-delay:.3s; }
 .bsk-row:nth-child(5) i { animation-delay:.4s; }
 .bsk-row:nth-child(n+6) i { animation-delay:.5s; }
+.bsk-num { display:none; width:38px; height:12px; flex:none; }
+.bsk-acts { width:150px; height:16px; flex:none; margin-left:auto; }
+/* Je Ansicht (html[data-skel-layout], gesetzt vom Inline-Skript am Anfang von
+   <body> und von applyLayout()): Bearbeiten = Vorgabe oben. Player ohne
+   Tag-Bubbles, schmalere Aktionsspalte. DJ flacher, ohne Aktionsspalte, mit
+   Dauer/Tonart/BPM/Energie. */
+html[data-skel-layout="player"] .bsk-pill { display:none; }
+html[data-skel-layout="player"] .bsk-acts { width:100px; }
+html[data-skel-layout="dj"] .bsk-row { padding:8px 14px; }
+html[data-skel-layout="dj"] .bsk-cov { width:40px; height:40px; }
+html[data-skel-layout="dj"] .bsk-num { display:block; }
+html[data-skel-layout="dj"] .bsk-pill { width:36px; height:20px; }
+html[data-skel-layout="dj"] .bsk-pill.s { width:40px; height:12px; border-radius:5px !important; }
+html[data-skel-layout="dj"] .bsk-bar { width:80px; height:8px; }
+html[data-skel-layout="dj"] .bsk-acts { display:none; }
+/* Liste wird geladen (Music-/Rekordbox-Playlist, showListLoading() in app.js):
+   Platzhalter statt der alten Zeilen. */
+body.booted.listloading .bootskel { display:block; }
+body.listloading #tb { display:none; }
+/* Weitere Tracks werden nachgeladen (beginLoadMore()): Platzhalter in #more. */
+.moreskel { padding:6px 0 0; text-align:left; }
+/* Seitenbaum: Platzhalter bis zum ersten renderTree() (steht im HTML in
+   #tree und wird dort ersetzt) und unter einem ladenden Music-/Rekordbox-Kopf. */
+.treeskel { display:flex; flex-direction:column; }
+.tsk-row { display:flex; align-items:center; gap:9px; padding:5px 8px; }
+.tsk-row.tsk-head { padding:7px 8px; }
+.tsk-row i { display:block; background:var(--line); border-radius:4px;
+             animation:bskpulse 1.4s ease-in-out infinite; }
+.tsk-ico { width:22px; height:22px; flex:none; border-radius:3px !important; }
+.tsk-head .tsk-ico { border-radius:5px !important; }
+.tsk-txt { height:10px; width:55%; }
+.tsk-head .tsk-txt { height:12px; width:40%; }
+.tsk-num { height:9px; width:28px; margin-left:auto; }
+.tsk-row:nth-child(3n) .tsk-txt { width:68%; }
+.tsk-row:nth-child(3n+1) .tsk-txt { width:44%; }
+.tsk-row:nth-child(2n) i { animation-delay:.15s; }
 @keyframes bskpulse { 0%,100% { opacity:.45; } 50% { opacity:1; } }
-@media (prefers-reduced-motion: reduce) { .bsk-row i { animation:none; opacity:.7; } }
-@media (max-width:700px) { .bsk-pill, .bsk-bar { display:none; } }
+@media (prefers-reduced-motion: reduce) { .bsk-row i, .tsk-row i { animation:none; opacity:.7; } }
+@media (max-width:700px) { .bsk-pill, .bsk-bar, .bsk-acts { display:none; } }
