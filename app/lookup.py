@@ -332,3 +332,100 @@ def search(artist: str, title: str, query: str = "") -> list[dict]:
         except Exception:                              # noqa: BLE001
             pass
     return results
+
+
+# ── Favicons der Shops ───────────────────────────────────────────────────────
+
+_FAVICON_MAX = 200 * 1024
+_favicon_failed: dict[str, float] = {}      # Host -> Zeitpunkt des Fehlschlags
+_FAVICON_RETRY_S = 6 * 3600
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):    # Weiterleitungen pruefen wir selbst
+        return None
+
+
+def _favicon_mime(data: bytes) -> str:
+    """Bildtyp aus den Kopfbytes ("" = nicht erlaubt, SVG bewusst nie)."""
+    if data[:4] == b"\x00\x00\x01\x00":
+        return "image/x-icon"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return "image/png"
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return ""
+
+
+def _fetch_public(url: str, hops: int = 3) -> bytes | None:
+    """Holt url, folgt Weiterleitungen nur auf oeffentliche Hosts (max. hops)."""
+    opener = urllib.request.build_opener(_NoRedirect)
+    for _ in range(hops + 1):
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https") or not _is_public_host(parts.hostname or ""):
+            return None
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 TrackTab"})
+        try:
+            with opener.open(req, timeout=6) as resp:
+                return resp.read(_FAVICON_MAX + 1)[:_FAVICON_MAX]
+        except urllib.error.HTTPError as exc:
+            loc = exc.headers.get("Location") if exc.code in (301, 302, 303, 307, 308) else None
+            if not loc:
+                return None
+            url = urllib.parse.urljoin(url, loc)
+        except (OSError, ValueError):
+            return None
+    return None
+
+
+def _icon_from_html(host: str) -> str | None:
+    """<link rel=icon> der Startseite, falls /favicon.ico fehlt."""
+    page = _fetch_public(f"https://{host}/")
+    if not page:
+        return None
+    html = page.decode("utf-8", "replace")
+    for m in re.finditer(r"<link\b[^>]*>", html, re.I):
+        tag = m.group(0)
+        if re.search(r'rel=["\'][^"\']*icon', tag, re.I):
+            h = re.search(r'href=["\']([^"\']+)', tag, re.I)
+            if h:
+                return urllib.parse.urljoin(f"https://{host}/", h.group(1))
+    return None
+
+
+def fetch_favicon(host: str, cache_dir) -> tuple[bytes, str] | None:
+    """Favicon zu einem Host: Zwischenspeicher, sonst /favicon.ico, sonst <link rel=icon>."""
+    import time
+    from pathlib import Path
+    host = (host or "").lower()
+    if not re.fullmatch(r"[a-z0-9.-]+", host):
+        return None
+    cache = Path(cache_dir)
+    f = cache / f"{host}.ico"
+    if f.exists():
+        data = f.read_bytes()
+        mime = _favicon_mime(data)
+        if mime:
+            return data, mime
+    if time.time() - _favicon_failed.get(host, 0) < _FAVICON_RETRY_S:
+        return None
+    candidates = [f"https://{host}/favicon.ico"]
+    for url in candidates + [None]:
+        if url is None:
+            url = _icon_from_html(host)
+            if not url:
+                break
+        data = _fetch_public(url)
+        if data and _favicon_mime(data):
+            try:
+                cache.mkdir(parents=True, exist_ok=True)
+                f.write_bytes(data)
+            except OSError:
+                pass
+            return data, _favicon_mime(data)
+    _favicon_failed[host] = time.time()
+    return None

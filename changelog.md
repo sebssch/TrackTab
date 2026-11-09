@@ -6,6 +6,11 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 ## [2.0.0] - 2026-11-01
 
 ### Added
+- Shops: YouTube als neuer Standard-Shop. Alle Shops zeigen ihr Favicon; TrackTab holt es einmal von der Seite und speichert es lokal (nur Hosts aus der Shop-Liste, nur öffentliche Adressen, kein SVG). Lädt es nicht, bleibt das bisherige Symbol bzw. der Buchstabe. Wer die Shop-Liste schon einmal gespeichert hat, trägt YouTube von Hand nach.
+- Neue Spalte „Track – Interpret“ (Titel und Interpret in einer Zelle, darunter Format und Bitrate mit „Pfad kopieren“ und „Im Finder zeigen“) wie in der DJ-Ansicht, jetzt in jeder Ansicht über „Spalten ▾“ wählbar; im Player die Vorgabe.
+- Standard-Spaltenansichten wie in Apple Music: „Standard – Bearbeiten“ und „Standard – Player“ gelten für alle Listen ohne eigene Spaltenansicht in der jeweiligen Ansicht. Eine eigene Spaltenansicht einer Liste gilt in Bearbeiten und Player. Die frühere globale „Standard-Spaltenansicht“ entfällt; ihre Spalten werden einmalig nach „Standard – Bearbeiten“ übernommen, die Ansicht selbst bleibt gespeichert.
+- Player-Zeile: kein „…“-Menü mehr; in einer offenen Playlist (TrackTab, Rekordbox, Music.app) steht „Aus Playlist entfernen“ als Knopf neben „Zur Playlist“.
+- Zeilen-Play-Knopf wird beim Abspielen zum Pausensymbol; im Player pausiert ein Klick auf den laufenden Track, statt ihn neu zu starten.
 - Seitenbaum überarbeitet: TrackTab, Music App und Rekordbox sind Abschnittsköpfe, die sich per Klick ein- und ausblenden lassen. Jede Liste trägt ein farbiges Quadrat (ohne Farbe hellgrau), Ordner zeigen offen/zu. Neu anlegen und M3U-Import liegen im „…“-Menü von TrackTab (die Knöpfe im Kopf entfallen), die Menüs sind in beschriftete Gruppen gegliedert. Ein aufgeklappter Music-/Rekordbox-Ast lädt seine Listen von selbst, auch beim Start.
 - Feste Ansichten (Alle, Genre, Album, Duplikate …) und der Ordner Prüflisten verhalten sich wie eigene Listen: verschiebbar auch in Ordner, Farbe änderbar; der Ordner Prüflisten lässt sich zudem umbenennen und nimmt eigene Playlisten auf. Status-Listen behalten Name, Symbol und Statusfarbe.
 - Neue feste Ansicht „Zuletzt hinzugefügt“ (alle Tracks, nach „Hinzugefügt“ absteigend).
@@ -119,6 +124,8 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 - Rekordbox-Hot-Cues ab D wurden um einen Buchstaben verschoben angezeigt (D als E, E als F), H fehlte: Rekordbox zählt sie als 1, 2, 3, 5, 6, 7, 8, 9.
 
 ### Changed
+- Zeilenknöpfe „Als Nächstes spielen“ und „Zur Warteschlange“ neutral gefärbt, nur Play behält die Designfarbe.
+- Icons: DJ-Ansicht „turntable“, Liste „Album“ „disc-3“ (wie „nach Album gruppieren“).
 - Konverter, MP3 320: kodiert über das mitgelieferte `lame` (`-V0 -b 320 -B 320`, jeder Frame 320 kbit/s, Kopf-Kennung `Info`) statt über ffmpeg-CBR. Damit bleibt der Frequenzbereich über 20 kHz erhalten, den LAME bei CBR 320 sonst abschneidet. In Rekordbox und auf einem XDJ-RX3 geprüft. Ohne `lame` Rückfall auf ffmpeg. Bitrate korrigieren und Stems bleiben unverändert.
 - Reihenfolge der Ansichten: Player, DJ, Bearbeiten.
 - Lizenzen und Bündelung: LightGBM (MIT) ist für das Auto-Cue-Training jetzt im Bundle (vorher nur im Entwicklungsordner, `requirements-train.txt` entfällt), samt SciPy (nur `scipy.sparse`, BSD-3-Clause) und narwhals (MIT); die OpenMP-Laufzeit libomp (Apache-2.0 mit LLVM-Ausnahme) kommt aus Homebrew mit ins Bundle. `THIRD_PARTY_LICENSES.md`, `collect_licenses.py` (neuer Ordner `licenses/native/`) und `NOTICE.md` sind nachgezogen. Auto Cue selbst braucht LightGBM weiterhin nicht. Wo es sich nicht laden lässt (älteres macOS), fehlt nur das Training.

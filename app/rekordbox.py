@@ -1210,7 +1210,7 @@ def _grid_from_start(beats: list[list], audio_start_ms: int = 0) -> list[list]:
     return head + beats
 
 
-def _update_in(db, path: str, cues, beats, phrases, now) -> dict:
+def _update_in(db, path: str, cues, beats, phrases, now, tags=None) -> dict:
     """Kern von update_track() in einer offenen Sitzung, ohne commit. beats schon
     ueber _grid_from_start() auf Rekordbox' Achse."""
     content = _live_content(db, path)
@@ -1221,6 +1221,9 @@ def _update_in(db, path: str, cues, beats, phrases, now) -> dict:
     if cues is not None:
         _write_cues(db, content, cues, now)
         written.append("cues")
+    if tags is not None:
+        _write_tags(db, content, tags, now)
+        written.append("tags")
     wants_analysis = beats is not None or phrases is not None
     if wants_analysis and not (content.Analysed and content.AnalysisDataPath):
         skipped += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
@@ -1237,14 +1240,14 @@ def _update_in(db, path: str, cues, beats, phrases, now) -> dict:
         written += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
     # Sperren, damit Rekordbox das Geschriebene nicht neu analysiert. Noch nicht
     # analysierte Tracks nicht: das braeuchten sie erst noch.
-    if written and content.Analysed and not int(content.Analysed) & _ANALYSIS_LOCK_BIT:
+    if [w for w in written if w != "tags"] and content.Analysed and not int(content.Analysed) & _ANALYSIS_LOCK_BIT:
         _touch(db, [content], now, Analysed=int(content.Analysed) | _ANALYSIS_LOCK_BIT)
     return {"written": written, "skipped": skipped}
 
 
 def update_track(path: str, *, cues: list[dict] | None = None,
                  beats: list[list] | None = None, phrases: list[dict] | None = None,
-                 audio_start_ms: int = 0) -> dict:
+                 audio_start_ms: int = 0, tags=None) -> dict:
     """
     Schreibt Bearbeitungen aus der DJ-Ansicht nach Rekordbox. Alle Zeiten schon auf
     Rekordbox' Achse; None = Feld nicht anfassen. beats: [[ms, Nummer, BPM], ...].
@@ -1261,7 +1264,7 @@ def update_track(path: str, *, cues: list[dict] | None = None,
 
     def _run(db):
         import datetime
-        result = _update_in(db, path, cues, beats, phrases, datetime.datetime.now())
+        result = _update_in(db, path, cues, beats, phrases, datetime.datetime.now(), tags)
         db.commit()
         return result
 
@@ -1284,21 +1287,21 @@ def update_tracks(items: list[dict]) -> dict:
         beats = item.get("beats")
         if beats:
             beats = _grid_from_start(beats, item.get("audio_start_ms") or 0)
-        prepared.append((item["path"], item.get("cues"), beats, item.get("phrases")))
+        prepared.append((item["path"], item.get("cues"), beats, item.get("phrases"), item.get("tags")))
 
     def _run(db):
         import datetime
         results: dict = {}
         errors: dict = {}
         stopped = ""
-        for path, cues, beats, phrases in prepared:
+        for path, cues, beats, phrases, tags in prepared:
             if path in results:
                 continue
             try:
                 if is_running() or agent_running():
                     raise RekordboxRunning(
                         "Rekordbox wurde zwischendurch gestartet. Rekordbox beenden und erneut versuchen.")
-                results[path] = _update_in(db, path, cues, beats, phrases, datetime.datetime.now())
+                results[path] = _update_in(db, path, cues, beats, phrases, datetime.datetime.now(), tags)
                 db.commit()
             except RekordboxRunning as exc:
                 db.rollback()
@@ -1756,6 +1759,135 @@ def _content_tag_kwargs(db, row, with_key: bool = True) -> dict:
         name = tags_mod.format_key(key, cfgmod.load().get("key_notation", "camelot"))
         kwargs["KeyID"] = _get_or_create_key(db, name).ID
     return kwargs
+
+
+# Metadaten-Abgleich TrackTab -> Rekordbox (Status "Metadaten" + "Rekordbox Update").
+# BPM und Tonart bewusst nicht: das Tempo gehoert zum Beatgrid (kommt aus der Analyse),
+# die Tonart liest Rekordbox selbst. Verglichen wird nur, was TrackTab wirklich hat
+# (leere Felder schreibt _content_tag_kwargs() ebenfalls nie).
+TAG_FIELDS = ("title", "artist", "album", "genre", "composer", "year", "comment", "key", "bpm")
+# BPM-Abweichungen darunter zaehlen nicht (dieselbe Grenze wie die rote BPM in der Liste):
+# Rekordbox' Analyse liefert oft 127,99 statt der 128 aus dem Tag.
+_BPM_TOLERANCE = 0.05
+
+
+def bpm_half_double(a: float, b: float) -> bool:
+    """Halbes oder doppeltes Tempo (80 gegen 160): kein Fehler, sondern eine andere
+    Zaehlweise. Wird nie geschrieben, nur angezeigt (Feld "bpm_half")."""
+    return bool(a and b) and (abs(a * 2 - b) < _BPM_TOLERANCE * 2 or abs(a - b * 2) < _BPM_TOLERANCE * 2)
+
+
+def _tag_norm(value) -> str:
+    import unicodedata
+    return unicodedata.normalize("NFC", str(value or "")).strip()
+
+
+def _tag_wanted(row) -> dict:
+    """Die Werte aus TrackTabs Zeile, die nach Rekordbox gehen wuerden."""
+    out = {f: _tag_norm(row[f]) for f in ("title", "artist", "album", "genre", "composer")}
+    comment = _tag_norm(row["comment"])
+    out["comment"] = "" if tags_mod.is_junk_comment(comment) else comment
+    out["year"] = str(row["year"]) if row["year"] else ""
+    # Tonart immer als Camelot verglichen: die Schreibweise in Rekordbox ist egal.
+    out["key"] = tags_mod.normalize_key(row["key"]) if row["key"] else ""
+    out["bpm"] = round(float(row["bpm"]), 2) if row["bpm"] else 0
+    return {f: v for f, v in out.items() if v}
+
+
+_rb_tags_cache: dict = {}
+
+
+def _rb_tag_values() -> dict:
+    """{pfad: Metadaten in Rekordbox} aller lebenden Tracks, einmal je Stand der
+    master.db gelesen (ein Durchlauf, kein Zugriff je Track)."""
+    stamp = master_db_mtime()
+    if _rb_tags_cache.get("stamp") == stamp and stamp is not None:
+        return _rb_tags_cache["value"]
+
+    def _query(db):
+        artists = {a.ID: a.Name for a in db.get_artist() if _live(a)}
+        albums = {a.ID: a.Name for a in db.get_album() if _live(a)}
+        genres = {g.ID: g.Name for g in db.get_genre() if _live(g)}
+        keys = {k.ID: k.ScaleName for k in db.get_key() if _live(k)}
+        out: dict = {}
+        for c in db.get_content():
+            path = c.FolderPath or ""
+            if not path or path in out or not _live(c):
+                continue
+            out[path] = {"title": _tag_norm(c.Title), "artist": _tag_norm(artists.get(c.ArtistID)),
+                         "album": _tag_norm(albums.get(c.AlbumID)), "genre": _tag_norm(genres.get(c.GenreID)),
+                         "composer": _tag_norm(artists.get(c.ComposerID)), "comment": _tag_norm(c.Commnt),
+                         "year": str(c.ReleaseYear) if c.ReleaseYear else "",
+                         "key": tags_mod.normalize_key(keys.get(c.KeyID) or ""),
+                         "bpm": (c.BPM or 0) / 100}
+        return out
+
+    try:
+        value = _query_cached(_import_pyrekordbox(), _query)
+    except Exception:                                   # noqa: BLE001
+        return {}
+    _rb_tags_cache.update(stamp=stamp, value=value)
+    return value
+
+
+def tag_diff_map(rows: dict) -> dict:
+    """{pfad: [Felder]} der Tracks, deren Metadaten in Rekordbox von TrackTab abweichen.
+    rows: Pfad -> Zeile mit TAG_FIELDS. Nur Tracks in der Sammlung."""
+    have = _rb_tag_values()
+    out: dict = {}
+    for path, row in rows.items():
+        mine, theirs = _tag_wanted(row), have.get(path)
+        if theirs is None:
+            continue
+        diff = [f for f in TAG_FIELDS if f in mine and (
+            abs(mine[f] - theirs[f]) >= _BPM_TOLERANCE if f == "bpm" else mine[f] != theirs[f])]
+        if "bpm" in diff and bpm_half_double(mine["bpm"], theirs["bpm"]):
+            diff[diff.index("bpm")] = "bpm_half"
+        if diff:
+            out[path] = diff
+    return out
+
+
+_hot_cue_cache: dict = {}
+
+
+def hot_cue_paths() -> set:
+    """Pfade aller lebenden Tracks mit mindestens einem lebenden Hot Cue in Rekordbox.
+    Ein Durchlauf ueber DjmdCue, gemerkt bis sich die master.db aendert."""
+    stamp = master_db_mtime()
+    if stamp is not None and _hot_cue_cache.get("stamp") == stamp:
+        return _hot_cue_cache["value"]
+
+    def _query(db):
+        ids = {c.ContentID for c in db.get_cue() if _live(c) and c.Kind in _HOT_KIND_SLOT}
+        return {c.FolderPath for c in db.get_content() if c.ID in ids and _live(c) and c.FolderPath}
+
+    try:
+        value = _query_cached(_import_pyrekordbox(), _query)
+    except Exception:                                   # noqa: BLE001
+        return set()
+    _hot_cue_cache.update(stamp=stamp, value=value)
+    return value
+
+
+def _write_tags(db, content, row, now) -> None:
+    """TrackTabs Metadaten in eine vorhandene Rekordbox-Zeile. Tonart und BPM nur, wenn
+    sie dort anders sind (sonst bliebe Rekordbox' Schreibweise bzw. sein genauerer
+    Messwert). Ein im selben Lauf geschriebenes Beatgrid setzt die BPM danach ohnehin
+    aus dem Grid (_update_in()). Hat TrackTab das Grid bearbeitet, liefert der Aufrufer
+    bpm = None (server._tag_rows()): dann gilt das Tempo des Grids, nicht das der Datei."""
+    fields = _content_tag_kwargs(db, row, with_key=True)
+    if "BPM" in fields and (abs(fields["BPM"] - (content.BPM or 0)) < _BPM_TOLERANCE * 100
+                            or bpm_half_double(fields["BPM"] / 100, (content.BPM or 0) / 100)):
+        fields.pop("BPM")
+    if "KeyID" in fields:
+        # get_key(ID=...) liefert in pyrekordbox EINE Zeile statt einer Abfrage --
+        # darueber zu iterieren gaebe Zeichen. Deshalb ueber alle lebenden Tonarten.
+        current = next((k.ScaleName for k in db.get_key() if k.ID == content.KeyID and _live(k)), "") \
+            if content.KeyID else ""
+        if tags_mod.normalize_key(current) == tags_mod.normalize_key(row["key"]):
+            fields.pop("KeyID")
+    _touch(db, [content], now, **fields)
 
 
 # ── My Tag ──────────────────────────────────────────────────────────────────

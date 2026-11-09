@@ -1225,6 +1225,23 @@ def save_rb_snapshot(conn: sqlite3.Connection, path: str, snap: dict) -> None:
     conn.commit()
 
 
+def _has_hot_cue(raw) -> bool:
+    try:
+        return any(c.get("kind") == "hot" for c in json.loads(raw) or [])
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
+def hot_cue_maps(conn: sqlite3.Connection) -> tuple[dict, dict]:
+    """({Pfad: hat Hot Cue} der in TrackTab bearbeiteten Cues, dasselbe fuer den
+    festgehaltenen Rekordbox-Stand). Nur Zeilen, in denen Cues stehen."""
+    edited = {r["path"]: _has_hot_cue(r["cues"])
+              for r in conn.execute("SELECT path, cues FROM dj_track WHERE cues IS NOT NULL")}
+    snap = {r["path"]: _has_hot_cue(r["cues"])
+            for r in conn.execute("SELECT path, cues FROM rb_snapshot WHERE cues IS NOT NULL")}
+    return edited, snap
+
+
 def rb_snapshot_changed_map(conn: sqlite3.Connection) -> dict:
     """{Pfad: Felder} aller Tracks, die sich in Rekordbox seit dem Festhalten geaendert haben."""
     out: dict = {}

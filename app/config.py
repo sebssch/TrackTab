@@ -353,6 +353,9 @@ def defaults() -> dict:
             {"id": "itunes", "name": "iTunes Store",
              "url": "https://music.apple.com/search?term={q}",
              "color": "#fc3c44", "enabled": True},
+            {"id": "youtube", "name": "YouTube",
+             "url": "https://www.youtube.com/results?search_query={q}",
+             "color": "#FF0000", "enabled": True},
         ],
 
         # Reihenfolge der ausblendbaren Tabellenspalten (Web-UI, per Drag
@@ -388,16 +391,16 @@ def defaults() -> dict:
         # Generators umgerechnet (generator.js, genPresetValue()).
         "generator_curves": [],
 
-        # Die Spaltenansicht, die jede Liste ohne eigene Zuordnung bekommt
-        # ("Standardliste", im Einstellungs-Dialog waehlbar). Leer = die im
-        # Spalten-Menue eingestellten Standard-Spalten der aktiven Ansicht
-        # (column_order/hidden_columns/column_widths).
+        # Frueher: globale Standard-Spaltenansicht fuer Bearbeiten UND Player.
+        # Wird nicht mehr gesetzt -- settings.migrate_column_view_default()
+        # kopiert einen alten Wert einmalig nach "Standard – Bearbeiten"
+        # (column_order/hidden_columns/column_widths["edit"]) und leert ihn.
         "column_view_default": "",
 
         # Fallback speziell fuer Apple-Music-Playlisten (view_id "mu:<id>"):
         # diese Fremd-Listen bekommen ueber das Sidebar-Menue bewusst keine
-        # eigene Zuordnung (siehe app.js), werden also vor column_view_default
-        # zuerst gegen diesen Wert aufgeloest. Leer = wie column_view_default.
+        # eigene Zuordnung (siehe app.js), werden also vor den Standard-
+        # Spalten der Ansicht gegen diesen Wert aufgeloest. Leer = Standard.
         "column_view_music_default": "",
 
         # Spaltenansicht der Einzelpruefungen (Id aus column_views). Leer = die

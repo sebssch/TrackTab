@@ -94,6 +94,14 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("toTopBtn").onclick = () => window.scrollTo({top: 0, behavior: "smooth"});
   document.getElementById("tagsSaveIcon").innerHTML = ICONS.save;
   document.getElementById("tagsCoverDeleteIcon").innerHTML = ICONS.trash;
+  // Tags-Dialog: Symbole der Kopfzeile, des Covers und der Online-Suche.
+  for (const [id, name] of [["tagsCopyIcon", "copy"], ["tagsRevealIcon", "folder-open"],
+      ["tagsPrevIcon", "chevron-left"], ["tagsNextIcon", "chevron-right"],
+      ["tagsCoverPickIcon", "image-up"], ["tagsCoverPasteIcon", "clipboard-paste"], ["tagsLookupIcon", "globe"]]) {
+    document.getElementById(id).innerHTML = SVG(LUCIDE_ICONS[name]);
+  }
+  document.getElementById("tagsRenameIcon").innerHTML = ICONS.renameFile;
+  initTagsChangeTracking();
 });
 
 const PAGE = 150;
@@ -430,6 +438,9 @@ const OPTIONAL_COLUMNS = [
   {key: "eg", label: t("col.energy"), numeric: true},
   {key: "mm", label: t("col.mood"), numeric: false},
   {key: "cm", label: t("field.comment"), numeric: false},
+  // Titel + Interpret in einer Zelle, darunter Format/Bitrate mit Pfad kopieren
+  // und Finder (djMetaLine()). Feste Spalte der DJ-Ansicht, sonst waehlbar.
+  {key: "ta", label: t("dj.col_track"), numeric: false},
   {key: "a", label: t("field.artist"), numeric: false},
   {key: "t", label: t("field.title"), numeric: false},
   {key: "n", label: t("field.file"), numeric: false},
@@ -442,7 +453,7 @@ const OPTIONAL_COLUMNS = [
 // liesse sich die Spalte nicht anpassen (sie wuerde jede Aenderung sofort
 // wieder mit dem freien Platz ausgleichen).
 const DEFAULT_COL_WIDTHS = {po:50, v:105, co:90, kb:105, mk:75, cf:110, st:75, lu:90, tp:60, du:70, rb:105,
-  im:85, da:115, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, ky:70, eg:110, mm:170, cm:180, a:150, t:200, n:340,
+  im:85, da:115, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, ky:70, eg:110, mm:170, cm:180, ta:360, a:150, t:200, n:340,
   ti:280};
 
 let state = {
@@ -508,14 +519,14 @@ let state = {
 // diese drei Felder liest/schreibt (Spalten-Menue, Drag-Resize, Drag-Reorder,
 // render(), ...), unveraendert weiterfunktioniert.
 state.columnsByLayout = {
-  edit: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: [], widths: {}},
-  player: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: [], widths: {}},
+  edit: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: ["ta"], widths: {}},
+  player: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: ["t", "a", "n"], widths: {}},
 };
 
 // Die DJ-Ansicht hat eine feste Liste: "#", Cover, "Titel - Interpret", Laenge,
 // Tonart, BPM, Energie, Tags, Hinzugefuegt, Rekordbox. Nicht einstellbar und nicht
 // gespeichert, das Spalten-Menue ist dort ausgeblendet und saveColumns() tut nichts.
-const DJ_COLUMNS = ["po", "cv", "t", "du", "ky", "bp", "eg", "mm", "da", "rb"];
+const DJ_COLUMNS = ["po", "cv", "ta", "du", "ky", "bp", "eg", "mm", "da", "rb"];
 // "#" nur in einer Liste mit Reihenfolge: eigene Playlist oder Fremdliste
 // (Music.app/Rekordbox, siehe listPositionMap()). Feste Listen, Smart-Listen und
 // Merklisten haben keine.
@@ -557,14 +568,10 @@ state.dropColumns = {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: [], widths
 // in den richtigen Topf -- keine Fallunterscheidung an den Aufrufstellen.
 let COLUMN_VIEWS = [];
 let COLUMN_ASSIGN = {};
-// Die im Einstellungs-Dialog gewaehlte Standard-Spaltenansicht: sie gilt fuer
-// jede Liste ohne eigene Zuordnung. Leer = die im Spalten-Menue eingestellten
-// Standard-Spalten der aktiven Ansicht (state.columnsByLayout).
-let COLUMN_VIEW_DEFAULT = "";
-// Gegenstueck zu COLUMN_VIEW_DEFAULT, aber nur fuer Apple-Music-Playlisten
-// (view-id "mu:<id>") -- diese Fremd-Listen bekommen ueber das Sidebar-Menue
-// bewusst keine eigene Zuordnung (siehe extSourceOfView()-Aufrufstellen),
-// brauchen also einen eigenen Vorgabe-Weg VOR der allgemeinen Standardansicht.
+// Vorgabe nur fuer Apple-Music-Playlisten (view-id "mu:<id>") -- diese
+// Fremd-Listen bekommen ueber das Sidebar-Menue bewusst keine eigene
+// Zuordnung (siehe extSourceOfView()-Aufrufstellen), brauchen also einen
+// eigenen Vorgabe-Weg VOR den Standard-Spalten der Ansicht.
 let COLUMN_VIEW_MUSIC_DEFAULT = "";
 // Spaltenansicht der Einzelpruefungen (leer = eigene Konfiguration state.dropColumns).
 let COLUMN_VIEW_DROP = "";
@@ -577,11 +584,13 @@ const columnViewById = id => (id && COLUMN_VIEWS.find(v => v.id === id)) || null
 // zeigen genau das an: "eigene Einstellung" oder eben keine.
 const columnViewFor = viewId => columnViewById(COLUMN_ASSIGN[viewId]);
 // Was tatsaechlich gilt: eigene Zuordnung, sonst (fuer Music.app-Playlisten)
-// die Apple-Music-Standardansicht, sonst die allgemeine Standardansicht.
+// die Apple-Music-Standardansicht, sonst null = "Standard – Bearbeiten" bzw.
+// "Standard – Player" (state.columnsByLayout der aktiven Ansicht). Eine
+// eigene Zuordnung gilt in Bearbeiten UND Player; die DJ-Ansicht hat ihre
+// feste Liste (DJ_COLUMN_STORE).
 const activeColumnView = () =>
   columnViewFor(state.view) ||
-  (extSourceOfView(state.view) === "music" ? columnViewById(COLUMN_VIEW_MUSIC_DEFAULT) : null) ||
-  columnViewById(COLUMN_VIEW_DEFAULT);
+  (extSourceOfView(state.view) === "music" ? columnViewById(COLUMN_VIEW_MUSIC_DEFAULT) : null);
 const activeColumnStore = () => state.layout === "dj" ? DJ_COLUMN_STORE
   : (activeColumnView() || state.columnsByLayout[state.layout]);
 
@@ -589,9 +598,30 @@ const activeColumnStore = () => state.layout === "dj" ? DJ_COLUMN_STORE
 // heutigen Spaltenbestand bringen: unbekannte Keys raus, seither
 // hinzugekommene ans Ende -- sonst verschwaende eine neue Spalte hinter einer
 // aelteren Speicherung.
-function normalizeColumnStore(store) {
+// opts.trackFirst: Topf "Standard – Player" -- kommt dort die Spalte "Track –
+// Interpret" (ta) neu dazu, steht sie vorn und ersetzt Titel/Interpret/Datei
+// (gleiche Darstellung wie die DJ-Ansicht). Ueberall sonst kommt sie
+// ausgeblendet dazu, damit gespeicherte Ansichten unveraendert aussehen.
+// Rueckgabe: true, wenn ta neu eingetragen wurde (Aufrufer speichert dann).
+function normalizeColumnStore(store, opts = {}) {
   const known = new Set(OPTIONAL_COLUMNS.map(c => c.key));
   const order = (Array.isArray(store.order) ? store.order : []).filter(k => known.has(k));
+  const hadOrder = order.length > 0;
+  let addedTa = false;
+  if (hadOrder && !order.includes("ta")) {
+    addedTa = true;
+    const hidden = Array.isArray(store.hidden) ? store.hidden : [];
+    if (opts.trackFirst) {
+      const at = order.indexOf("cv") >= 0 ? order.indexOf("cv") + 1
+        : order.indexOf("po") >= 0 ? order.indexOf("po") + 1 : 0;
+      order.splice(at, 0, "ta");
+      store.hidden = [...hidden.filter(k => k !== "ta"), ...["t", "a", "n"].filter(k => !hidden.includes(k))];
+    } else {
+      const at = order.indexOf("a") >= 0 ? order.indexOf("a") : order.length;
+      order.splice(at, 0, "ta");
+      store.hidden = hidden.includes("ta") ? hidden : [...hidden, "ta"];
+    }
+  }
   for (const c of OPTIONAL_COLUMNS) {
     if (order.includes(c.key)) continue;
     // "#" gehoert nach vorn, auch in schon gespeicherten Reihenfolgen --
@@ -602,6 +632,7 @@ function normalizeColumnStore(store) {
   store.order = order;
   store.hidden = (Array.isArray(store.hidden) ? store.hidden : []).filter(k => known.has(k));
   store.widths = (store.widths && typeof store.widths === "object") ? store.widths : {};
+  if (opts.report) return addedTa;
   return store;
 }
 
@@ -660,7 +691,6 @@ function saveFilters() {
       // aufblitzt, bevor /api/settings zurueck ist.
       columnViews: COLUMN_VIEWS,
       columnAssign: COLUMN_ASSIGN,
-      columnViewDefault: COLUMN_VIEW_DEFAULT,
       columnViewMusicDefault: COLUMN_VIEW_MUSIC_DEFAULT,
       columnViewDrop: COLUMN_VIEW_DROP,
       // Eigene Spaltenkonfiguration der Einzelprueflungen (state.dropColumns)
@@ -1099,9 +1129,6 @@ function loadFilters() {
         if (COLUMN_VIEWS.some(v => v.id === id)) COLUMN_ASSIGN[view] = id;
       }
     }
-    if (COLUMN_VIEWS.some(v => v.id === s.columnViewDefault)) {
-      COLUMN_VIEW_DEFAULT = s.columnViewDefault;
-    }
     if (COLUMN_VIEWS.some(v => v.id === s.columnViewMusicDefault)) {
       COLUMN_VIEW_MUSIC_DEFAULT = s.columnViewMusicDefault;
     }
@@ -1248,7 +1275,7 @@ const ICONS = {
                 '<circle cx="12" cy="19" r="1.6" fill="currentColor" stroke="none"/>'),
   // Fuer den Layout-Umschalter (Ansicht "Player").
   player: SVG(LUCIDE_ICONS["music"]),
-  layoutDj: SVG(LUCIDE_ICONS["disc-3"]),
+  layoutDj: SVG(LUCIDE_ICONS["turntable"]),
   // Fixer Player-Balken (Ansicht "Player", siehe queueState weiter unten).
   next: SVG(LUCIDE_ICONS["skip-forward"]),
   prev: SVG(LUCIDE_ICONS["skip-back"]),
@@ -1412,18 +1439,30 @@ const DEFAULT_SHOPS = [
    color: "#00A651", enabled: true},
   {id: "itunes", name: "iTunes Store", url: "https://music.apple.com/search?term={q}",
    color: "#fc3c44", enabled: true},
+  {id: "youtube", name: "YouTube", url: "https://www.youtube.com/results?search_query={q}",
+   color: "#FF0000", enabled: true},
 ];
 let ALL_SHOPS = DEFAULT_SHOPS;
 
 function shopIcon(s) {
-  if (s.id === "beatport") return ICONS.beatport;
-  if (s.id === "soundcloud") return ICONS.soundcloud;
-  if (s.id === "itunes") return ICONS.itunes;
-  const letter = (s.name || "?").trim().charAt(0).toUpperCase() || "?";
-  return `<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
+  // Fallback: eigenes Symbol bzw. Buchstabe auf Farbflaeche
+  let fallback;
+  if (s.id === "beatport") fallback = ICONS.beatport;
+  else if (s.id === "soundcloud") fallback = ICONS.soundcloud;
+  else if (s.id === "itunes") fallback = ICONS.itunes;
+  else {
+    const letter = (s.name || "?").trim().charAt(0).toUpperCase() || "?";
+    fallback = `<svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
       <rect width="24" height="24" rx="6" fill="${esc(s.color || "#888")}"/>
       <text x="12" y="17.5" text-anchor="middle" font-size="15" font-weight="800"
             font-family="-apple-system,Helvetica,sans-serif" fill="#111">${esc(letter)}</text></svg>`;
+  }
+  // Mit Server: Favicon der Seite (vom Server geholt und zwischengespeichert).
+  // Schlaegt das Laden fehl, bleibt das Fallback-Symbol stehen.
+  if (!apiMode || !s.id) return fallback;
+  return `<span class="shopfav"><img src="/api/favicon?shop=${encodeURIComponent(s.id)}" width="16" height="16"
+      alt="" loading="lazy" onerror="this.parentNode.classList.add('nofav')">
+    <span class="shopfav-fb">${fallback}</span></span>`;
 }
 
 // Der iTunes Store ist kein normaler Link: itmss: öffnet die Music-App, und
@@ -1610,7 +1649,7 @@ const TREE_ICONS = {
   all: SVG(LUCIDE_ICONS.music), recent: SVG(LUCIDE_ICONS["clock-4"]), ignored: SVG(LUCIDE_ICONS.ban),
   gone: SVG(LUCIDE_ICONS["triangle-alert"]), duplicates: SVG(LUCIDE_ICONS.copy),
   corrected: SVG(LUCIDE_ICONS.check),
-  "grp:genre": SVG(LUCIDE_ICONS.tag), "grp:album": SVG(LUCIDE_ICONS["disc-2"]),
+  "grp:genre": SVG(LUCIDE_ICONS.tag), "grp:album": SVG(LUCIDE_ICONS["disc-3"]),
   "grp:artist": SVG(LUCIDE_ICONS.speech),
   tags: SVG(LUCIDE_ICONS.tags),
   tag_issues: SVG(LUCIDE_ICONS["file-exclamation-point"]),
@@ -5062,6 +5101,8 @@ async function syncMarks() {
     const rekordbox = new Set(rbx.paths || []);
     const musicAdded = mad.added || {};
     const rbDiff = djb.rb_diff || {};
+    // Mindestens ein Hot Cue nach der Regel der DJ-Ansicht (server._hot_cue_paths()), fuer /HotCues.
+    const hotCues = new Set(djb.hot_cues || []);
     RB_COMPARE = djb.rb_compare !== false;
     for (const r of DATA) {
       r.ig = ignored.has(r.p)   ? 1 : 0;    // auch zurücknehmen, nicht nur setzen
@@ -5074,6 +5115,7 @@ async function syncMarks() {
       r.gridTempo = djb.tempo[r.p] || null;
       r.gridSeq = (djb.tempo_seq && djb.tempo_seq[r.p]) || null;
       r.rbDiff = rbDiff[r.p] || null;
+      r.hc = hotCues.has(r.p) ? 1 : 0;
     }
   } catch (err) {
     note(t("toast.marks_load_failed", {error: err.message}), true);
@@ -5209,7 +5251,8 @@ async function initStorage() {
             if (Array.isArray(savedHidden) && savedHidden.length) std.hidden = savedHidden;
             if (savedWidths && typeof savedWidths === "object"
                 && Object.keys(savedWidths).length) std.widths = savedWidths;
-            normalizeColumnStore(std);
+            const addedTa = normalizeColumnStore(std, {trackFirst: layout === "player", report: true});
+            if (addedTa) postStandardColumnsFor(layout);
             if (!(Array.isArray(savedHidden) && savedHidden.length)
                 && layout === state.layout && std.hidden.length) {
               // Bestehende Auswahl aus localStorage (vor dieser Server-Speicherung
@@ -5271,7 +5314,73 @@ async function initStorage() {
   }
 }
 
-document.getElementById("q").oninput = e => { state.q = e.target.value.toLowerCase(); state.shown = PAGE; render(); };
+// ── Suchfeld mit Badges ───────────────────────────────────────────────────
+// Der Suchtext besteht aus bestaetigten Ausdruecken (SEARCH_CHIP_TEXTS, je Badge
+// einer, in Originalschreibung) und dem, was gerade in #q steht. Enter macht aus
+// jedem erkannten /Parameter im Feld einen Badge und nimmt ihn aus dem Feld; freier
+// Text bleibt stehen. Backspace am Feldanfang holt den letzten Badge als Text zurueck.
+// Shift+Pfeil links bzw. Cmd/Strg+A markieren Badges, Loeschen entfernt markierte.
+// Gefiltert wird immer ueber den ganzen Text (state.q), auch waehrend getippt wird.
+// Wer den Suchtext von aussen setzt, nimmt setSearchText() -- nie #q.value direkt,
+// sonst stuenden Badges und Feld nicht mehr zusammen.
+let SEARCH_CHIP_TEXTS = [];
+const SEARCH_CHIP_SEL = new Set();        // markierte Badges: "q:<index>" bzw. "d:<defaultId>"
+function searchInputEl() { return document.getElementById("q"); }
+function searchFullText() {
+  const el = searchInputEl();
+  return [...SEARCH_CHIP_TEXTS, el ? el.value.trim() : ""].filter(Boolean).join(" ");
+}
+function syncSearchQuery() { state.q = searchFullText().toLowerCase(); }
+// Text in /Parameter-Ausdruecke (Badges) und uebrigen freien Text zerlegen.
+function splitSearchText(text) {
+  const {filters} = parseSearchQuery(text.toLowerCase());
+  const ranges = filters.map(f => [f.start, f.end]).sort((x, y) => x[0] - y[0]);
+  const chips = ranges.map(([st, en]) => text.slice(st, en).trim()).filter(Boolean);
+  let rest = "", pos = 0;
+  for (const [st, en] of ranges) { rest += text.slice(pos, st) + " "; pos = en; }
+  rest += text.slice(pos);
+  return {chips, rest: rest.replace(/\s+/g, " ").trim()};
+}
+// Suchtext von aussen setzen (erweiterte Suche, Startansicht, Sprung zum Track ...):
+// alle Ausdruecke werden Badges, der Rest steht im Feld.
+function setSearchText(text) {
+  const {chips, rest} = splitSearchText(text || "");
+  SEARCH_CHIP_TEXTS = chips;
+  SEARCH_CHIP_SEL.clear();
+  const el = searchInputEl();
+  if (el) el.value = rest;
+  syncSearchQuery();
+}
+function commitSearchInput() {
+  const el = searchInputEl();
+  const {chips, rest} = splitSearchText(el.value);
+  if (!chips.length) return false;
+  SEARCH_CHIP_TEXTS = [...SEARCH_CHIP_TEXTS, ...chips];
+  el.value = rest;
+  syncSearchQuery();
+  return true;
+}
+// Badges in Anzeige-Reihenfolge: Standardfilter links, getippte rechts am Feld.
+function searchChipKeys() {
+  return [...ACTIVE_DEFAULT_FILTERS.map(f => "d:" + f.defaultId), ...SEARCH_CHIP_TEXTS.map((_, i) => "q:" + i)];
+}
+function removeSearchChips(keys) {
+  const drop = new Set(keys);
+  SEARCH_CHIP_TEXTS = SEARCH_CHIP_TEXTS.filter((_, i) => !drop.has("q:" + i));
+  for (const k of drop) if (k.startsWith("d:")) state.disabledDefaults.add(+k.slice(2));
+  SEARCH_CHIP_SEL.clear();
+  refreshDefaultFilters();
+  syncSearchQuery();
+  state.shown = PAGE;
+  render();
+}
+searchInputEl().oninput = () => {
+  SEARCH_CHIP_SEL.clear();
+  syncSearchQuery(); state.shown = PAGE; render();
+};
+searchInputEl().addEventListener("click", () => {
+  if (SEARCH_CHIP_SEL.size) { SEARCH_CHIP_SEL.clear(); renderSearchChips(); }
+});
 
 let SEARCH_HELP_ENTRIES = [
   [t("search.help.album.token"), t("field.album"), t("search.help.album.example")],
@@ -5297,6 +5406,7 @@ let SEARCH_HELP_ENTRIES = [
   [t("search.help.cover.token"), t("search.help.cover.desc"), t("search.help.cover.example")],
   [t("search.help.music.token"), t("search.help.music.desc"), t("search.help.music.example")],
   [t("search.help.rekordbox.token"), t("search.help.rekordbox.desc"), t("search.help.rekordbox.example")],
+  [t("search.help.hotcues.token"), t("search.help.hotcues.desc"), t("search.help.hotcues.example")],
   [t("search.help.exact.token"), t("search.help.exact.desc"), t("search.help.exact.example")],
 ];
 
@@ -5435,7 +5545,7 @@ function attachSearchFilterAutocomplete(el, list, onApply) {
     el.focus();
     el.setSelectionRange(pos, pos);
     if (onApply) { onApply(el.value); return; }
-    state.q = el.value.toLowerCase(); state.shown = PAGE; render();
+    syncSearchQuery(); state.shown = PAGE; render();
   };
 
   // Ein mehrwortiger Vorschlag muss als Phrase eingesetzt werden -- ohne
@@ -5550,6 +5660,56 @@ function attachSearchFilterAutocomplete(el, list, onApply) {
   });
 }
 attachSearchFilterAutocomplete(document.getElementById("q"), document.getElementById("searchAcList"));
+searchInputEl().addEventListener("keydown", ev => {
+  const el = ev.target;
+  const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
+  const keys = searchChipKeys();
+  // Enter, das die Vorschlagsliste schon fuer eine Auswahl verbraucht hat, bestaetigt nicht.
+  if (ev.key === "Enter") {
+    if (ev.defaultPrevented) return;
+    if (commitSearchInput()) { ev.preventDefault(); render(); }
+    return;
+  }
+  if ((ev.key === "Backspace" || ev.key === "Delete") && SEARCH_CHIP_SEL.size) {
+    // Markierter Feldtext (z. B. nach Cmd+A) loescht der Browser selbst mit.
+    if (el.selectionStart === el.selectionEnd) ev.preventDefault();
+    removeSearchChips([...SEARCH_CHIP_SEL]);
+    return;
+  }
+  if (ev.key === "Backspace" && atStart && SEARCH_CHIP_TEXTS.length) {
+    // Letzten Badge wieder zu Text machen, Schreibmarke an sein Ende.
+    ev.preventDefault();
+    const text = SEARCH_CHIP_TEXTS.pop();
+    el.value = el.value ? `${text} ${el.value}` : text;
+    el.setSelectionRange(text.length, text.length);
+    syncSearchQuery(); state.shown = PAGE; render();
+    return;
+  }
+  if (ev.key === "ArrowLeft" && ev.shiftKey && el.selectionStart === 0 && keys.length) {
+    ev.preventDefault();
+    const first = keys.findIndex(k => SEARCH_CHIP_SEL.has(k));
+    const next = first < 0 ? keys.length - 1 : first - 1;
+    if (next >= 0) SEARCH_CHIP_SEL.add(keys[next]);
+    renderSearchChips();
+    return;
+  }
+  if (ev.key === "ArrowRight" && ev.shiftKey && SEARCH_CHIP_SEL.size) {
+    ev.preventDefault();
+    SEARCH_CHIP_SEL.delete(keys.find(k => SEARCH_CHIP_SEL.has(k)));
+    renderSearchChips();
+    return;
+  }
+  if ((ev.metaKey || ev.ctrlKey) && ev.key.toLowerCase() === "a") {
+    keys.forEach(k => SEARCH_CHIP_SEL.add(k));
+    renderSearchChips();
+    return;
+  }
+  if (ev.key === "Escape" && SEARCH_CHIP_SEL.size) { SEARCH_CHIP_SEL.clear(); renderSearchChips(); return; }
+  // Jede andere Taste (ausser reinen Modifikatoren) hebt die Badge-Markierung auf.
+  if (SEARCH_CHIP_SEL.size && !["Shift", "Meta", "Control", "Alt"].includes(ev.key)) {
+    SEARCH_CHIP_SEL.clear(); renderSearchChips();
+  }
+});
 
 // Spektrogramm-Overlay: ein delegierter Klick fuer Haupttabelle und
 // Einzelpruefungen, Pfad steckt im Attribut. Wird je Klick frisch gerechnet.
@@ -5615,9 +5775,7 @@ document.addEventListener("click", ev => {
 // Bubble-Filter werden zurueckgesetzt. selectView() raeumt valueFilter,
 // mergePreview, tagIssueFilter und tagFilter selbst ab.
 function goHome() {
-  state.q = "";
-  const q = document.getElementById("q");
-  if (q) q.value = "";
+  setSearchText("");
   selectView("all");
   const wrap = document.querySelector(".tablewrap");
   if (wrap) wrap.scrollTop = 0;
@@ -5846,14 +6004,13 @@ function initColumnResize(ths) {
 // settings.py::_MAX_COLUMN_VIEWS.
 const MAX_COLUMN_VIEWS = 20;
 
-// Die Auswahlliste "Spaltenansicht": erster Eintrag ist immer die
-// Standardansicht (keine eigene Einstellung fuer diese Liste), danach die
-// gespeicherten Ansichten. Wird an drei Stellen gebraucht -- Spalten-Menue,
-// Listen-Dialog und der Dialog fuer die festen Listen.
-function columnViewOptionsHTML(selectedId) {
-  const dflt = columnViewById(COLUMN_VIEW_DEFAULT);
-  const standard = dflt
-    ? t("cols.view_default_named", {name: dflt.name})
+// Die Auswahlliste "Spaltenansicht": erster Eintrag ist immer der Standard
+// (keine eigene Einstellung fuer diese Liste), danach die gespeicherten
+// Ansichten. Im Spalten-Menue heisst er nach der aktiven Ansicht ("Standard –
+// Player"), im Listen-Dialog allgemein -- dort gilt die Wahl fuer beide.
+function columnViewOptionsHTML(selectedId, forLayout) {
+  const standard = forLayout === "edit" || forLayout === "player"
+    ? t("cols.view_standard_layout", {layout: t("layout." + forLayout)})
     : t("cols.view_standard");
   return `<option value="">${esc(standard)}</option>` +
     COLUMN_VIEWS.map(v => `<option value="${esc(v.id)}"` +
@@ -5869,8 +6026,8 @@ function renderColsMenu() {
   const sortedCols = [...OPTIONAL_COLUMNS].sort((a, b) => a.label.localeCompare(b.label, "de"));
   menu.innerHTML = `<div class="colsviewrow">
     <label for="colsViewSel">${esc(t("cols.view_for", {list: currentView().label}))}</label>
-    <select id="colsViewSel">${columnViewOptionsHTML(eigene ? eigene.id : "")}</select>
-    <span class="sethelp">${esc(t("cols.view_hint"))}</span>
+    <select id="colsViewSel">${columnViewOptionsHTML(eigene ? eigene.id : "", state.layout)}</select>
+    <span class="sethelp">${esc(t("cols.view_hint", {layout: t("layout." + state.layout)}))}</span>
   </div>
   <div class="colsbtnrow">
     <button class="act" id="colsViewSave"><span class="btnicon">${ICONS.save}</span> ${
@@ -5971,11 +6128,15 @@ function saveColumns() {
 }
 
 function postStandardColumns() {
+  if (state.layout === "edit" || state.layout === "player") postStandardColumnsFor(state.layout);
+}
+
+function postStandardColumnsFor(layout) {
   if (!apiMode) return;
-  const std = state.columnsByLayout[state.layout];
+  const std = state.columnsByLayout[layout];
   fetch("/api/columns", {method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({layout: state.layout, order: std.order,
+    body: JSON.stringify({layout, order: std.order,
                           hidden: std.hidden, widths: std.widths})}).catch(() => {});
 }
 
@@ -6123,7 +6284,7 @@ function renderHead() {
       const c = OPTIONAL_COLUMNS.find(c => c.key === k);
       const w = state.colWidths[k] || DEFAULT_COL_WIDTHS[k];
       const draggable = apiMode && state.layout !== "dj" ? ' draggable="true"' : "";
-      return `<th data-k="${k}" data-reorder${c.numeric ? ' class="num"' : ""}${draggable} style="width:${w}px">${esc(state.layout === "dj" && k === "t" ? t("dj.col_track") : c.label)}</th>`;
+      return `<th data-k="${k}" data-reorder${c.numeric ? ' class="num"' : ""}${draggable} style="width:${w}px">${esc(c.label)}</th>`;
     }).join("");
   anchor.insertAdjacentHTML("afterend", html);
   const newThs = document.querySelectorAll("table thead th[data-reorder]");
@@ -6264,6 +6425,7 @@ const FLAG_ALIASES = new Map([
   ["cover", "cv"],
   ["music", "im"],
   ["rekordbox", "rb"],
+  ["hotcues", "hc"], ["hotcue", "hc"],
 ]);
 // Zahlenfelder: ">", "<" und Bereiche ("120-128") ueber
 // parseOperatorRange(). Jahr und BPM stehen hier mit drin, obwohl sie aus
@@ -6316,6 +6478,7 @@ function refreshI18nCache() {
     [t("search.help.cover.token"), t("search.help.cover.desc"), t("search.help.cover.example")],
     [t("search.help.music.token"), t("search.help.music.desc"), t("search.help.music.example")],
     [t("search.help.rekordbox.token"), t("search.help.rekordbox.desc"), t("search.help.rekordbox.example")],
+    [t("search.help.hotcues.token"), t("search.help.hotcues.desc"), t("search.help.hotcues.example")],
     [t("search.help.exact.token"), t("search.help.exact.desc"), t("search.help.exact.example")],
   ];
   SEARCH_FILTER_SUGGESTIONS = SEARCH_HELP_ENTRIES.flatMap(([p, desc]) =>
@@ -6333,7 +6496,7 @@ function refreshI18nCache() {
     im:"col.in_music", da:"field.added", cv:"col.cover", al:"field.album", tn:"col.track_no",
     aa:"field.album_artist", cp:"field.composer", ge:"field.genre", yr:"field.year", bp:"field.bpm", ky:"field.key",
     eg:"col.energy", mm:"col.mood",
-    cm:"field.comment", a:"field.artist", t:"field.title", n:"field.file",
+    cm:"field.comment", ta:"dj.col_track", a:"field.artist", t:"field.title", n:"field.file",
     ti:"col.tag_issues"};
   for (const col of OPTIONAL_COLUMNS) col.label = t(columnKeyToI18n[col.key]);
   const viewIdToI18n = {ignored:"views.ignored", corrected:"views.corrected",
@@ -6791,7 +6954,7 @@ function matchesParsedQuery(r, parsed) {
   return applyFilters(r, filters);
 }
 
-const FLAG_CHIP_KEYS = {ig: "views.ignored", cv: "col.cover", im: "col.in_music", rb: "col.rekordbox"};
+const FLAG_CHIP_KEYS = {ig: "views.ignored", cv: "col.cover", im: "col.in_music", rb: "col.rekordbox", hc: "col.hot_cues"};
 function chipLabel(f) {
   const name = f.kind === "exclude" ? t("search.chip.exclude")
     : f.kind === "ext" ? t("field.file")
@@ -6816,27 +6979,19 @@ function chipLabel(f) {
 function renderSearchChips() {
   const box = document.getElementById("searchChips");
   if (!box) return;
-  const {filters} = parseSearchQuery(state.q);
-  const queryChips = filters.map((f, i) =>
-    `<span class="chip searchchip" data-qchip="${i}">${esc(chipLabel(f))}<span class="rm">×</span></span>`).join("");
+  const sel = k => SEARCH_CHIP_SEL.has(k) ? " sel" : "";
   const defaultChips = ACTIVE_DEFAULT_FILTERS.map(f =>
-    `<span class="chip searchchip defaultchip" data-defaultchip="${f.defaultId}" title="${esc(t("search.chip.default_title"))}">${esc(chipLabel(f))}<span class="rm">×</span></span>`).join("");
-  box.innerHTML = queryChips + defaultChips;
+    `<span class="chip searchchip defaultchip${sel("d:" + f.defaultId)}" data-defaultchip="${f.defaultId}" title="${esc(t("search.chip.default_title"))}">${esc(chipLabel(f))}<span class="rm">×</span></span>`).join("");
+  const queryChips = SEARCH_CHIP_TEXTS.map((text, i) => {
+    const f = parseSearchQuery(text.toLowerCase()).filters[0];
+    return `<span class="chip searchchip${sel("q:" + i)}" data-qchip="${i}" title="${esc(text)}">${esc(f ? chipLabel(f) : text)}<span class="rm">×</span></span>`;
+  }).join("");
+  box.innerHTML = defaultChips + queryChips;
   syncAdvSearch();
-  box.querySelectorAll("[data-qchip]").forEach(el => el.querySelector(".rm").onclick = () => {
-    const f = filters[+el.dataset.qchip];
-    state.q = (state.q.slice(0, f.start) + state.q.slice(f.end)).replace(/\s+/g, " ").trim();
-    const qEl = document.getElementById("q");
-    if (qEl) qEl.value = state.q;
-    state.shown = PAGE;
-    render();
-  });
-  box.querySelectorAll("[data-defaultchip]").forEach(el => el.querySelector(".rm").onclick = () => {
-    state.disabledDefaults.add(+el.dataset.defaultchip);
-    refreshDefaultFilters();
-    state.shown = PAGE;
-    render();
-  });
+  box.querySelectorAll("[data-qchip]").forEach(el => el.querySelector(".rm").onclick = () =>
+    removeSearchChips(["q:" + el.dataset.qchip]));
+  box.querySelectorAll("[data-defaultchip]").forEach(el => el.querySelector(".rm").onclick = () =>
+    removeSearchChips(["d:" + el.dataset.defaultchip]));
 }
 
 // ── Erweiterte Suche ──────────────────────────────────────────────────────
@@ -6855,30 +7010,33 @@ function renderSearchChips() {
 // der Oberflaeche) und der Platzhalter (die Beispiele ohne Parameternamen).
 // "ac" = Feld fuer die Wertvorschlaege (fieldValuesForAutocomplete()).
 const ADV_FIELDS = [
-  {key: "a", help: "artist", label: "field.artist", ac: "a"},
-  {key: "t", help: "title_field", label: "field.title"},
-  {key: "al", help: "album", label: "field.album", ac: "al"},
-  {key: "ge", help: "genre", label: "field.genre", ac: "ge"},
-  {key: "ky", help: "key", label: "field.key", ac: "ky"},
-  {key: "bp", help: "bpm", label: "field.bpm"},
-  {key: "eg", help: "energy", label: "col.energy"},
-  {key: "mm", help: "mood", label: "col.mood", ac: "mm"},
-  {key: "yr", help: "year", label: "field.year"},
-  {key: "du", help: "duration", label: "field.duration"},
-  {key: "da", help: "added", label: "field.added"},
-  {key: "aa", help: "album_artist", label: "field.album_artist", ac: "aa"},
-  {key: "cp", help: "composer", label: "field.composer", ac: "cp"},
-  {key: "cm", help: "comment", label: "field.comment"},
-  {key: "p", help: "path", label: "field.path"},
-  {key: "ext", help: "file", label: "field.file", ac: "__ext"},
-  {key: "v", help: "status", label: "col.status", ac: "v"},
-  {key: "kb", help: "declared", label: "field.declared"},
-  {key: "cf", help: "confidence", label: "field.confidence"},
-  {key: "cv", help: "cover", label: "col.cover", flag: true},
-  {key: "im", help: "music", label: "col.in_music", flag: true},
-  {key: "rb", help: "rekordbox", label: "col.rekordbox", flag: true},
-  {key: "ig", help: "hidden", label: "views.ignored", flag: true},
+  {key: "a", help: "artist", label: "field.artist", ac: "a", group: "track"},
+  {key: "t", help: "title_field", label: "field.title", group: "track"},
+  {key: "al", help: "album", label: "field.album", ac: "al", group: "track"},
+  {key: "ge", help: "genre", label: "field.genre", ac: "ge", group: "track"},
+  {key: "ky", help: "key", label: "field.key", ac: "ky", group: "mix"},
+  {key: "bp", help: "bpm", label: "field.bpm", group: "mix"},
+  {key: "eg", help: "energy", label: "col.energy", group: "mix"},
+  {key: "mm", help: "mood", label: "col.mood", ac: "mm", group: "mix"},
+  {key: "yr", help: "year", label: "field.year", group: "track"},
+  {key: "du", help: "duration", label: "field.duration", group: "mix"},
+  {key: "da", help: "added", label: "field.added", group: "mix"},
+  {key: "aa", help: "album_artist", label: "field.album_artist", ac: "aa", group: "track"},
+  {key: "cp", help: "composer", label: "field.composer", ac: "cp", group: "track"},
+  {key: "cm", help: "comment", label: "field.comment", group: "track"},
+  {key: "p", help: "path", label: "field.path", group: "file"},
+  {key: "ext", help: "file", label: "field.file", ac: "__ext", group: "file"},
+  {key: "v", help: "status", label: "col.status", ac: "v", group: "file"},
+  {key: "kb", help: "declared", label: "field.declared", group: "file"},
+  {key: "cf", help: "confidence", label: "field.confidence", group: "file"},
+  {key: "cv", help: "cover", label: "col.cover", flag: true, group: "state"},
+  {key: "im", help: "music", label: "col.in_music", flag: true, group: "state"},
+  {key: "rb", help: "rekordbox", label: "col.rekordbox", flag: true, group: "state"},
+  {key: "hc", help: "hotcues", label: "col.hot_cues", flag: true, group: "state"},
+  {key: "ig", help: "hidden", label: "views.ignored", flag: true, group: "state"},
 ];
+// Reihenfolge der Gruppen im Panel, Ueberschrift ueber advsearch.group_<id>.
+const ADV_GROUPS = ["track", "mix", "file", "state"];
 const ADV_BY_KEY = Object.fromEntries(ADV_FIELDS.map(d => [d.key, d]));
 // Welche geparsten Filter (parseSearchQuery()) zu einem Feld gehoeren.
 function advMatches(def, f) {
@@ -6935,7 +7093,7 @@ function advApplyField(orig, def, value) {
   return [q, expr].join(" ").replace(/\s+/g, " ").trim();
 }
 function advPanelHtml(prefix, exclude = []) {
-  const fields = ADV_FIELDS.filter(d => !exclude.includes(d.key)).map(d => {
+  const fieldHtml = d => {
     const label = `<span class="advlbl">${esc(t(d.label))}</span>`;
     // Schalter als Segmentauswahl statt Dropdown -- drei feste Werte sind
     // so mit einem Klick erreichbar. Der Wert steht in data-value (advValue()).
@@ -6946,8 +7104,15 @@ function advPanelHtml(prefix, exclude = []) {
     }
     return `<label class="advfield">${label}<input type="text" class="advinput" data-advkey="${d.key}"
         autocomplete="off" spellcheck="false" placeholder="${esc(advPlaceholder(d))}"></label>`;
+  };
+  // Je Gruppe Ueberschrift + Raster; eine Gruppe ohne Felder (Generator blendet
+  // einzelne aus) faellt samt Ueberschrift weg.
+  const groups = ADV_GROUPS.map(g => {
+    const defs = ADV_FIELDS.filter(d => d.group === g && !exclude.includes(d.key));
+    return defs.length ? `<div class="advgroup"><div class="advgrouphead">${esc(t("advsearch.group_" + g))}</div>
+      <div class="advgrid">${defs.map(fieldHtml).join("")}</div></div>` : "";
   }).join("");
-  return `<div class="advgrid">${fields}</div>
+  return `${groups}
     <div class="advfoot"><span class="path">${esc(t("advsearch.hint"))}</span>
       <button type="button" class="act small" data-advreset>${esc(t("advsearch.reset"))}</button></div>`;
 }
@@ -6972,6 +7137,7 @@ function advSyncPanel(panel, orig) {
     if (val) used++;
     const el = panel && panel.querySelector(`[data-advkey="${def.key}"]`);
     if (el && el !== document.activeElement && advValue(el) !== val) advSetValue(el, val);
+    if (el) el.closest(".advfield").classList.toggle("act", !!val);
   }
   return used;
 }
@@ -7026,11 +7192,9 @@ function advAttachSuggestions(panel) {
 }
 
 // Panel der Suchleiste.
-function advMainQuery() { return document.getElementById("q").value; }
+function advMainQuery() { return searchFullText(); }
 function advSetMainQuery(v) {
-  const qEl = document.getElementById("q");
-  qEl.value = v;
-  state.q = v.toLowerCase();
+  setSearchText(v);
   state.shown = PAGE;
   render();
 }
@@ -7050,6 +7214,30 @@ function syncAdvSearch() {
   badge.textContent = used || "";
   badge.hidden = !used;
 }
+// Suchfeld-Box: ein Klick neben die Eingabe (Lupe, Luecke, Trefferzahl) setzt den
+// Fokus in #q; Badges und ihr x bleiben eigene Klickziele.
+(function initSearchBox() {
+  const box = document.getElementById("searchBox");
+  const q = document.getElementById("q");
+  if (!box || !q) return;
+  box.addEventListener("mousedown", ev => {
+    if (ev.target === q || ev.target.closest(".chip, .ac-list")) return;
+    ev.preventDefault();
+    q.focus();
+  });
+})();
+// Export-Menue: CSV und Playlist ueber die bisherigen (unsichtbaren) Knoepfe.
+(function initExportMenu() {
+  const btn = document.getElementById("btnExport");
+  if (!btn) return;
+  btn.onclick = ev => {
+    ev.stopPropagation();
+    openContextMenu([
+      {label: t("export.csv_button"), action: () => document.getElementById("csvsel").click()},
+      {label: t("export.m3u_button"), action: () => document.getElementById("m3usel").click()},
+    ], btn);
+  };
+})();
 (function initAdvSearch() {
   const panel = document.getElementById("advSearch");
   const btn = document.getElementById("btnAdvSearch");
@@ -7343,6 +7531,7 @@ function filtered() {
     // "n" (Datei) ist die einzige Spalte ohne gleichnamiges Datenfeld --
     // sortiert wird nach dem angezeigten Text.
     const val = k === "n" ? (r => displayName(r).toLowerCase())
+      : k === "ta" ? (r => ((r.t || baseName(r.p || "")) + " " + (r.a || "")).toLowerCase())
       : k === "ky" ? (r => keyRank(r.ky, state.dir))
       : k === "eg" ? (r => r.eg || 0)
       : k === "rb" ? (r => RB_SORT_RANK[state.rbStage - 1][rbMarkState(r)])
@@ -7423,17 +7612,23 @@ function presenceMark(which, title) {
 // DJ-Liste: aktiv = in Rekordbox, grau = nicht dort. Umrandung gruen = gleiche Daten,
 // rot = TrackTab weicht ab. Ohne Umrandung, wenn TrackTab nur die eigene Analyse zeigt.
 let RB_COMPARE = true;
-const rbMarkState = r => !r.rb ? "off" : r.rbDiff && r.rbDiff.length ? "diff" : RB_COMPARE ? "same" : "on";
+// Orange ("half"): einziger Unterschied ist halbes/doppeltes Tempo -- nur ein Hinweis,
+// Rekordbox Update schreibt es nicht.
+const RB_NOTE_FIELDS = new Set(["bpm_half"]);
+const rbRealDiff = r => (r.rbDiff || []).filter(f => !RB_NOTE_FIELDS.has(f));
+const rbMarkState = r => !r.rb ? "off" : rbRealDiff(r).length ? "diff"
+  : r.rbDiff && r.rbDiff.length ? "half" : RB_COMPARE ? "same" : "on";
 // Sortierstufen der Spalte: in Rekordbox, gruen, rot, nicht in Rekordbox jeweils zuerst.
 const RB_SORT_RANK = [
-  {same: 0, on: 0, diff: 0, off: 1},
-  {same: 0, on: 0, diff: 1, off: 2},
-  {diff: 0, same: 1, on: 1, off: 2},
-  {off: 0, same: 1, on: 1, diff: 2},
+  {same: 0, on: 0, half: 0, diff: 0, off: 1},
+  {same: 0, on: 0, half: 1, diff: 2, off: 3},
+  {diff: 0, half: 1, same: 2, on: 2, off: 3},
+  {off: 0, same: 1, on: 1, half: 2, diff: 3},
 ];
 function rbSyncMark(r) {
   const diff = r.rbDiff && r.rbDiff.length ? r.rbDiff.map(f => t("dj.field_" + f)).join(", ") : "";
   const state_ = rbMarkState(r);
+  if (state_ === "half") return `<span class="rbmark half" title="${esc(t("dj.rb_mark_half"))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span><small class="rbdiff half">${esc(diff)}</small>`;
   if (state_ === "diff") return `<span class="rbmark diff" title="${esc(t("dj.rb_mark_diff", {fields: diff}))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span><small class="rbdiff">${esc(diff)}</small>`;
   return `<span class="rbmark ${state_}" title="${esc(t("dj.rb_mark_" + state_))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span>`;
 }
@@ -7491,7 +7686,7 @@ const CELL_RENDERERS = {
   cp: r => `<td>${esc(r.cp || "")}</td>`,
   ge: r => `<td>${esc(r.ge || "")}</td>`,
   yr: r => `<td class="num">${r.yr || ""}</td>`,
-  bp: r => `<td class="num bpmcell">${cellLayout() === "dj" ? bpmCellHtml(r.bp, r.djBp, r.gridTempo) : bpmCellHtml(r.bp, 0)}</td>`,
+  bp: r => `<td class="num bpmcell">${cellLayout() === "dj" ? bpmCellHtml(r.bp, r.djBp, r.gridTempo, r.rb && RB_COMPARE ? "rekordbox" : "tracktab") : bpmCellHtml(r.bp, 0)}</td>`,
   ky: r => `<td>${keyBubble(r.ky, r.kr)}</td>`,
   eg: r => `<td>${energyCell(r.eg)}</td>`,
   mm: r => `<td>${rowTags(r).map(tg =>
@@ -7517,11 +7712,10 @@ const CELL_RENDERERS = {
     </div></div></td>`;
   },
   a: r => `<td>${esc(r.a || "")}</td>`,
-  // In der DJ-Ansicht eine Spalte fuer beides, siehe DJ_COLUMNS.
-  t: r => cellLayout() === "dj"
-    ? `<td class="titlecell djtrack"><b>${esc(r.t || baseName(r.p))}</b>${r.a ? `<span> – ${esc(r.a)}</span>` : ""}${
-        r.ext ? ` <span class="extbadge">${esc(t(r.p ? "badge.not_scanned" : "badge.no_local_file"))}</span>` : ""}${djMetaLine(r)}</td>`
-    : `<td class="titlecell">${esc(r.t || "")}</td>`,
+  // Titel und Interpret in einer Zelle (feste Spalte der DJ-Ansicht).
+  ta: r => `<td class="titlecell djtrack"><b>${esc(r.t || baseName(r.p))}</b>${r.a ? `<span> – ${esc(r.a)}</span>` : ""}${
+        r.ext ? ` <span class="extbadge">${esc(t(r.p ? "badge.not_scanned" : "badge.no_local_file"))}</span>` : ""}${djMetaLine(r)}</td>`,
+  t: r => `<td class="titlecell">${esc(r.t || "")}</td>`,
   // Zweites Argument: nur die Haupttabelle bindet den Klick-Handler fuer
   // data-copy, in renderDrops bleibt der Pfad deshalb ein schlichter Text.
   // Die Statushinweise schliessen sich je Tabelle gegenseitig aus (gone/mc
@@ -7582,13 +7776,17 @@ async function copyPlainText(text) {
 // Ganze Werte ohne ",0" ("130"), echte Nachkommastellen bleiben ("127,5"). Ein im
 // DJ-Editor geaendertes Tempo steht mit zwei Stellen da ("125,50"). Rot, wenn das Tempo
 // in der Datei nicht zum Beatgrid passt: tempo = [kleinstes, groesstes] im Grid.
-function bpmCellHtml(bp, edited, tempo) {
+function bpmCellHtml(bp, edited, tempo, source) {
   if (!bp && !edited) return "";
   const text = edited ? edited.toFixed(2) : String(Math.round(bp * 10) / 10);
   const off = bp && tempo && (Math.abs(tempo[0] - bp) >= 0.05 || Math.abs(tempo[1] - bp) >= 0.05);
   const fmt = v => v.toFixed(2).replace(".", ",");
   const grid = off && (Math.abs(tempo[1] - tempo[0]) < 0.005 ? fmt(tempo[0]) : `${fmt(tempo[0])} – ${fmt(tempo[1])}`);
-  return `<span class="bpmval${off ? " off" : ""}"${off ? ` title="${esc(t("dj.bpm_off_title", {file: String(bp).replace(".", ","), grid}))}"` : ""}>${
+  // Rote BPM: Hilfestellung, deshalb sofort, mit Angabe, woher das Beatgrid stammt.
+  const tip = off ? ` data-tip-now="" title="${esc(source
+    ? t("dj.bpm_off_title_src", {file: String(bp).replace(".", ","), grid, source: t("dj.source_" + source)})
+    : t("dj.bpm_off_title", {file: String(bp).replace(".", ","), grid}))}"` : "";
+  return `<span class="bpmval${off ? " off" : ""}"${tip}>${
     text.replace(".", ",")}<small>${esc(t("field.bpm"))}</small></span>`;
 }
 
@@ -7639,6 +7837,21 @@ function beginLoadMore(rows, targetShown) {
 // verankertes Menue abgeschnitten wuerde.
 // Gibt den Knoten der gerade geoeffneten eigenen Playlist zurueck -- oder
 // null, wenn eine Systemliste oder eine Merkliste gewaehlt ist.
+// Ziel fuer "Aus Playlist entfernen" in der Player-Zeile: dieselben drei
+// Listenarten wie im Zeilenmenue (rowMoreMenuItems()), null = keine Liste offen.
+function playerRemoveTarget() {
+  const inList = currentPlaylistNode();
+  if (inList) return {kind: "tracktab", icon: ICONS.listX,
+    title: t("tree.remove_from_list", {name: inList.name}), run: r => removeFromPlaylist(inList.id, [r.p])};
+  const rbList = currentRekordboxPlaylist();
+  if (rbList) return {kind: "rekordbox", icon: ICONS.listX,
+    title: t("rb.remove_from_playlist", {playlist: rbList.name}), run: r => removeFromRekordboxPlaylist([r])};
+  const musicList = currentMusicPlaylist();
+  if (musicList) return {kind: "music", icon: ICONS.listMinus,
+    title: t("music.remove_from_playlist", {playlist: musicList.name}), run: r => removeFromMusicPlaylist([r])};
+  return null;
+}
+
 function currentPlaylistNode() {
   const id = String(state.view || "");
   if (!id.startsWith("pl:")) return null;
@@ -7904,8 +8117,11 @@ window.addEventListener("resize", closeRowMoreMenu);
 // Engine meldet dort Mausereignisse, der Browser-Tooltip bleibt dann stehen.
 // Eine zweite, gedaempfte Zeile kommt optional aus data-tip-hint.
 const TIP = {el: null, target: null, timer: 0, hiddenAt: 0};
-const TIP_SELECTOR = "button[title]:not(:disabled), a[title], [data-tip-title]";
-const TIP_DELAY_MS = 350;
+// Jedes Element mit title bekommt denselben Tooltip. Ein schlichter title erscheint
+// verzoegert (TIP_DELAY_MS), eine Hilfestellung -- zweite Zeile (data-tip-hint),
+// Erklaertext (data-tip-plain), "Titel — Erklaerung" oder data-tip-now -- sofort.
+const TIP_SELECTOR = "[title]:not(:disabled):not(iframe):not(svg), [data-tip-title]";
+const TIP_DELAY_MS = 700;
 
 function tipElement() {
   if (!TIP.el) {
@@ -7972,7 +8188,9 @@ function armTip(el, delay) {
   el.dataset.tipTitle = text;
   el.removeAttribute("title");
   TIP.target = el;
-  TIP.timer = setTimeout(() => showTip(el), delay);
+  const help = el.dataset.tipHint !== undefined || el.dataset.tipPlain !== undefined
+    || el.dataset.tipNow !== undefined || text.includes(" — ");
+  TIP.timer = setTimeout(() => showTip(el), help ? 0 : delay);
   return true;
 }
 
@@ -8029,6 +8247,8 @@ function render() {
   // Geoeffnete normale Rekordbox-Playlist: Zeilen lassen sich dort
   // umsortieren (inkl. Titel ohne lokale Datei).
   const rbReorderable = !!currentRekordboxPlaylist();
+  // Player: kein "…"-Menue; "Aus Playlist entfernen" steht als Knopf in der Zeile.
+  const playerRemove = state.layout === "player" && apiMode ? playerRemoveTarget() : null;
   state.totalFiltered = rows.length;
   // Ergebniszahl direkt an der Suchleiste -- state.totalFiltered ist bereits
   // NACH Liste/Verdikt-Chips/"nur harte Kante"/Suche gezaehlt (siehe
@@ -8162,8 +8382,10 @@ function render() {
       lastGroupKey = key;
     }
     const nowPlaying = queueState.current && queueState.current.i === r.i;
-    const moreBtn = rowMoreMenuItems(r).length
-      ? `<button class="iconbtn plain" data-more="${r.i}" title="${esc(t("action.more_options"))}">${ICONS.moreVert}</button>` : "";
+    const moreBtn = state.layout !== "player" && rowMoreMenuItems(r).length
+      ? `<button class="iconbtn plain" data-more="${r.i}" title="${esc(t("action.more_options"))}">${ICONS.moreVert}</button>`
+      : playerRemove && (r.ext ? playerRemove.kind !== "tracktab" : !r.gone)
+      ? `<button class="iconbtn plain" data-plremove="${r.i}" title="${esc(playerRemove.title)}">${playerRemove.icon}</button>` : "";
     return groupHeader + `
     <tr class="row${r.ig ? " ign" : ""}${r.mc ? " corr" : ""}${r.ext ? " extrow" : r.gone ? " gone" : ""}${state.selected.has(r.i) ? " picked" : ""}${r.i === cursorRowI ? " kbcursor" : ""}${freshFrom >= 0 && i >= freshFrom ? " fresh" : ""}" data-i="${r.i}" draggable="${r.ext && !rbReorderable ? "false" : "true"}">
       <td class="sel"><input type="checkbox" class="selchk" data-sel="${r.i}" ${state.selected.has(r.i) ? "checked" : ""}>${
@@ -8176,11 +8398,11 @@ function render() {
           ${(!r.gone || r.ext || !apiMode) ? "" :
             `<button class="iconbtn plain" data-relink="${r.i}"
                      title="${esc(t("action.relink"))}">${ICONS.relink}</button>`}
-          ${r.gone ? "" : `<button class="iconbtn" data-play="${r.i}" title="${esc(t("action.listen"))}">${ICONS.play}</button>`}
+          ${r.gone ? "" : `<button class="iconbtn" data-play="${r.i}" title="${esc(t("action.listen"))}">${rowIsPlaying(r) ? ICONS.pause : ICONS.play}</button>`}
           ${r.gone ? "" :
-            `<button class="iconbtn" data-play-next="${r.i}" title="${esc(t("action.play_next"))}">${ICONS.listStart}</button>`}
+            `<button class="iconbtn plain" data-play-next="${r.i}" title="${esc(t("action.play_next"))}">${ICONS.listStart}</button>`}
           ${r.gone ? "" :
-            `<button class="iconbtn" data-queue-add="${r.i}" title="${esc(t("action.queue_add"))}">${ICONS.listEnd}</button>`}
+            `<button class="iconbtn plain" data-queue-add="${r.i}" title="${esc(t("action.queue_add"))}">${ICONS.listEnd}</button>`}
           ${(r.gone || !apiMode) ? "" : `<span class="sep" data-sep="1"></span>`}
           ${(r.gone || !apiMode) ? "" :
             `<button class="iconbtn plain" data-playlistadd="${r.i}"
@@ -8427,7 +8649,15 @@ function render() {
 
   tb.querySelectorAll("[data-play]").forEach(b => b.onclick = ev => {
     ev.stopPropagation();
-    if (state.layout === "player") { startQueueFrom(DATA[+b.dataset.play]); return; }
+    if (state.layout === "player") {
+      const cr = DATA[+b.dataset.play];
+      if (queueState.current && queueState.current.i === cr.i) {
+        if (queueAudio.paused) queueAudio.play().catch(err => playFailed(queueAudio, err));
+        else queueAudio.pause();
+        return;
+      }
+      startQueueFrom(cr); return;
+    }
     const tr = b.closest("tr");
     let det = tr.nextElementSibling;
     if (!det || !det.classList.contains("detail")) { tr.click(); det = tr.nextElementSibling; }
@@ -8553,6 +8783,13 @@ function render() {
   tb.querySelectorAll("[data-tags]").forEach(b => b.onclick = ev => {
     ev.stopPropagation();
     openTagsPopup(DATA[+b.dataset.tags]);
+  });
+
+  tb.querySelectorAll("[data-plremove]").forEach(b => b.onclick = ev => {
+    ev.stopPropagation();
+    const target = playerRemoveTarget();
+    const r = DATA[+b.dataset.plremove];
+    if (target && r) target.run(r);
   });
 
   tb.querySelectorAll("[data-more]").forEach(b => b.onclick = ev => {
@@ -8902,7 +9139,7 @@ function askFixTagIssuesBulk(rows) {
 // Music.app und Rekordbox mit (siehe _post_rename_library()); hier wird nur
 // die Zeile uebernommen. Abspielen stoppen, weil die Datei unter dem alten
 // Pfad nicht mehr existiert.
-async function renameLibraryRows(rows) {
+async function renameLibraryRows(rows, {keepSelection = false} = {}) {
   if (!rows.length) return;
   const label = t("toast.rename_lib_running", {count: rows.length});
   const pt = progressToast(label);
@@ -8943,7 +9180,8 @@ async function renameLibraryRows(rows) {
   const msg = parts.join(" · ") || t("drop.rename.done_none");
   if (failed) pt.fail(msg);
   else pt.done(msg, renamed ? false : "soft");
-  state.selected.clear();
+  // Aus dem Tags-Dialog: Auswahl behalten, Vor/Zurueck blaettert durch sie.
+  if (!keepSelection) state.selected.clear();
   render();
 }
 
@@ -10023,8 +10261,7 @@ function openExportZipPopup(rows) {
       params.set("rename", "1");
       params.set("pattern", patternInput.value || RENAME_PATTERN);
     }
-    // Ueber einen download-Link statt location.href: eine Navigation wuerde
-    // waehrend der Wiedergabe den beforeunload-Hinweis ausloesen.
+    // Ueber einen download-Link statt location.href.
     const a = document.createElement("a");
     a.href = `/api/download-zip?${params.toString()}`;
     a.download = "";
@@ -10273,6 +10510,22 @@ function attachAutocomplete(el, key, {openOnFocus = true, extra = null} = {}) {
   let items = [], active = -1;
 
   const close = () => { list.style.display = "none"; list.innerHTML = ""; items = []; active = -1; };
+  // In einer eigenen Scrollflaeche (Tags-Dialog, .tagsbody) wuerde die absolut
+  // positionierte Liste am Rand der Flaeche abgeschnitten. Dort schwebt sie fest
+  // ueber allem, am Feld ausgerichtet, und klappt nach oben, wenn unten kein Platz
+  // ist. Scrollt die Flaeche, schliesst sie.
+  const scroller = el.closest(".tagsbody");
+  if (scroller) scroller.addEventListener("scroll", () => { if (list.style.display !== "none") close(); });
+  const placeFixed = () => {
+    if (!scroller) return;
+    const r = el.getBoundingClientRect();
+    list.classList.add("ac-fixed");
+    list.style.left = `${r.left}px`;
+    list.style.width = `${r.width}px`;
+    const h = list.offsetHeight;
+    const below = window.innerHeight - r.bottom - 8;
+    list.style.top = (below < h && r.top - 8 > below) ? `${Math.max(8, r.top - h - 2)}px` : `${r.bottom + 2}px`;
+  };
 
   const render = (vals, rerender) => {
     items = vals;
@@ -10286,6 +10539,7 @@ function attachAutocomplete(el, key, {openOnFocus = true, extra = null} = {}) {
     }).join("");
     list.classList.toggle("ac-rich", !!ex);
     list.style.display = "";
+    placeFixed();
     list.querySelectorAll("li[data-i]").forEach(li => {
       li.onmousedown = ev => { ev.preventDefault(); pick(items[+li.dataset.i]); };
     });
@@ -10507,6 +10761,13 @@ function renderUserTagChips() {
   });
 }
 // {add, remove} gegenueber dem Stand beim Oeffnen; Tippen ohne Enter zaehlt mit.
+// Ohne Nebenwirkung (anders als userTagChanges(), das einen getippten Entwurf
+// uebernimmt): stehen ungespeicherte eigene Tags im Dialog?
+function userTagChangesPending() {
+  if (document.getElementById("tagsUserTagInput").value.trim()) return true;
+  const before = new Set(UT_INITIAL.map(utKey)), after = new Set(UT_DRAFT.map(utKey));
+  return UT_DRAFT.some(x => !before.has(utKey(x))) || UT_INITIAL.some(x => !after.has(utKey(x)));
+}
 function userTagChanges() {
   const pending = document.getElementById("tagsUserTagInput").value.trim();
   if (pending) addUserTagDraft(pending), document.getElementById("tagsUserTagInput").value = "";
@@ -10605,6 +10866,41 @@ function genreInLibrary(v) {
   return _genreLibSet.has(v.toLowerCase());
 }
 
+// Geaenderte Felder im Tags-Dialog markieren (.chg) und zaehlen. Der Vergleichs-
+// stand ("initial") gehoert dem gerade offenen Dialog (Einzel- oder Sammel-
+// bearbeitung) und wird beim Oeffnen ueber setTagsChangeBase() gesetzt.
+let TAGS_CHANGE_BASE = null;
+function setTagsChangeBase(initial) {
+  TAGS_CHANGE_BASE = initial;
+  refreshTagsChanged();
+}
+function tagsChangedCount() {
+  if (!TAGS_CHANGE_BASE) return 0;
+  return TAGS_BULK_FIELD_MAP.filter(([id]) => document.getElementById(id).value !== TAGS_CHANGE_BASE[id]).length;
+}
+function refreshTagsChanged() {
+  let n = 0;
+  for (const [id] of TAGS_BULK_FIELD_MAP) {
+    const el = document.getElementById(id);
+    const changed = !!TAGS_CHANGE_BASE && el.value !== TAGS_CHANGE_BASE[id];
+    el.closest(".setfield").classList.toggle("chg", changed);
+    if (changed) n++;
+  }
+  const box = document.getElementById("tagsChanged");
+  if (box) box.textContent = n ? t("tags.changed_count", {count: n}) : "";
+}
+function initTagsChangeTracking() {
+  const fields = document.querySelector("#tagsOverlay .setfields");
+  if (fields) fields.addEventListener("input", refreshTagsChanged);
+}
+// Kopfzeile des Tags-Dialogs: Dateiname gross, Ordner klein (voller Pfad im Tooltip).
+function setTagsHead(name, dir, fullPath) {
+  document.getElementById("tagsName").textContent = name;
+  const pathEl = document.getElementById("tagsPath");
+  pathEl.textContent = dir;
+  if (fullPath) pathEl.title = fullPath; else pathEl.removeAttribute("title");
+}
+
 function openTagsPopup(r, isDrop) {
   // Einmalig pro Element verdrahtet, ueber ein Dataset-Flag abgesichert --
   // openTagsPopup laeuft bei "Vorheriger"/"Nächster" fuer denselben Dialog
@@ -10634,13 +10930,43 @@ function openTagsPopup(r, isDrop) {
 
   // Sichtbarkeit zuruecksetzen -- openTagsPopupBulk() blendet Prev/Next,
   // Online-Suche und den Cover-Platzhaltertext fuer den Mehrfach-Modus aus.
-  document.getElementById("tagsPrev").style.display = "";
-  document.getElementById("tagsNext").style.display = "";
+  document.getElementById("tagsNav").style.display = "";
   document.querySelector(".tagslookup").style.display = "";
   document.getElementById("tagsCoverEmpty").innerHTML = t("tags.cover_empty");
   for (const [id] of TAGS_BULK_FIELD_MAP) document.getElementById(id).placeholder = "";
 
-  document.getElementById("tagsPath").textContent = r.p;
+  const slash = r.p.lastIndexOf("/");
+  setTagsHead(baseName(r.p), slash > 0 ? r.p.slice(0, slash) : "", r.p);
+  const copyBtn = document.getElementById("tagsCopyPath");
+  copyBtn.style.display = "";
+  copyBtn.onclick = async () => {
+    try { await copyPlainText(r.p); note(t("action.path_copied")); }
+    catch (err) { note(err.message, true); }
+  };
+  // /api/reveal kennt nur DB-Zeilen: Einzelpruefungen und fehlende Dateien ohne Finder-Knopf.
+  const revealBtn = document.getElementById("tagsReveal");
+  revealBtn.style.display = isDrop || r.gone ? "none" : "";
+  revealBtn.onclick = () => reveal(r.p, revealBtn);
+  // Umbenennen nach Namensmuster -- derselbe Weg wie im Zeilenmenue bzw. in den
+  // Einzelpruefungen. Benannt wird nach den Tags IN DER DATEI, deshalb erst
+  // speichern, wenn im Dialog etwas offen ist. Danach den Dialog mit dem neuen
+  // Pfad neu aufbauen (r wird von beiden Wegen in place umgeschrieben).
+  const renameBtn = document.getElementById("tagsRename");
+  renameBtn.style.display = r.gone || r.ext || (isDrop && !r.nativePath) ? "none" : "";
+  renameBtn.onclick = async () => {
+    if (tagsChangedCount() || pendingCover || userTagChangesPending()) {
+      note(t("tags.rename_save_first"), "soft");
+      return;
+    }
+    renameBtn.disabled = true;
+    try {
+      if (isDrop) await renameDrops([r]);
+      else await renameLibraryRows([r], {keepSelection: true});
+    } finally {
+      renameBtn.disabled = false;
+    }
+    if (ov.style.display !== "none") openTagsPopup(r, isDrop);
+  };
   document.getElementById("tagsTitle").value = r.t || "";
   document.getElementById("tagsArtist").value = r.a || "";
   document.getElementById("tagsAlbum").value = r.al || "";
@@ -10665,6 +10991,7 @@ function openTagsPopup(r, isDrop) {
   // waehrend der offenen Dialogzeit in die Datei geschrieben hat.
   const initial = {};
   for (const [id] of TAGS_BULK_FIELD_MAP) initial[id] = document.getElementById(id).value;
+  setTagsChangeBase(initial);
   // Kein Kuenstler-Tag in der Datei, das Feld zeigt nur den Albumkuenstler-
   // Ersatz aus probe.py: Hinweis einblenden und den Wert als Aenderung
   // werten, sonst meldet Speichern "Keine Änderungen" und schreibt nichts.
@@ -10675,6 +11002,9 @@ function openTagsPopup(r, isDrop) {
   const img = document.getElementById("tagsCoverImg");
   const empty = document.getElementById("tagsCoverEmpty");
   const zone = document.getElementById("tagsCoverZone");
+  // Liefert der Server kein Bild (Datei inzwischen verschoben o. ae.), Platzhalter
+  // statt des kaputten Bild-Symbols zeigen.
+  img.onerror = () => { img.removeAttribute("src"); img.style.display = "none"; empty.style.display = ""; };
   if (r.cv) {
     img.src = `/api/cover?path=${encodeURIComponent(r.p)}&_=${Date.now()}`;
     img.style.display = ""; empty.style.display = "none";
@@ -10730,13 +11060,15 @@ function openTagsPopup(r, isDrop) {
   status.textContent = ""; status.className = "";
   document.getElementById("tagsLookupStatus").textContent = "";
   document.getElementById("tagsLookupResults").innerHTML = "";
-  document.getElementById("tagsLookupManual").style.display = "none";
-  document.getElementById("tagsLookupQuery").value = "";
+  // Suchbegriff vorbelegt mit Interpret + Titel, frei aenderbar.
+  document.getElementById("tagsLookupQuery").value = [r.a, r.t].filter(Boolean).join(" ");
 
   const prevBtn = document.getElementById("tagsPrev");
   const nextBtn = document.getElementById("tagsNext");
   prevBtn.disabled = pos <= 0;
   nextBtn.disabled = pos < 0 || pos >= rows.length - 1;
+  document.getElementById("tagsPos").textContent = pos >= 0 && rows.length > 1
+    ? t("tags.position", {pos: (pos + 1).toLocaleString("de-DE"), total: rows.length.toLocaleString("de-DE")}) : "";
   prevBtn.onclick = () => { if (pos > 0) { discardPendingCover(); openTagsPopup(rows[pos - 1], isDrop); } };
   nextBtn.onclick = () => { if (pos >= 0 && pos < rows.length - 1) { discardPendingCover(); openTagsPopup(rows[pos + 1], isDrop); } };
 
@@ -10793,7 +11125,6 @@ function openTagsPopup(r, isDrop) {
 
   const lstatus = document.getElementById("tagsLookupStatus");
   const results = document.getElementById("tagsLookupResults");
-  const manualBox = document.getElementById("tagsLookupManual");
   const manualInput = document.getElementById("tagsLookupQuery");
 
   // Gemeinsam fuer den Erst-Versuch (Interpret+Titel) und den manuellen
@@ -10811,10 +11142,6 @@ function openTagsPopup(r, isDrop) {
       if (!data.ok) throw new Error(data.error || t("error.unknown"));
       if (!data.results.length) {
         lstatus.textContent = t("lookup.no_results");
-        if (!manualInput.value.trim()) {
-          manualInput.value = body.query || [body.artist, body.title].filter(Boolean).join(" ");
-        }
-        manualBox.style.display = "flex";
       } else {
         lstatus.textContent = t("lookup.results_count", {count: data.results.length});
       }
@@ -10839,6 +11166,9 @@ function openTagsPopup(r, isDrop) {
         if (c.year) document.getElementById("tagsYear").value = c.year;
         if (c.bpm) document.getElementById("tagsBpm").value = c.bpm;
         if (c.cover) stageCoverUrl(c.cover);
+        results.querySelectorAll(".lookupcand.on").forEach(x => x.classList.remove("on"));
+        el.classList.add("on");
+        refreshTagsChanged();
       });
       results.querySelectorAll("[data-onlycover]").forEach(btn => btn.onclick = ev => {
         ev.stopPropagation();
@@ -10850,35 +11180,18 @@ function openTagsPopup(r, isDrop) {
     }
   };
 
+  // Eine Suche: freier Suchbegriff aus dem Feld (vorbelegt mit Interpret + Titel).
+  // Leer -> Interpret und Titel getrennt, wie die fruehere Erstsuche.
   document.getElementById("tagsLookupBtn").onclick = () => {
+    const query = manualInput.value.trim();
+    if (query) { runLookup({query}); return; }
     const artist = document.getElementById("tagsArtist").value.trim();
     const title = document.getElementById("tagsTitle").value.trim();
-    if (!artist && !title) {
-      lstatus.textContent = t("lookup.need_artist_or_title");
-      return;
-    }
+    if (!artist && !title) { lstatus.textContent = t("lookup.need_artist_or_title"); return; }
     runLookup({artist, title});
   };
-  document.getElementById("tagsLookupManualBtn").onclick = () => {
-    const query = manualInput.value.trim();
-    if (!query) { lstatus.textContent = t("lookup.need_query"); return; }
-    runLookup({query});
-  };
-  // Blendet dasselbe Suchfeld ein, das runLookup() sonst erst nach einer
-  // erfolglosen Online-Suche zeigt -- fuer den Fall, dass der Nutzer gleich
-  // selbst formulieren will, statt erst eine Suche scheitern zu lassen.
-  document.getElementById("tagsLookupManualToggle").onclick = () => {
-    if (!manualInput.value.trim()) {
-      const artist = document.getElementById("tagsArtist").value.trim();
-      const title = document.getElementById("tagsTitle").value.trim();
-      manualInput.value = [artist, title].filter(Boolean).join(" ");
-    }
-    manualBox.style.display = "flex";
-    manualInput.focus();
-    manualInput.select();
-  };
   manualInput.onkeydown = ev => {
-    if (ev.key === "Enter") { ev.preventDefault(); document.getElementById("tagsLookupManualBtn").click(); }
+    if (ev.key === "Enter") { ev.preventDefault(); document.getElementById("tagsLookupBtn").click(); }
   };
 
   const saveBtn = document.getElementById("tagsSave");
@@ -11037,7 +11350,9 @@ function fieldsToDropRow(fields) {
 // das Ergebnis wandert deshalb direkt in den Eintrag und nach renderDrops().
 function openTagsPopupBulk(rows, isDrop) {
   const ov = document.getElementById("tagsOverlay");
-  document.getElementById("tagsPath").textContent = t("tags.selected_count_files", {count: rows.length});
+  setTagsHead(t("tags.selected_count_files", {count: rows.length}), "", "");
+  document.getElementById("tagsCopyPath").style.display = "none";
+  document.getElementById("tagsReveal").style.display = "none";
 
   const initial = {};
   for (const [id, key] of TAGS_BULK_FIELD_MAP) {
@@ -11048,11 +11363,11 @@ function openTagsPopupBulk(rows, isDrop) {
     el.placeholder = values.size > 1 ? t("tags.multiple_values_placeholder") : "";
     initial[id] = common;
   }
+  setTagsChangeBase(initial);
 
   // Prev/Next und Online-Suche zielen auf genau einen Track -- im
   // Mehrfach-Modus ausblenden statt anzupassen.
-  document.getElementById("tagsPrev").style.display = "none";
-  document.getElementById("tagsNext").style.display = "none";
+  document.getElementById("tagsNav").style.display = "none";
   document.querySelector(".tagslookup").style.display = "none";
   // Genre-Vorschlaege gelten je Track -- im Mehrfach-Modus gibt es keine.
   GENRE_AC_ROW = null;
@@ -11456,7 +11771,9 @@ function applyMovedPaths(moved) {
     for (const d of drops) if (d.p === m.old) d.p = m.new;
     if (m.row) {
       const idx = DATA.findIndex(r => r.p === m.old);
-      if (idx >= 0) applyRowUpdate(idx, m.row);
+      // Wiedergefunden heisst: die Datei liegt am neuen Pfad. gone faellt auch dann,
+      // wenn die Serverzeile das Feld nicht mitbringt.
+      if (idx >= 0) applyRowUpdate(idx, {gone: 0, ...m.row});
     }
   }
   return moved.length;
@@ -11523,7 +11840,7 @@ function adoptLibraryRows(compactRows) {
 function revealImported(indices) {
   if (!indices.length) return;
   state.view = "all";
-  state.q = "";
+  setSearchText("");
   state.groupAlbums = false;
   state.sort = "da"; state.dir = -1;
   state.shown = Math.max(PAGE, indices.length);
@@ -11534,8 +11851,6 @@ function revealImported(indices) {
   // neue Liste auf.
   lastColumnStoreKey = columnStoreKey();
   state.hiddenCols = state.hiddenCols.filter(k => k !== "da");
-  const qEl = document.getElementById("q");
-  if (qEl) qEl.value = "";
   syncControls();
   saveFilters();
   state.selected = new Set(indices);
@@ -11562,10 +11877,8 @@ function revealCurrentQueueTrack() {
   if (!r) return;
   const query = `/pfad "${r.p}"`.toLowerCase();
   state.view = "all";
-  state.q = query;
+  setSearchText(query);
   state.shown = PAGE;
-  const qEl = document.getElementById("q");
-  if (qEl) qEl.value = query;
   syncControls();
   renderHead();
   render();
@@ -11590,7 +11903,7 @@ function askRekordboxOverwrite(rows, title) {
   return new Promise(resolve => {
     const ov = document.getElementById("rbPushOverlay");
     const list = document.getElementById("rbPushList");
-    const differs = r => !!(r.rbDiff && r.rbDiff.length);
+    const differs = r => rbRealDiff(r).length > 0;
     const label = r => (r.a || r.t) ? `${r.a || ""}${r.a && r.t ? " – " : ""}${r.t || ""}` : baseName(r.p);
     document.getElementById("rbPushTitle").textContent = title
       || t("rbpush.title", {count: rows.length.toLocaleString("de-DE")});
@@ -12015,7 +12328,9 @@ async function relinkMissing(paths, btn) {
                                  ? {rekordbox_retry: pendingRekordboxMoves} : {})})});
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
-    if (applyMovedPaths(data.relinked)) render();
+    // updateCards() zaehlt die fehlenden Dateien neu: ohne das blieb die gelbe
+    // Leiste (Auto-Relocate / Aus der Liste entfernen) nach einem Treffer stehen.
+    if (applyMovedPaths(data.relinked)) { updateCards(); render(); }
     // Umgeschriebene Pfade machen jeden Schnappschuss im Verlauf ungueltig
     // (siehe Kommentar bei undoStacks).
     if (data.relinked.length) clearUndoStacks();
@@ -12426,7 +12741,7 @@ const SETTINGS_PAGES = [
    groups: ["library", "display", "search"]},
   {id: "views", icon: "table-properties", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviews"]},
   {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename"]},
-  {id: "djview", icon: "disc-3", nav: "settings.nav_general", label: "settings.page_djview", groups: ["djview"]},
+  {id: "djview", icon: "turntable", nav: "settings.nav_general", label: "settings.page_djview", groups: ["djview"]},
   {id: "autocue", icon: "square-sparkles", nav: "settings.nav_general", label: "settings.page_autocue",
    groups: ["autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue"]},
   {id: "bpmkey", icon: "audio-waveform", nav: "settings.nav_analysis", label: "settings.page_bpmkey", groups: ["bpmkey"]},
@@ -12638,16 +12953,15 @@ async function runOrphanCleanup(btn) {
 // statt Teil des generischen Schemas: variable Zeilenzahl, und angelegt
 // werden die Ansichten nicht hier, sondern im Spalten-Menue der Tabelle
 // ("Ansicht speichern"). Hier steht nur, was danach kommt -- umbenennen,
-// loeschen und die Wahl, welche Ansicht als Standard fuer alle Listen ohne
-// eigene Einstellung gilt.
+// loeschen und die Vorgaben fuer Apple-Music-Playlisten und Einzelpruefungen.
+// Die Standards selbst ("Standard – Bearbeiten"/"Standard – Player") sind die
+// Spalten der jeweiligen Ansicht ohne eigene Zuordnung (Spalten-Menue).
 let colViewDraft = [];
-let colViewDefaultDraft = "";
 let colViewMusicDefaultDraft = "";
 let colViewDropDraft = "";
 
 function renderColumnViewsBlock() {
   colViewDraft = COLUMN_VIEWS.map(v => ({...v}));
-  colViewDefaultDraft = COLUMN_VIEW_DEFAULT;
   colViewMusicDefaultDraft = COLUMN_VIEW_MUSIC_DEFAULT;
   colViewDropDraft = COLUMN_VIEW_DROP;
   return `<div class="setgroup collapsed" data-sg="columnviews">
@@ -12657,11 +12971,6 @@ function renderColumnViewsBlock() {
     <div class="setbody">
       <div class="sethint">${esc(t("settings.column_views_note"))}</div>
       <div class="setrows">
-        <div class="setrow"><div class="setfield">
-          <label for="cvDefault">${esc(t("settings.column_view_default_label"))}</label>
-          <select id="cvDefault"></select>
-          <div class="sethelp">${esc(t("settings.column_view_default_help"))}</div>
-        </div></div>
         <div class="setrow"><div class="setfield">
           <label for="cvMusicDefault">${esc(t("settings.column_view_music_default_label"))}</label>
           <select id="cvMusicDefault"></select>
@@ -12685,15 +12994,8 @@ function renderColumnViewsBlock() {
 // nicht mehr als Standard waehlbar sein), deshalb werden beide zusammen
 // gezeichnet.
 function redrawColumnViewsBlock() {
-  const sel = document.getElementById("cvDefault");
-  if (!sel) return;
-  if (!colViewDraft.some(v => v.id === colViewDefaultDraft)) colViewDefaultDraft = "";
-  sel.innerHTML = `<option value="">${esc(t("cols.view_standard"))}</option>` +
-    colViewDraft.map(v => `<option value="${esc(v.id)}"` +
-      `${v.id === colViewDefaultDraft ? " selected" : ""}>${esc(v.name)}</option>`).join("");
-  sel.onchange = () => { colViewDefaultDraft = sel.value; };
-
   const selMusic = document.getElementById("cvMusicDefault");
+  if (!selMusic) return;
   if (!colViewDraft.some(v => v.id === colViewMusicDefaultDraft)) colViewMusicDefaultDraft = "";
   selMusic.innerHTML = `<option value="">${esc(t("cols.view_standard"))}</option>` +
     colViewDraft.map(v => `<option value="${esc(v.id)}"` +
@@ -12737,7 +13039,7 @@ async function saveColumnViewsFromSettings() {
   try {
     const res = await fetch("/api/column-views", {method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({column_views: colViewDraft, default: colViewDefaultDraft,
+      body: JSON.stringify({column_views: colViewDraft,
                             music_default: colViewMusicDefaultDraft,
                             drop_view: colViewDropDraft})});
     const data = await res.json();
@@ -12769,8 +13071,6 @@ function adoptColumnViewsFromServer(data) {
   for (const [viewId, id] of Object.entries(assign)) {
     if (COLUMN_VIEWS.some(v => v.id === id)) COLUMN_ASSIGN[viewId] = id;
   }
-  COLUMN_VIEW_DEFAULT = COLUMN_VIEWS.some(v => v.id === data.column_view_default)
-    ? data.column_view_default : "";
   COLUMN_VIEW_MUSIC_DEFAULT = COLUMN_VIEWS.some(v => v.id === data.column_view_music_default)
     ? data.column_view_music_default : "";
   COLUMN_VIEW_DROP = COLUMN_VIEWS.some(v => v.id === data.column_view_drop)
@@ -13629,7 +13929,7 @@ function wireBackupBlock() {
       if (!data.ok) throw new Error(data.error || t("error.unknown"));
       if (data.cancelled) { st.textContent = t("settings.backup_cancelled"); return; }
       st.innerHTML = t("settings.backup_restored");
-      document.getElementById("backupReload").onclick = e => { e.preventDefault(); requestReload(); };
+      document.getElementById("backupReload").onclick = e => { e.preventDefault(); reloadPage(); };
       loadBackupList();
     } catch (err) {
       st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
@@ -14322,7 +14622,7 @@ async function pollScan() {
       (f.bpmkey_done ? esc(t("scan.bpmkey_suffix", {count: f.bpmkey_done})) : "") +
       ` — <a href="#" id="reloadScan">${esc(t("scan.reload_page"))}</a>`);
     const rl = document.getElementById("reloadScan");
-    if (rl) rl.onclick = e => { e.preventDefault(); requestReload(); };
+    if (rl) rl.onclick = e => { e.preventDefault(); reloadPage(); };
     clearUndoStacks();
   }
 }
@@ -15333,9 +15633,10 @@ function mountDropPlayer(root, r) {
   audio.onloadedmetadata = () => requestWavePaint();
   audio.onplay  = () => {
     btn.innerHTML = ICONS.pause; activeKey = key;
+    syncRowPlayButtons();
     listenTrackStart(r, audio); scheduleWavePaint();
   };
-  audio.onpause = () => { btn.innerHTML = ICONS.play; requestWavePaint(); };
+  audio.onpause = () => { btn.innerHTML = ICONS.play; syncRowPlayButtons(); requestWavePaint(); };
   audio.onseeked = () => requestWavePaint();
   audio.onended = () => {
     listenFinish();
@@ -15430,6 +15731,26 @@ const currentQueueTrack = () => queueState.current;
 // stattdessen gezielt in eine bestehende Warteschlange legen, sind bewusst
 // nur mit addToQueue()/playNext() (Knoepfe je Zeile) abgedeckt -- der Rest
 // ist laut Absprache eine spaetere Verfeinerung.
+// Spielt diese Zeile gerade? (Player: globale Warteschlange, sonst der
+// Zeilen-Player). Steuert Play- bzw. Pausensymbol des Zeilenknopfs.
+function rowIsPlaying(r) {
+  if (queueState.current && queueState.current.i === r.i && !queueAudio.paused) return true;
+  for (const p of players.values()) {
+    if (p.r && p.r.i === r.i && p.audio && !p.audio.paused) return true;
+  }
+  return false;
+}
+
+function syncRowPlayButtons() {
+  document.querySelectorAll("#tb [data-play]").forEach(b => {
+    if (!b.classList.contains("iconbtn") || b.closest(".detail")) return;
+    const r = DATA[+b.dataset.play];
+    if (!r) return;
+    const icon = rowIsPlaying(r) ? ICONS.pause : ICONS.play;
+    if (b._ic !== icon) { b._ic = icon; b.innerHTML = icon; }
+  });
+}
+
 function startQueueFrom(r) {
   if (!apiMode) { note(t("player.bar.needs_server"), "soft"); return; }
   const rows = filtered().filter(x => !x.gone);
@@ -17168,55 +17489,9 @@ function currentDropPlayer() {
   return players.size === 1 ? [...players.values()][0] : null;
 }
 
-// ── Neuladen waehrend der Wiedergabe ─────────────────────────────────────
-// Cmd/Strg+R und F5 lassen sich abfangen und bekommen den eigenen Dialog. Den
-// Reload-Knopf des Browsers und das Schliessen des Tabs sieht die Seite nur
-// noch ueber beforeunload -- dort zeigt der Browser seinen eigenen Hinweis,
-// der Text ist nicht beeinflussbar. Laeuft nichts, wird nie gefragt.
-// Eigene Neuladevorgaenge gehen deshalb ueber reloadPage() (ohne Rueckfrage)
-// oder requestReload() (mit), nie ueber ein nacktes location.reload().
-let reloadGuardOff = false;
-let reloadAsking = false;
-
-// Zusaetzlich zu anyAudioPlaying() die <audio>-Elemente im DOM: die
-// Hoerproben der Stem-Vorschau haengen an keinem der beiden Player.
-function playbackRunning() {
-  return anyAudioPlaying()
-    || [...document.querySelectorAll("audio")].some(a => !a.paused && !a.ended);
-}
-
 function reloadPage() {
-  reloadGuardOff = true;
   location.reload();
 }
-
-async function requestReload() {
-  if (!playbackRunning()) { reloadPage(); return; }
-  if (reloadAsking) return;
-  reloadAsking = true;
-  const ok = await askConfirmSimple(t("reload.title"), t("reload.note"), t("reload.confirm"));
-  reloadAsking = false;
-  if (ok) reloadPage();
-}
-
-// Capture-Phase, damit kein anderer Tastatur-Handler das Ereignis vorher
-// schluckt. Bei einer schon offenen Ueberlagerung bleibt es beim Hinweis des
-// Browsers: askConfirmSimple() wuerde deren document.onkeydown ueberschreiben.
-document.addEventListener("keydown", ev => {
-  const isReload = ev.key === "F5"
-    || (ev.key.toLowerCase() === "r" && (ev.metaKey || ev.ctrlKey) && !ev.altKey);
-  if (!isReload || !playbackRunning()) return;
-  if (!reloadAsking
-      && [...document.querySelectorAll(".overlay")].some(o => o.style.display === "flex")) return;
-  ev.preventDefault();
-  requestReload();
-}, true);
-
-window.addEventListener("beforeunload", ev => {
-  if (reloadGuardOff || !playbackRunning()) return;
-  ev.preventDefault();
-  ev.returnValue = true;
-});
 
 // ── Cmd/Strg+Z: Rueckgaengig in der geoeffneten Playlist ─────────────────
 // Wie die Leertaste nur ausserhalb von Eingabefeldern -- in einem Textfeld
@@ -17521,11 +17796,12 @@ queueAudio.onplay = () => {
   // Nach dem Neuladen wiederhergestellter Track (ohne loadQueueTrack()).
   queueMemPrefetch(queueState.current);
   renderPlayerBar();
+  syncRowPlayButtons();
   scheduleWavePaint();
   // Laufenden Slot im Playlist-Generator markieren (generator.js).
   if (typeof genSyncPlaying === "function") genSyncPlaying();
 };
-queueAudio.onpause = () => { renderPlayerBar(); requestWavePaint(); };
+queueAudio.onpause = () => { renderPlayerBar(); syncRowPlayButtons(); requestWavePaint(); };
 queueAudio.onseeked = () => requestWavePaint();
 // Nur noch Hoerzeit-Statistik -- gezeichnet wird aus wavePump().
 queueAudio.ontimeupdate = () => listenTrackTick(queueAudio);
@@ -17547,7 +17823,7 @@ queueAudio.onloadedmetadata = () => {
   renderPlayerProgress();
   requestWavePaint();
 };
-queueAudio.onended = () => { listenFinish(); queueNext(false); };
+queueAudio.onended = () => { listenFinish(); queueNext(false); syncRowPlayButtons(); };
 
 // Media-Tasten (F7/F9 bzw. "Vorheriger/Naechster Titel" auf externen
 // Tastaturen): Play/Pause (F8) landet ohne Zutun beim <audio>-Element, weil

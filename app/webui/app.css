@@ -172,8 +172,25 @@
   input[type=search], select { background:var(--bg); color:var(--fg); border:1px solid var(--line);
           border-radius:7px; padding:7px 10px; font-size:14px; }
   input[type=search] { min-width:260px; flex:1; }
-  .searchwrap { position:relative; min-width:260px; flex:1; }
-  .searchwrap input[type=search] { width:100%; }
+  /* Suchfeld als Box: Lupe, Such-Badges, Eingabe und Trefferzahl in einem Rahmen. */
+  .searchwrap { position:relative; min-width:260px; flex:1; display:flex; align-items:center;
+                flex-wrap:wrap; gap:6px; min-height:36px; padding:3px 10px; cursor:text;
+                border:1px solid var(--line); border-radius:7px; background:var(--bg); }
+  .searchwrap:focus-within { border-color:var(--accent); box-shadow:0 0 0 3px var(--accent-bg); }
+  .searchwrap input[type=search] { flex:1 1 160px; min-width:160px; width:auto; border:none;
+                                   background:none; padding:4px 0; outline:none; }
+  .searchicon { display:inline-flex; color:var(--dim); }
+  .searchcount { color:var(--dim); font-size:12px; white-space:nowrap; }
+  .chipsrow.searchchips { margin:0; gap:5px; }
+  .searchchips .chip.searchchip { padding:2px 7px; }
+  /* Icon-Knoepfe der Suchleiste (Suchhilfe, Album gruppieren). */
+  button.act.iconbtn { padding:7px 9px; }
+  .albumtoggle { display:inline-flex; align-items:center; justify-content:center; padding:7px 9px;
+                 border:1px solid var(--line); border-radius:7px; background:var(--card); color:var(--fg); }
+  .albumtoggle:hover { border-color:var(--accent); }
+  .albumtoggle:has(input:checked) { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+  .albumtoggle:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+  .albumtoggle.disabled { opacity:.4; cursor:not-allowed; }
   .chip { border:1px solid var(--line); background:var(--bg); color:var(--fg);
           border-radius:999px; padding:6px 13px; cursor:pointer; font-size:13px;
           user-select:none; }
@@ -186,12 +203,15 @@
   .chipsrow { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
   .chipsrow:empty { display:none; margin:0; }
   .chip.searchchip { background:var(--accent-bg); color:var(--accent);
-                      border-color:transparent; font-weight:600; cursor:default; }
+                      border-color:transparent; font-weight:600; cursor:default;
+                      border-radius:4px; padding:4px 10px; font-size:12px; }   /* Ecken wie .moodtag */
   .chip.searchchip .rm { margin-left:8px; cursor:pointer; opacity:.7; }
   .chip.searchchip .rm:hover { opacity:1; }
   /* Standard-Suchfilter (aus den Einstellungen) -- eigene Farbe, damit sie
      sich von den getippten Suchfiltern (accent-Blau) unterscheiden. */
   .chip.searchchip.defaultchip { background:var(--susp-bg); color:var(--susp); }
+  /* Markierte Badges (Shift+Pfeil links, Cmd/Strg+A): Loeschen entfernt sie. */
+  .chip.searchchip.sel { outline:2px solid var(--accent); outline-offset:1px; }
   .countbadge { display:inline-block; min-width:18px; padding:0 6px; border-radius:9px;
     background:var(--accent); color:var(--on-accent); font-size:11px; line-height:18px; text-align:center; }
   button.act { display:inline-flex; align-items:center; gap:6px;
@@ -1279,6 +1299,8 @@ tr.albumgroup .genrerename { margin-left:6px; }
            padding:4px; list-style:none; max-height:180px; overflow-y:auto;
            background:var(--card); border:1px solid var(--line); border-radius:8px;
            box-shadow:0 10px 24px rgba(0,0,0,.18); }
+/* Vorschlagsliste in einer Scrollflaeche (attachAutocomplete(), placeFixed()). */
+.ac-list.ac-fixed { position:fixed; right:auto; margin:0; z-index:70; }
 .ac-list li { padding:5px 8px; border-radius:5px; font-size:13px; cursor:pointer; }
 .ac-list .acfield { color:var(--dim); font-size:11px; margin-left:6px; }
 .ac-list li:hover, .ac-list li.on { background:var(--accent-bg); }
@@ -1602,7 +1624,27 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
                 margin:0 auto 16px; }
 
 /* ── Tags-bearbeiten-Dialog ────────────────────────────────────────────── */
-.tagsbox { max-width:760px; }
+/* Spalte mit fester Kopf- und Fusszeile; dazwischen scrollt .tagsbody (lange
+   Trefferlisten der Online-Suche schieben "Speichern" nicht mehr aus dem Bild). */
+.tagsbox { max-width:760px; display:flex; flex-direction:column; max-height:calc(100vh - 40px); padding:18px 22px; }
+.tagsbody { flex:1 1 auto; min-height:0; overflow-y:auto; margin:0 -22px; padding:0 22px; }
+.tagshead { display:flex; align-items:center; gap:8px; padding-bottom:12px; border-bottom:1px solid var(--line); }
+.tagshead-title { flex:1; min-width:0; }
+.tagshead-kicker { font-size:12px; color:var(--dim); }
+.tagshead-name { font-size:17px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tagshead-name:empty { display:none; }
+.tagshead-dir { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; font-size:12px; }
+.tagsnav { display:flex; align-items:center; gap:6px; margin-left:6px; }
+.tagspos { font-size:12px; color:var(--dim); white-space:nowrap; }
+.tagspos:empty { display:none; }
+/* Geaendertes Feld (refreshTagsChanged()): Rahmen + Punkt am Label in der Designfarbe. */
+.tagsmain .setfield.chg input, .tagsmain .setfield.chg textarea { border-color:var(--accent); }
+.tagsmain .setfield.chg > label::after { content:""; display:inline-block; width:6px; height:6px; margin-left:6px;
+  border-radius:50%; background:var(--accent); vertical-align:middle; }
+.tagschanged { font-size:12px; color:var(--accent); white-space:nowrap; }
+/* Hauptaktion eines Dialogs: gefuellt in der Designfarbe. */
+button.act.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
+button.act.primary:hover { background:color-mix(in srgb, var(--accent) 85%, #000); }
 /* Waehrend saveBtn.onclick laeuft (setTagsPopupLocked() in app.js) --
    pointer-events:none sperrt pauschal auch die nicht-nativen Klick-Ziele
    (Lookup-Kandidatenzeilen, Cover-Drop-Zone). */
@@ -1618,8 +1660,7 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 .tagscover.dragover .tagscover-empty { border-color:var(--accent); color:var(--accent);
                     background:var(--accent-bg); }
 .tagscover.dragover img { outline:2px dashed var(--accent); outline-offset:2px; }
-.tagscover-actions { display:flex; flex-direction:column; gap:6px; width:100%; }
-.tagscover-actions button { width:100%; }
+.tagscover-actions { display:flex; justify-content:center; gap:6px; width:100%; }
 /* Feste 4-Spalten-Aufteilung statt des auto-fit-Rasters von .setfields
    (Einstellungen-Dialog) -- braucht definierte Spaltenbreiten fuer die
    Viertelfelder Jahr/BPM. Ohne eigene Klasse ist ein Feld eine Spalte breit
@@ -1645,9 +1686,10 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
                       max-height:220px; overflow-y:auto; }
 .lookupcand { display:flex; gap:10px; align-items:center; padding:6px 8px;
               border:1px solid var(--line); border-radius:8px; cursor:pointer; }
-.lookupcand:hover { border-color:var(--accent); background:var(--accent-bg); }
-.lookupcand img { width:40px; height:40px; object-fit:cover; border-radius:5px; flex:none; }
-.lookupcand-nocover { width:40px; height:40px; border-radius:5px; background:var(--bg);
+.lookupcand:hover { border-color:var(--accent); }
+.lookupcand.on { border-color:var(--accent); background:var(--accent-bg); }
+.lookupcand img { width:36px; height:36px; object-fit:cover; border-radius:5px; flex:none; }
+.lookupcand-nocover { width:36px; height:36px; border-radius:5px; background:var(--bg);
                        border:1px dashed var(--line); flex:none; }
 .lookupcand-info { min-width:0; flex:1; }
 .lookupcand-info .path { white-space:normal; }
@@ -1656,9 +1698,9 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
    "Cover wird uebernommen…" etc. sollen auffallen (siehe #tagsLookupStatus).
    Default (kein .warn/.ok, z.B. waehrend eines laufenden Vorgangs) nutzt
    denselben Akzentton wie #tagsLookupStatus statt eines dritten Farbtons. */
-#tagsStatus { margin:12px 0 10px; font-size:14.5px; line-height:1.5;
+#tagsStatus { margin:0; font-size:13px; line-height:1.4; flex:0 1 auto; min-width:0;
               color:var(--accent); background:var(--accent-bg);
-              border-radius:7px; padding:9px 13px; }
+              border-radius:7px; padding:6px 10px; }
 #tagsStatus:empty { display:none; margin:0; padding:0; }
 #tagsStatus.warn { color:var(--fake); background:var(--fake-bg); }
 #tagsStatus.ok { color:var(--ok); background:var(--ok-bg); }
@@ -1672,7 +1714,7 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 @media (prefers-reduced-motion: reduce) {
   #tagsStatus.busy { animation:none; }
 }
-.tagsbtns { align-items:center; }
+.tagsbtns { align-items:center; margin-top:0; padding-top:12px; border-top:1px solid var(--line); flex-wrap:wrap; }
 .tagsbtns button:disabled { opacity:.4; cursor:default; }
 
 /* ── Merken (Favoriten-Listen) ─────────────────────────────────────────
@@ -2480,15 +2522,21 @@ body { padding-bottom:96px; }
 .advsearch[hidden] { display:none; }
 .advgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(170px, 1fr)); gap:10px 14px; }
 .advfield { position:relative; display:flex; flex-direction:column; gap:4px; min-width:0; }
-.advlbl { font-size:11px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+.advlbl { font-size:12px; font-weight:500;
           color:var(--dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* Gruppen (advPanelHtml(), ADV_GROUPS): Ueberschrift + eigenes Raster. */
+.advgroup + .advgroup { margin-top:14px; }
+.advgrouphead { font-size:12px; font-weight:600; color:var(--fg); margin:0 0 6px; }
+/* Belegtes Feld (advSyncPanel()): Label und Rahmen in der Designfarbe. */
+.advfield.act .advlbl { color:var(--accent); }
+.advfield.act .advinput, .advfield.act .advseg { border-color:var(--accent); }
 /* Wie die Felder im Tags-Dialog (.setfield input) -- gleiche Hoehe, Schrift
    und Fokusring, damit beide Formulare gleich aussehen. */
-.advinput { box-sizing:border-box; width:100%; padding:7px 9px; font-family:inherit; font-size:14px;
+.advinput { box-sizing:border-box; width:100%; padding:5px 8px; font-family:inherit; font-size:13px;
             border:1px solid var(--line); border-radius:7px; background:var(--bg); color:var(--fg); }
 .advinput::placeholder { color:var(--dim); opacity:.7; }
 /* Schalter (Cover, Music, ...): egal | ja | nein als Segmentauswahl. */
-.advseg { box-sizing:border-box; display:flex; height:35px; padding:2px; gap:2px;
+.advseg { box-sizing:border-box; display:flex; height:31px; padding:2px; gap:2px;
           border:1px solid var(--line); border-radius:7px; background:var(--bg); }
 .advseg button { flex:1 1 0; border:none; background:none; border-radius:5px; color:var(--dim);
                  font:inherit; font-size:12.5px; cursor:pointer; padding:0 6px; }
@@ -2808,6 +2856,8 @@ body[data-layout="dj"] table.trk > tbody > tr.row.expanded:hover + tr.detail .gr
 .rbmark.off img { filter:grayscale(1); opacity:.35; }
 .rbmark.same { box-shadow:0 0 0 2px var(--ok); }
 .rbmark.diff { box-shadow:0 0 0 2px var(--fake); }
+.rbmark.half { box-shadow:0 0 0 2px var(--susp); }
+.rbdiff.half { color:var(--susp); }
 .bpmval.off { color:var(--fake); cursor:help; }
 .ducell { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .ducell .dj-remain { color:var(--dim); }
@@ -3025,3 +3075,10 @@ body.listloading #tb { display:none; }
 @keyframes bskpulse { 0%,100% { opacity:.45; } 50% { opacity:1; } }
 @media (prefers-reduced-motion: reduce) { .bsk-row i, .tsk-row i { animation:none; opacity:.7; } }
 @media (max-width:700px) { .bsk-pill, .bsk-bar, .bsk-acts { display:none; } }
+
+/* Shop-Favicons: Fallback-Symbol nur sichtbar, wenn das Favicon nicht laedt */
+.shopfav { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px; }
+.shopfav img { width:16px; height:16px; object-fit:contain; border-radius:3px; }
+.shopfav .shopfav-fb { display:none; }
+.shopfav.nofav img { display:none; }
+.shopfav.nofav .shopfav-fb { display:inline-flex; }

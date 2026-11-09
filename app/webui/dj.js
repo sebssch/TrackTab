@@ -445,7 +445,7 @@ function djRestoreRowCells(ed) {
   ed.r.djBp = ed.edited.grid ? djEditedBpm(djMainBpm(ed), ed.r.bp) : 0;
   djStoreTempo(ed);
   const bpmCell = djRowCell(ed, "bpmCell", ".bpmcell");
-  if (bpmCell) bpmCell.innerHTML = bpmCellHtml(ed.r.bp, ed.r.djBp, ed.r.gridTempo);
+  if (bpmCell) bpmCell.innerHTML = bpmCellHtml(ed.r.bp, ed.r.djBp, ed.r.gridTempo, djGridSourceKey(ed));
 }
 // Tempo-Spanne merken, damit die Liste auch ohne offenen Editor weiss, ob die Datei
 // zum Beatgrid passt. Nur, wenn sich etwas geaendert hat.
@@ -977,7 +977,7 @@ function djSyncLabels(ed) {
   const bpmCell = djRowCell(ed, "bpmCell", ".bpmcell");
   if (cellKey !== ed._bpmCell && bpmCell) {
     ed._bpmCell = cellKey;
-    bpmCell.innerHTML = bpmCellHtml(ed.r.bp, shown, ed.tempoSpan);
+    bpmCell.innerHTML = bpmCellHtml(ed.r.bp, shown, ed.tempoSpan, djGridSourceKey(ed));
   }
   if (seg !== ed._segShown || bpm !== ed._bpmShown) {
     ed._segShown = seg; ed._bpmShown = bpm;
@@ -1547,7 +1547,7 @@ function djRenderRekordbox(ed) {
   const rb = ed.rb;
   if (!rb || !rb.available) { box.hidden = true; banner.hidden = true; return; }
   ed.r.rb = rb.present ? 1 : 0;
-  ed.r.rbDiff = [...new Set([...rb.pending, ...rb.changed])];
+  ed.r.rbDiff = [...new Set([...rb.pending, ...rb.changed, ...(rb.notes || [])])];
   const rbCell = djRowCell(ed, "rbCell", ".rbcell");
   if (rbCell) rbCell.innerHTML = rbSyncMark(ed.r);
   const names = list => list.map(f => t("dj.field_" + f)).join(", ");
@@ -1604,6 +1604,8 @@ async function djRbLoad(ed) {
 async function djRbUpdate(ed) {
   // Was unveraendert aus Rekordbox kommt, muss nicht zurueck.
   const fields = ["grid", "phrases", "cues"].filter(f => ed.edited[f] || ed.src[f] === "tracktab");
+  // Metadaten (Titel, Interpret, ...): nur, wenn Rekordbox von TrackTab abweicht.
+  if (((ed.rb && ed.rb.pending) || []).includes("tags")) fields.push("tags");
   if (!fields.length) { note(t("dj.rb_nothing"), "soft"); return; }
   const changed = (ed.rb && ed.rb.changed) || [];
   const names = fields.map(f => t("dj.field_" + f)).join(", ");
@@ -2909,4 +2911,9 @@ function djPaintOver(ctx, w, h, entry, dpr) {
   ctx.strokeRect(Math.round(x - zw / 2) + 0.5, lay.top - 0.5, Math.max(2, Math.round(zw)), waveH + 1);
   ctx.fillStyle = th.head;
   ctx.fillRect(Math.round(x) - 1, 0, 2, h);
+}
+
+// Woher das angezeigte Beatgrid stammt, fuer den Hinweis an der roten BPM.
+function djGridSourceKey(ed) {
+  return ed.src && ed.src.grid === "rekordbox" ? "rekordbox" : "tracktab";
 }

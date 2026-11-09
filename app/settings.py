@@ -669,6 +669,7 @@ def describe() -> dict:
     from . import autocue, bpmkey, genremood, media, phrases, rekordbox, stems
     from .autocue import slots as autocue_slots
     ensure_apple_music_column_view()
+    migrate_column_view_default()
     defaults = current(_defaults_cfg())
     detected = media.find_audio_editor()
     detected_mik = media.find_mixed_in_key()
@@ -1239,6 +1240,36 @@ def save_column_views(items: list, default_id: str | None = None,
             "column_view_default": default_id,
             "column_view_music_default": music_default_id,
             "column_view_drop": drop_view_id}
+
+
+def migrate_column_view_default() -> None:
+    """Einmalige Uebernahme der frueheren globalen Standard-Spaltenansicht.
+
+    Frueher galt column_view_default fuer jede Liste ohne eigene Zuordnung,
+    in Bearbeiten UND Player. Heute haben beide Ansichten ihren eigenen
+    Standard ("Standard – Bearbeiten"/"Standard – Player" = column_order/
+    hidden_columns/column_widths je Layout). Die Spalten der alten
+    Standardansicht werden deshalb nach "Standard – Bearbeiten" kopiert, die
+    Einstellung danach geleert. Die Ansicht selbst bleibt als gespeicherte
+    Ansicht erhalten."""
+    stored = _read_local()
+    default_id = str(stored.get("column_view_default") or "").strip()
+    if not default_id:
+        return
+    view = next((v for v in stored.get("column_views") or []
+                 if isinstance(v, dict) and v.get("id") == default_id), None)
+    values: dict = {"column_view_default": ""}
+    if view:
+        column_order = _as_layout_map(stored.get("column_order"))
+        hidden_columns = _as_layout_map(stored.get("hidden_columns"))
+        column_widths = _as_width_map(stored.get("column_widths"))
+        column_order["edit"] = _clean_keys(view.get("order") or [])
+        hidden_columns["edit"] = _clean_keys(view.get("hidden") or [])
+        column_widths["edit"] = _clean_widths(view.get("widths"))
+        values.update({"column_order": column_order, "hidden_columns": hidden_columns,
+                       "column_widths": column_widths})
+    _write_local(values)
+    cfgmod.reload()
 
 
 def save_column_assign(view_id: str, column_view_id: str) -> dict:

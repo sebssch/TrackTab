@@ -129,7 +129,7 @@ Die Seiten im Überblick:
 | Seite | Was sich dort einstellen lässt |
 |---|---|
 | **Bibliothek und Darstellung** | **Bibliothek:** Musikordner, Dateiendungen, ausgeschlossene Ordner, Mindestdauer, wie viele Dateien der Scan gleichzeitig misst (kleiner = Mac bleibt beim Scan flüssiger, Scan dauert länger). **Darstellung:** Sprache, Farbschema, Schriftgröße, Designfarbe. **Suche:** Tippfehler-Toleranz, Mindestzeichen für Autovervollständigung, Standard-Suchfilter (siehe [Suchen und filtern](#suchen-und-filtern)) |
-| **Spaltenansichten** | Standard-Spaltenansicht für Listen ohne eigene Zuordnung (siehe [Spalten anpassen](#spalten-anpassen)) |
+| **Spaltenansichten** | Gespeicherte Ansichten umbenennen und löschen, Vorgaben für Apple-Music-Playlisten und die Einzelprüfung (siehe [Spalten anpassen](#spalten-anpassen)) |
 | **Dateinamen** | Namensmuster fürs automatische Umbenennen (siehe [Dateien automatisch umbenennen](#dateien-automatisch-umbenennen)) |
 | **BPM, Tonart und Genre** | Eine gemeinsame Seite für beide Analysen: welche Teile gemessen werden (BPM, Tonart, Genre-Vorschläge, Stimmung & Energie), Automatik für Einzelprüfungen (je Analyse), ein gemeinsames Längenlimit und – in den Abschnitten Tonart-Feld, BPM-Feld, Kommentar-Feld und Genre & Stimmung – was in welches Feld geschrieben wird. Im Abschnitt Tonart-Feld steht auch die Schreibweise der Tonart (Camelot, Open Key, Notennamen), siehe [Tonart](#tonart) und [Genre, Stimmung und Energie](#genre-stimmung-und-energie) |
 | **Stems** | Trennmodell laden oder entfernen, Titel-Zusatz und Genre der neuen Dateien, Längenlimit (siehe [Stems erzeugen](#stems-erzeugen-acapella--instrumental)) |
@@ -262,8 +262,6 @@ Am unteren Bildschirmrand sitzt ein fest angedockter Player — er ist in beiden
 - **Zufallswiedergabe** — spielt die Warteschlange in zufälliger statt fester Reihenfolge. Läuft gerade noch nichts, startet ein Klick darauf sofort einen zufälligen Track aus der aktuell gefilterten Ansicht. Die automatisch gefüllte Warteschlange nimmt von mehreren Fassungen desselben Liedes (gleicher Interpret, gleicher Titelkern, z. B. „Replay“ und „Replay (Remix)“) jeweils nur eine auf; weitere Fassungen rücken nur nach, wenn sonst nicht genug Titel übrig bleiben. Von Hand eingereihte Titel bleiben unberührt.
 - **Titel wiederholen** — der aktuelle Track startet nach seinem Ende erneut, statt zum nächsten zu springen.
 - **Liste wiederholen** — nach dem letzten Track der Warteschlange geht es wieder von vorn los.
-
-**Neu laden während der Wiedergabe:** Drückst du Cmd+R oder F5, während ein Track läuft, fragt TrackTab erst nach, damit die Wiedergabe nicht versehentlich abbricht. Beim Reload-Knopf des Browsers und beim Schließen des Tabs erscheint stattdessen der Hinweis des Browsers.
 
 In der **Player-Ansicht** startet ein Klick auf eine Zeile oder deren Abspielen-Button sofort eine komplett neue Warteschlange aus den nächsten (bis zu 25) Tracks der aktuell angezeigten Liste, beginnend bei dieser Zeile — spätere Änderungen an Suche/Filter wirken sich nicht mehr auf eine schon laufende Warteschlange aus. 
 
@@ -467,6 +465,7 @@ Das Suchfeld über der Tabelle durchsucht standardmäßig Künstler, Titel, Albu
 | `/Cover` · `/No /Cover` | nur Tracks mit bzw. ohne eingebettetes Cover |
 | `/Music` · `/No /Music` | nur Tracks, die in der Music.app-Bibliothek sind bzw. nicht |
 | `/Rekordbox` · `/No /Rekordbox` | nur Tracks, die in Rekordbox sind bzw. nicht |
+| `/HotCues` · `/No /HotCues` | nur Tracks mit mindestens einem Hot Cue bzw. ohne. Es zählt, was TrackTab in der DJ-Ansicht zeigt: eigene Cues (DJ-Editor, Auto Cue) vor denen aus Rekordbox; steht „Beatgrid & Phrasen anzeigen aus“ auf „Nur TrackTab“, zählen nur die eigenen. `/Rekordbox /No /HotCues` findet Tracks, die noch Cues brauchen |
 | `/No Acapella` | schließt „Acapella" aus |
 | `/No /Genre (Acapella OR Instrumental)` | schließt beide Genres aus |
 
@@ -478,9 +477,11 @@ Genauso bei **`/No`**: Es verneint immer nur das direkt Folgende. `/No Acapella 
 
 **Ausgeblendete Tracks** erreichst du mit `/Ausgeblendet` — der Parameter braucht keinen Wert. Umgekehrt blendet `/No /Ausgeblendet` sie in jeder Liste aus. Und `/Status` grenzt auf ein Prüfergebnis ein (`/Status Fake`, `/Status verd`, `/No /Status Korrekt`); sobald du `/Status` getippt hast, erscheinen alle möglichen Werte zur Auswahl.
 
-**Erweiterte Suche:** Der Button **Erweitert** neben der Suchhilfe klappt alle Parameter als Eingabefelder auf (Künstler, Genre, Tonart, BPM, Energie, Hinzugefügt, Cover usw.). Die Felder schreiben dieselben Parameter in die Suchleiste, und umgekehrt füllen getippte Parameter die Felder. Du kannst also beides mischen. Die Zahl am Button zeigt, wie viele Felder gerade belegt sind; **Felder leeren** nimmt alle Feld-Parameter wieder heraus, dein freier Suchtext bleibt stehen. Ausschlüsse mit `/No` (außer bei den Ja/Nein-Feldern wie Cover) schreibst du weiter direkt in die Suchleiste.
+**Suchleiste:** Erkannte Parameter und Standardfilter stehen als Badges direkt im Suchfeld, rechts daneben die Trefferzahl. Gefiltert wird schon beim Tippen. Mit Enter wird jeder getippte Parameter zum Badge und verschwindet aus dem Feld, sodass du direkt den nächsten eintippen kannst (freier Suchtext bleibt im Feld stehen). Backspace am Feldanfang macht den letzten Badge wieder zu Text, Badge für Badge. Shift+Pfeil links markiert Badges von rechts nach links, Cmd+A markiert alle, Löschen entfernt die markierten; das × an einem Badge nimmt den Filter heraus. Neben dem Feld liegen **Erweitert**, die Suchhilfe (i), **nach Album gruppieren** (Platten-Symbol, farbig = an) und **Export** mit CSV- und Playlist-Export.
 
-Jeder erkannte Parameter erscheint als **Chip** unter dem Suchfeld — ein Klick auf das × dort nimmt genau diesen Teil wieder aus der Suche heraus. Chips in anderer Farbe sind Standard-Suchfilter aus den Einstellungen: die gelten immer, lassen sich hier aber für die laufende Sitzung abschalten.
+**Erweiterte Suche:** Der Button **Erweitert** klappt alle Parameter als Eingabefelder auf, nach Gruppen geordnet: Track, Mix, Datei und Prüfung, Zustand. Belegte Felder sind farbig umrandet. Die Felder schreiben dieselben Parameter in die Suchleiste, und umgekehrt füllen getippte Parameter die Felder. Du kannst also beides mischen. Die Zahl am Button zeigt, wie viele Felder gerade belegt sind; **Felder leeren** nimmt alle Feld-Parameter wieder heraus, dein freier Suchtext bleibt stehen. Ausschlüsse mit `/No` (außer bei den Ja/Nein-Feldern wie Cover) schreibst du weiter direkt in die Suchleiste.
+
+Jeder erkannte Parameter erscheint nach Enter als **Chip** im Suchfeld — ein Klick auf das × dort nimmt genau diesen Teil wieder aus der Suche heraus. Chips in anderer Farbe sind Standard-Suchfilter aus den Einstellungen: die gelten immer, lassen sich hier aber für die laufende Sitzung abschalten.
 
 ## Spalten anpassen
 
@@ -492,13 +493,15 @@ Jede Spalte lässt sich in der Breite ziehen und in der Reihenfolge verschieben 
 
 **Eine Ansicht speichern.** `Ansicht speichern` im Spalten-Menü legt die aktuelle Zusammenstellung — welche Spalten sichtbar sind, in welcher Reihenfolge und wie breit — unter einem Namen ab. Vergibst du einen Namen, den es schon gibt, wird diese Ansicht überschrieben; ein neuer Name legt eine neue an. Die gespeicherte Ansicht übernimmt sofort die gerade geöffnete Liste. Bis zu 20 Ansichten sind möglich.
 
-**Eine Ansicht laden.** Das Auswahlfeld oben im Spalten-Menü bestimmt, welche gespeicherte Ansicht die gerade geöffnete Liste verwendet. Der erste Eintrag bedeutet „keine eigene" — die Liste nimmt dann die Standard-Spaltenansicht aus den Einstellungen.
+**Standard – Bearbeiten und Standard – Player.** Wie in Apple Music hat jede Ansicht ihren eigenen Standard: Was du im Spalten-Menü einstellst, während keine eigene Ansicht geladen ist, gilt als „Standard – Bearbeiten" bzw. „Standard – Player" für alle Listen ohne eigene Spaltenansicht. Die DJ-Ansicht hat eine feste Spaltenliste und ist davon ausgenommen.
 
-**Die Standard-Spaltenansicht** legst du unter *Einstellungen → Spaltenansichten* fest: eine der gespeicherten Ansichten gilt damit für jede Liste ohne eigene Einstellung. Dort lassen sich Ansichten auch umbenennen und löschen; eine gelöschte Ansicht nimmt die Listen mit, die sie verwendet haben — die fallen auf den Standard zurück, an den Spalten selbst ändert sich nichts.
+**Eine Ansicht laden.** Das Auswahlfeld oben im Spalten-Menü bestimmt, welche gespeicherte Ansicht die gerade geöffnete Liste verwendet. Der erste Eintrag („Standard – Bearbeiten" bzw. „Standard – Player") heißt: keine eigene. Eine eigene Ansicht gilt für diese Liste in Bearbeiten **und** Player — praktisch z. B. für die Prüflisten.
+
+Unter *Einstellungen → Spaltenansichten* lassen sich Ansichten umbenennen und löschen; eine gelöschte Ansicht nimmt die Listen mit, die sie verwendet haben — die fallen auf den Standard der Ansicht zurück.
+
+**Spalte „Track – Interpret".** Titel und Interpret in einer Zelle, darunter Format und Bitrate mit den Knöpfen „Pfad kopieren" und „Im Finder zeigen" — dieselbe Darstellung wie in der DJ-Ansicht. Sie ist in jeder Ansicht über „Spalten ▾" wählbar; im Player ist sie die Vorgabe.
 
 **Spaltenansicht der Einzelprüfung.** Im selben Einstellungsblock wählst du, welche gespeicherte Ansicht die Einzelprüfung verwendet. „Eigene Spalten der Einzelprüfung" (Vorgabe) heißt: die Einzelprüfung behält ihre unabhängige Spaltenkonfiguration. Ist eine Ansicht gewählt, gelten deren Reihenfolge, Sichtbarkeit und Breiten; Änderungen im Spalten-Menü der Einzelprüfung ändern dann die Ansicht selbst — und damit auch jede Liste, die sie nutzt.
-
-Ist dort keine Standard-Spaltenansicht gesetzt, gilt weiterhin das, was du zuletzt im Spalten-Menü eingestellt hast, ohne dass eine Ansicht geladen war — getrennt für Bearbeiten und Player (siehe oben). Sobald du eine gespeicherte Ansicht lädst, wirkt sie dagegen in beiden: sie ist nur ein Satz Spalten.
 
 **Achtung:** Solange eine gespeicherte Ansicht geladen ist, ändert jedes Häkchen, jeder Zug an einer Spaltenbreite und jedes Verschieben einer Überschrift **diese Ansicht** — und damit jede andere Liste, die sie ebenfalls verwendet.
 
@@ -535,7 +538,7 @@ Jede Zeile trägt dieselben Symbole, in der Buttonleiste immer sichtbar:
 |---|---|
 | ![Beatport](docs/icons/icon-shop-beatport.png) | Bei Beatport suchen |
 | ![SoundCloud](docs/icons/icon-shop-soundcloud.png) | Bei SoundCloud suchen |
-| ![Weitere Plattform](docs/icons/icon-shop-generic.png) | Weitere, selbst konfigurierte Plattformen — Anfangsbuchstabe der Plattform in der gewählten Farbe |
+| ![Weitere Plattform](docs/icons/icon-shop-generic.png) | Weitere Plattformen (z. B. YouTube, DJ City, Zip DJ, selbst konfigurierte) — als Icon dient das Favicon der Seite; lässt es sich nicht laden, der Anfangsbuchstabe in der gewählten Farbe |
 
 **Merken**
 
@@ -599,7 +602,7 @@ Die Erkennung ist eine Einschätzung. Bei Clubmusik mit festem Tempo trifft sie 
 
 ## DJ-Ansicht
 
-Oben rechts auf **DJ** wechseln und einen Track aufklappen. Die Liste ist fest: in einer eigenen Playlist und in Listen aus Music.app oder Rekordbox „#“ (Reihenfolge der Playlist), Cover, Track und Interpret, Dauer, Tonart, BPM, Energie, Tags, Hinzugefügt und, wenn Rekordbox in den Einstellungen ausgewählt ist, Rekordbox. Unter Titel und Interpret steht klein das Dateiformat mit der Bitrate, die in der Datei angegeben ist (etwa „MP3 · 320 kbps“, bei AIFF/WAV/FLAC „verlustfrei“). Daneben kopiert das Kopier-Symbol den Pfad der Datei, das Ordner-Symbol zeigt sie im Finder. Das Logo in der Spalte Rekordbox ist farbig, wenn der Track in der Rekordbox-Sammlung liegt, sonst grau. Eine grüne Umrandung heißt: Beatgrid, Phrasen und Cues stimmen mit TrackTab überein. Ein Klick auf den Spaltenkopf sortiert in vier Stufen: in Rekordbox zuerst, grün zuerst, rot zuerst, nicht in Rekordbox zuerst; der fünfte Klick hebt die Sortierung auf. Rot heißt: TrackTab weicht ab, darunter steht worin (Beatgrid, Phrasen, Cues), zum Beispiel weil eine Bearbeitung noch nicht per **Rekordbox Update** geschrieben ist oder sich der Track in Rekordbox geändert hat. Zeigt TrackTab unter „Beatgrid & Phrasen anzeigen aus“ nur die eigene Analyse, entfällt die Umrandung bei unbearbeiteten Tracks. Hat der offene Track begonnen, zeigt die Dauer die gespielte Zeit und daneben die Restzeit, die herunterzählt, Die Spalte BPM ändert sich nur, wenn du das Tempo im Beatgrid bearbeitet hast und es vom Tag der Datei abweicht, etwa 125,50 statt 125. Der Wert bleibt in der Liste stehen, die Datei ändert sich nicht. Rot wird die Zahl, wenn das Tempo in der Datei nicht zum Beatgrid passt, etwa bei einem Tempowechsel oder einer Bearbeitung; beim Überfahren stehen beide Werte da. Geprüft wird ein Track, sobald du ihn einmal im DJ-Editor geöffnet hast, das Ergebnis bleibt danach in der Liste. Play und Cue liegen links neben den Wellenformen, der Play-Knopf schaltet zwischen Abspielen und Anhalten um. Es ist immer nur ein Track offen, der Editor hat seine eigene Wiedergabe unabhängig vom Player-Balken.
+Oben rechts auf **DJ** wechseln und einen Track aufklappen. Die Liste ist fest: in einer eigenen Playlist und in Listen aus Music.app oder Rekordbox „#“ (Reihenfolge der Playlist), Cover, Track und Interpret, Dauer, Tonart, BPM, Energie, Tags, Hinzugefügt und, wenn Rekordbox in den Einstellungen ausgewählt ist, Rekordbox. Unter Titel und Interpret steht klein das Dateiformat mit der Bitrate, die in der Datei angegeben ist (etwa „MP3 · 320 kbps“, bei AIFF/WAV/FLAC „verlustfrei“). Daneben kopiert das Kopier-Symbol den Pfad der Datei, das Ordner-Symbol zeigt sie im Finder. Das Logo in der Spalte Rekordbox ist farbig, wenn der Track in der Rekordbox-Sammlung liegt, sonst grau. Eine grüne Umrandung heißt: Metadaten, Beatgrid, Phrasen und Cues stimmen mit TrackTab überein. Ein Klick auf den Spaltenkopf sortiert in vier Stufen: in Rekordbox zuerst, grün zuerst, rot zuerst, nicht in Rekordbox zuerst; der fünfte Klick hebt die Sortierung auf. Rot heißt: TrackTab weicht ab, darunter steht worin (Metadaten, Beatgrid, Phrasen, Cues), zum Beispiel weil eine Bearbeitung noch nicht per **Rekordbox Update** geschrieben ist oder sich der Track in Rekordbox geändert hat. Zeigt TrackTab unter „Beatgrid & Phrasen anzeigen aus“ nur die eigene Analyse, entfällt die Umrandung bei unbearbeiteten Tracks. Hat der offene Track begonnen, zeigt die Dauer die gespielte Zeit und daneben die Restzeit, die herunterzählt, Die Spalte BPM ändert sich nur, wenn du das Tempo im Beatgrid bearbeitet hast und es vom Tag der Datei abweicht, etwa 125,50 statt 125. Der Wert bleibt in der Liste stehen, die Datei ändert sich nicht. Rot wird die Zahl, wenn das Tempo in der Datei nicht zum Beatgrid passt, etwa bei einem Tempowechsel oder einer Bearbeitung; beim Überfahren stehen beide Werte da. Geprüft wird ein Track, sobald du ihn einmal im DJ-Editor geöffnet hast, das Ergebnis bleibt danach in der Liste. Play und Cue liegen links neben den Wellenformen, der Play-Knopf schaltet zwischen Abspielen und Anhalten um. Es ist immer nur ein Track offen, der Editor hat seine eigene Wiedergabe unabhängig vom Player-Balken.
 
 Am Ende jeder Zeile öffnet **⋮** dieselben Befehle wie in Bearbeiten, dazu „Zur Playlist hinzufügen …“ und „Tags bearbeiten“. Die Sammelleiste hat dieselben Gruppen und Aktionen wie in Bearbeiten, ohne Warteschlange und zusätzlich mit Auto Cue. Markierte Tracks bleiben beim Wechsel zwischen Bearbeiten, Player und DJ markiert.
 
@@ -719,7 +722,7 @@ Das Training braucht ein aktuelles macOS. Lässt es sich auf deinem Mac nicht st
 Rechts unten stehen die Knöpfe. Der Text darüber sagt, was noch nicht in Rekordbox ist. Zum Schreiben muss **Rekordbox geschlossen sein**, auch der Hintergrunddienst „rekordboxAgent“. TrackTab sichert vorher die Datenbank und die betroffenen Analysedateien unter `backup/rekordbox/`.
 
 - **Rekordbox laden:** übernimmt den Stand aus Rekordbox und verwirft deine Bearbeitungen, nach Rückfrage.
-- **Rekordbox Update:** schreibt deine Bearbeitungen nach Rekordbox: Hot Cues, Memory Cues und Loops samt Namen und Farbe, das Beatgrid und die Phrasen.
+- **Rekordbox Update:** schreibt deine Bearbeitungen nach Rekordbox: Hot Cues, Memory Cues und Loops samt Namen und Farbe, das Beatgrid und die Phrasen. Weichen Titel, Interpret, Album, Genre, Komponist, Jahr, Kommentar oder Tonart in Rekordbox von TrackTab ab (Status „Metadaten“ in der Spalte Rekordbox), gehen sie ebenfalls mit; auch die BPM aus dem Tag der Datei (Abweichungen unter 0,05 zählen nicht). Hast du das Beatgrid in TrackTab bearbeitet, gilt dessen Tempo statt des Tags. Ist das Tempo in Rekordbox nur halb oder doppelt so hoch (80 statt 160), wird die Spalte orange („BPM halb/doppelt“) und nichts geschrieben. Die Tonart wird unabhängig von der Schreibweise verglichen (8A und Am sind gleich) und nur geschrieben, wenn sie in Rekordbox wirklich anders ist. Rekordbox' eigene Tonart-Messung wird dabei überschrieben, bis es den Track neu analysiert. Leere Felder in TrackTab löschen nichts in Rekordbox.
 - **Zu Rekordbox hinzufügen:** erscheint bei Tracks, die dort fehlen. Tags, Beatgrid, Phrasen, Cues und Cover werden direkt übernommen, Rekordbox muss den Track nicht erst analysieren. Die farbigen Wellenformen rechnet Rekordbox beim ersten Laden selbst nach. Nur bei wenigen MP3s mit ungewöhnlichem Dateikopf fehlen Beatgrid und Phrasen zunächst, TrackTab sagt das dann: In Rekordbox analysieren lassen und danach **Rekordbox Update** drücken.
 
 **Änderungen in Rekordbox:** Hast du einen Teil in TrackTab bearbeitet und er wurde danach auch in Rekordbox geändert, erscheint beim Öffnen ein Hinweis. Du wählst **Aus Rekordbox übernehmen** oder **TrackTab behalten**. Unbearbeitetes zeigt ohnehin immer den aktuellen Stand aus Rekordbox.
@@ -762,7 +765,9 @@ TrackTab kann einen Track in **Gesang (Acapella)** und **Begleitung (Instrumenta
 
 *Metadaten bearbeiten mit Online-Vorschlägen.*
 
-Über „Online-Vorschläge suchen" lassen sich passende Metadaten (inkl. Cover) von iTunes, Deezer und MusicBrainz abrufen — ganz ohne Konto. Ein Klick auf einen Vorschlag füllt nur die Formularfelder; gespeichert wird erst durch den Klick auf „Speichern".
+Oben stehen Dateiname und Ordner, daneben **Pfad kopieren**, **Im Finder zeigen** und die Pfeile zum vorherigen bzw. nächsten Track mit der Position (z. B. „3 von 12“). Die drei Symbole unter dem Cover wählen ein Bild, fügen es aus der Zwischenablage ein oder löschen das Cover; ein Bild lässt sich auch direkt auf das Cover ziehen. Geänderte Felder sind farbig umrandet, unten steht, wie viele es sind.
+
+Im Suchfeld unter den Feldern steht schon Interpret und Titel; „Online-Vorschläge suchen" fragt damit iTunes, Deezer und MusicBrainz ab — ganz ohne Konto. Den Suchbegriff kannst du vorher ändern. Ein Klick auf einen Vorschlag füllt nur die Formularfelder; gespeichert wird erst durch den Klick auf „Speichern". Bei langen Trefferlisten scrollt nur der Inhalt, „Speichern“ bleibt unten sichtbar.
 
 Sind mehrere Tracks ausgewählt, öffnet sich derselbe Dialog im Mehrfach-Modus: Nur die Felder, die du tatsächlich änderst, werden bei allen ausgewählten Dateien überschrieben.
 

@@ -6,6 +6,8 @@ autocue-training/
 autocue-train.yaml
 logs/
 config.local.yaml
+# Zwischenspeicher der Shop-Favicons (lookup.fetch_favicon())
+favicons/
 
 # Beispieldateien fuer Screenshots (siehe CLAUDE.md) - nicht committen
 test-files/

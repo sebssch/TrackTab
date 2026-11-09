@@ -688,6 +688,56 @@ def _dj_rb_diff(path: str, edits: dict, base: dict) -> list:
     return result
 
 
+def _hot_cue_paths(cfg: dict) -> set:
+    """Tracks mit mindestens einem Hot Cue, nach derselben Regel wie die DJ-Ansicht
+    (_dj_track_payload()): eine Bearbeitung in TrackTab (DJ-Editor, Auto Cue) gilt
+    vor allem anderen; ohne sie die Cues aus Rekordbox, zuerst der festgehaltene
+    Stand (rb_snapshot), sonst der aktuelle -- ausser beatgrid_source ist
+    "tracktab", dann zaehlt nur TrackTabs eigener Stand. Fuer /HotCues der Suche."""
+    conn = db_mod.connect(cfg)
+    try:
+        edited, snap = db_mod.hot_cue_maps(conn)
+    finally:
+        conn.close()
+    out = {p for p, hot in edited.items() if hot}
+    if str(cfg.get("beatgrid_source") or "fallback") == "tracktab":
+        return out
+    live = rekordbox_mod.hot_cue_paths()
+    out |= {p for p, hot in snap.items() if hot and p not in edited}
+    out |= {p for p in live if p not in edited and p not in snap}
+    return out
+
+
+def _tag_update_needed(fields: list) -> bool:
+    """Gibt es Metadaten zu uebertragen? bpm_half allein ist nur ein Hinweis."""
+    return any(f != "bpm_half" for f in fields)
+
+
+def _tag_rows(cfg: dict, path: str | None = None) -> dict:
+    """Pfad -> Zeile mit den Metadaten, die nach Rekordbox gehen (rekordbox.TAG_FIELDS)."""
+    conn = db_mod.connect(cfg)
+    try:
+        cols = ", ".join(f'"{f}"' for f in rekordbox_mod.TAG_FIELDS)
+        if path is None:
+            cur = conn.execute(f"SELECT path, {cols} FROM files")
+            grid_edited = {r["path"] for r in conn.execute("SELECT path FROM dj_track WHERE grid IS NOT NULL")}
+        else:
+            cur = conn.execute(f"SELECT path, {cols} FROM files WHERE path = ?", (path,))
+            grid_edited = {r["path"] for r in conn.execute(
+                "SELECT path FROM dj_track WHERE grid IS NOT NULL AND path = ?", (path,))}
+        rows = {}
+        for r in cur:
+            row = dict(r)
+            # Bearbeitetes Grid: Rekordbox' BPM kommt aus dem Grid, nie aus dem Tag der
+            # Datei (der weicht dann oft ab -- die rote BPM in der DJ-Liste).
+            if row["path"] in grid_edited:
+                row["bpm"] = None
+            rows[row["path"]] = row
+        return rows
+    finally:
+        conn.close()
+
+
 def _dj_tempo_lookup(grid, stored):
     """sec -> BPM an dieser Stelle, fuer BeatLoopSize. 0 = unbekannt."""
     segments = (grid or {}).get("segments") or []
@@ -846,6 +896,26 @@ class _Handler(BaseHTTPRequestHandler):
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header("Content-Security-Policy", _CSP)
+
+    def _get_favicon(self) -> None:
+        """Favicon eines konfigurierten Shops (?shop=<id>).
+
+        Nur Hosts aus der Shop-Liste -- kein offener Abruf-Proxy. Der Server
+        holt das Bild einmal und legt es unter base_dir()/favicons ab.
+        """
+        qs = parse_qs(urlparse(self.path).query)
+        shop_id = (qs.get("shop") or [""])[0]
+        host = ""
+        for s in cfgmod.load().get("shops", []):
+            if s.get("id") == shop_id:
+                host = urlparse(str(s.get("url", ""))).hostname or ""
+                break
+        data = lookup_mod.fetch_favicon(host, cfgmod.resolve("favicons")) if host else None
+        if not data:
+            self._send(404, b"", "text/plain")
+            return
+        body, mime = data
+        self._send(200, body, mime, {"Cache-Control": "private, max-age=86400"})
 
     def _send(self, code: int, body: bytes, ctype: str, extra: dict | None = None,
               gzipped: bool = False) -> None:
@@ -1233,6 +1303,8 @@ class _Handler(BaseHTTPRequestHandler):
             tools_ok, tools_msg = media.available()
             self._json({"ok": True, "version": "2.0",
                         "tools_ok": tools_ok, "tools_message": tools_msg})
+        elif route == "/api/favicon":
+            self._get_favicon()
         elif route == "/api/check-update":
             self._get_check_update()
         elif route == "/api/ignored":
@@ -4988,6 +5060,7 @@ class _Handler(BaseHTTPRequestHandler):
         grid_beats = (grid_edit or {}).get("beats") or [] if grid_edit is not None else beats
         phrase_items = _phrases_from_first_beat(edits["phrases"] if edits["phrases"] is not None else phrases, grid_beats)
         hashes = _dj_rb_hashes(state)
+        tag_diff = rekordbox_mod.tag_diff_map(_tag_rows(cfg, path)).get(path, []) if state["present"] else []
         return {
             "ok": True,
             "locks": locks,
@@ -5007,7 +5080,9 @@ class _Handler(BaseHTTPRequestHandler):
                             or (edits[f] is None and use_rb and state["available"] and snap
                                 and snap[f] is not None and snap["seen"].get(f) != hashes[f])],
                 "pending": [f for f in db_mod.DJ_TRACK_FIELDS
-                            if edits[f] is not None and base["pushed"].get(f) != _dj_hash(edits[f])],
+                            if edits[f] is not None and base["pushed"].get(f) != _dj_hash(edits[f])]
+                           + (["tags"] if state["present"] and _tag_update_needed(tag_diff) else []),
+                "notes": ["bpm_half"] if state["present"] and "bpm_half" in tag_diff else [],
             },
             "palettes": rekordbox_mod.cue_palettes(),
         }
@@ -5035,8 +5110,14 @@ class _Handler(BaseHTTPRequestHandler):
             edited = db_mod.dj_track_edits(conn)
         finally:
             conn.close()
+        rb_diff = {**rb_changed, **{p: d for p, (e, b) in edited.items() if (d := _dj_rb_diff(p, e, b))}}
+        # Metadaten (Titel, Interpret, ...): TrackTab gegen Rekordbox, ohne eigene Merkung.
+        # bpm_half (halbes/doppeltes Tempo) ist nur ein Hinweis, nichts zu uebertragen.
+        for p, fields in rekordbox_mod.tag_diff_map(_tag_rows(cfg)).items():
+            extra = (["tags"] if _tag_update_needed(fields) else []) + (["bpm_half"] if "bpm_half" in fields else [])
+            rb_diff[p] = [*rb_diff.get(p, []), *extra]
         self._json({"bpms": bpms, "tempo": tempo, "tempo_seq": tempo_seq,
-                    "rb_diff": {**rb_changed, **{p: d for p, (e, b) in edited.items() if (d := _dj_rb_diff(p, e, b))}},
+                    "rb_diff": rb_diff, "hot_cues": sorted(_hot_cue_paths(cfg)),
                     "rb_compare": str(cfg.get("beatgrid_source") or "fallback") != "tracktab"})
 
     def _get_dj_pcm(self) -> None:
@@ -5150,7 +5231,7 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self._body(100_000).decode("utf-8"))
             path, action = str(payload["path"]), str(payload["action"])
-            names = [f for f in (payload.get("fields") or db_mod.DJ_TRACK_FIELDS) if f in db_mod.DJ_TRACK_FIELDS]
+            names = [f for f in (payload.get("fields") or db_mod.DJ_TRACK_FIELDS) if f in (*db_mod.DJ_TRACK_FIELDS, "tags")]
             session = str(payload.get("session") or "")
         except (ValueError, KeyError, TypeError) as exc:
             self._fail(f"Ungültige Anfrage: {exc}")
@@ -5196,22 +5277,26 @@ class _Handler(BaseHTTPRequestHandler):
                 edits = db_mod.get_dj_track(conn, path)
                 if action == "load":
                     for f in names:
+                        if f == "tags":
+                            continue
                         base["rb"].pop(f, None)
                         base["pushed"].pop(f, None)
-                    db_mod.save_dj_track(conn, path, {f: None for f in names}, base)
+                    db_mod.save_dj_track(conn, path, {f: None for f in names if f != "tags"}, base)
                 elif action == "keep":
                     for f in names:
-                        if edits[f] is not None:
+                        if f in hashes and edits[f] is not None:
                             base["rb"][f] = hashes[f]
                     db_mod.save_dj_track(conn, path, {}, base)
                 else:
                     for f in result.get("written", []):
+                        if f not in hashes:
+                            continue
                         base["rb"][f] = hashes[f]
                         if edits[f] is not None:
                             base["pushed"][f] = _dj_hash(edits[f])
                     db_mod.save_dj_track(conn, path, {}, base)
                     # Was in Rekordbox steht, soll keine Analyse mehr ueberschreiben.
-                    if result.get("written") and state["analysed"]:
+                    if [w for w in result.get("written", []) if w != "tags"] and state["analysed"]:
                         db_mod.set_dj_locks(conn, path, {"grid": True, "phrases": True})
                 if state["available"] and state["present"]:
                     snap = db_mod.get_rb_snapshot(conn, path)
@@ -5224,6 +5309,10 @@ class _Handler(BaseHTTPRequestHandler):
                     db_mod.mark_rekordbox_present(conn, [path])
             finally:
                 conn.close()
+
+    def _tag_row(self, path: str):
+        """Metadaten-Zeile fuers Schreiben nach Rekordbox, None = nichts zu schreiben."""
+        return _tag_rows(cfgmod.load(), path).get(path)
 
     def _dj_write_rekordbox(self, path: str, action: str, names: list, row, cfg: dict) -> dict | None:
         """Eigene Fassung auf Rekordbox' Zeitachse bringen und schreiben. None = die
@@ -5239,8 +5328,9 @@ class _Handler(BaseHTTPRequestHandler):
                     return rekordbox_mod.add_track(path, row, prep["cues"], beats=prep["beats"],
                                                    phrases=prep["phrases"], lead=prep["lead"],
                                                    audio_start_ms=prep["audio_start_ms"])
+                tag_row = self._tag_row(path) if "tags" in names else None
                 return rekordbox_mod.update_track(path, cues=prep["cues"], beats=prep["beats"],
-                                                  phrases=prep["phrases"],
+                                                  phrases=prep["phrases"], tags=tag_row,
                                                   audio_start_ms=prep["audio_start_ms"])
         except rekordbox_mod.RekordboxRunning as exc:
             self._json({"ok": False, "error": str(exc), "sticky": True}, 409)
@@ -5283,7 +5373,10 @@ class _Handler(BaseHTTPRequestHandler):
                         and gridstore.phrases_origin(stored) != gridstore.ORIGIN_REKORDBOX),
             "cues": False,
         }
-        return [f for f in names if edits[f] is not None or own.get(f)]
+        out = [f for f in names if edits[f] is not None or own.get(f)]
+        if _tag_update_needed(rekordbox_mod.tag_diff_map(_tag_rows(cfg, path)).get(path, [])):
+            out.append("tags")
+        return out
 
     def _post_dj_rekordbox_batch(self) -> None:
         """"Rekordbox Update" fuer viele Tracks in einem Aufruf: einmal oeffnen, einmal
@@ -5316,7 +5409,8 @@ class _Handler(BaseHTTPRequestHandler):
             except Exception as exc:                 # noqa: BLE001
                 errors[p] = f"Wellenform fehlgeschlagen: {exc}"[:300]
                 continue
-            items.append({"path": p, **prep, "fields": fields})
+            items.append({"path": p, **prep, "fields": fields,
+                          "tags": self._tag_row(p) if "tags" in fields else None})
         result = {"results": {}, "errors": {}, "stopped": ""}
         if items:
             try:
@@ -5342,6 +5436,9 @@ class _Handler(BaseHTTPRequestHandler):
         {cues, beats, phrases, lead (Samples, nur bei "add"), audio_start_ms}. Ohne Lock,
         misst den Versatz (ffmpeg). Gemeinsam fuer DJ-Knoepfe und Playlist-Weg
         (_post_rekordbox_add_playlist()). Wirft bei einem Messfehler."""
+        names = [n for n in names if n != "tags"]          # Metadaten brauchen weder Grid noch Versatz
+        if action == "update" and not names:
+            return {"cues": None, "beats": None, "phrases": None, "lead": None, "audio_start_ms": 0}
         conn = db_mod.connect(cfg)
         try:
             edits = db_mod.get_dj_track(conn, path)
