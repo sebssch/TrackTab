@@ -766,6 +766,40 @@ def read_mood(path: str) -> str:
     return ""
 
 
+def write_blocker(path: str) -> str:
+    """Grund, warum TrackTab die Datei nicht beschreiben kann, sonst "".
+
+    "locked": im Finder als "Geschuetzt" markiert (Flag uchg/schg) -- dann
+                schlaegt jedes Schreiben mit EPERM fehl, auch fuer den Besitzer.
+    "readonly": keine Schreibrechte (Dateirechte, nur-lesbares Volume).
+    Fehlt die Datei, liefert die Funktion "" -- das melden die Aufrufer selbst.
+    Gelesen wird nur stat()/access(), die Datei wird nicht geoeffnet.
+    """
+    import os
+    import stat
+    try:
+        st = os.stat(path)
+    except OSError:
+        return ""
+    if getattr(st, "st_flags", 0) & (stat.UF_IMMUTABLE | stat.SF_IMMUTABLE):
+        return "locked"
+    if not os.access(path, os.W_OK):
+        return "readonly"
+    return ""
+
+
+WRITE_BLOCKER_TEXT = {
+    "locked": "Die Datei ist schreibgeschützt (im Finder „Geschützt“).",
+    "readonly": "Keine Schreibrechte für diese Datei.",
+}
+
+
+def _check_writable(path: str) -> None:
+    reason = write_blocker(path)
+    if reason:
+        raise TagError(WRITE_BLOCKER_TEXT[reason])
+
+
 def write_tags(path: str, fields: dict) -> None:
     """Schreibt eine Teilmenge von Titel/Interpret/Album/Albumkuenstler/
     Komponist/Genre/Jahr/BPM/Tonart/Kommentar/Stimmung/Tracknummer/-gesamtzahl in die
@@ -780,6 +814,7 @@ def write_tags(path: str, fields: dict) -> None:
     """
     suffix = Path(path).suffix.lower()
     try:
+        _check_writable(path)
         if suffix in _ID3_LIKE_SUFFIXES:
             _write_tags_id3(path, suffix, fields)
         elif suffix in _MP4_SUFFIXES:
@@ -855,6 +890,7 @@ def write_cover(path: str, data: bytes, mime: str) -> None:
     """Ersetzt das eingebettete Cover vollstaendig durch 'data'."""
     suffix = Path(path).suffix.lower()
     try:
+        _check_writable(path)
         if suffix in _ID3_LIKE_SUFFIXES:
             _write_cover_id3(path, suffix, data, mime)
         elif suffix in _MP4_SUFFIXES:
@@ -873,6 +909,7 @@ def delete_cover(path: str) -> None:
     """Entfernt ein eingebettetes Cover vollstaendig, falls vorhanden."""
     suffix = Path(path).suffix.lower()
     try:
+        _check_writable(path)
         if suffix in _ID3_LIKE_SUFFIXES:
             _delete_cover_id3(path, suffix)
         elif suffix in _MP4_SUFFIXES:

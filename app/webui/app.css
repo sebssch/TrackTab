@@ -848,7 +848,6 @@
   #stickyHead { --tablebg:var(--bg); }
   #stickyHead th { position:sticky; top:0; }
   #stickyHead .colresize { display:none; }
-  .tablehead { display:flex; justify-content:flex-end; margin-bottom:8px; }
   #colsMenu { margin-bottom:8px; }
   .colsrow { display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
   .colsrow label { display:flex; align-items:center; gap:6px; cursor:pointer;
@@ -956,7 +955,9 @@ button.act.warn-orange:hover { background:var(--dc-orange-bg); }
          border-radius:7px; padding:10px 16px; font-size:15px;
          display:inline-flex; align-items:center; gap:7px; }
 .lsbtn:hover:not(:disabled):not(.on) { background:rgba(127,127,127,.12); }
-.lsbtn.on { background:var(--card); color:var(--accent); font-weight:600;
+/* Bewusst NICHT fett: die Knoepfe sind so breit wie ihr Text, eine fette
+   aktive Option liesse die Nachbarn beim Umschalten springen. */
+.lsbtn.on { background:var(--card); color:var(--accent);
             box-shadow:0 1px 3px rgba(0,0,0,.12); }
 .lsbtn:disabled { opacity:.4; cursor:not-allowed; }
 
@@ -1637,10 +1638,25 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
 .tagsnav { display:flex; align-items:center; gap:6px; margin-left:6px; }
 .tagspos { font-size:12px; color:var(--dim); white-space:nowrap; }
 .tagspos:empty { display:none; }
-/* Geaendertes Feld (refreshTagsChanged()): Rahmen + Punkt am Label in der Designfarbe. */
-.tagsmain .setfield.chg input, .tagsmain .setfield.chg textarea { border-color:var(--accent); }
-.tagsmain .setfield.chg > label::after { content:""; display:inline-block; width:6px; height:6px; margin-left:6px;
-  border-radius:50%; background:var(--accent); vertical-align:middle; }
+/* Geaendertes Feld (refreshTagsChanged()): Rahmen + leichte Toenung in der
+   Designfarbe, am Label der Zuruecksetzen-Knopf (.tagsreset). Gilt auch fuer
+   "Eigene Tags" (.utagbox) und das Cover (.tagscover.chg). */
+.tagsmain .setfield.chg input, .tagsmain .setfield.chg textarea, .tagsmain .setfield.chg .utagbox {
+  border-color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, var(--bg)); }
+.tagsmain .setfield.chg .utagbox input { background:transparent; }
+.tagsmain .setfield.chg > label { color:var(--accent); }
+.tagsreset { display:inline-flex; align-items:center; justify-content:center; vertical-align:middle;
+  margin-left:6px; padding:1px 4px; border:0; border-radius:5px; background:transparent;
+  color:var(--accent); cursor:pointer; line-height:1; }
+.tagsreset:hover { background:color-mix(in srgb, var(--accent) 15%, transparent); }
+.tagsreset svg { width:13px; height:13px; }
+.tagscover.chg img, .tagscover.chg .tagscover-empty { border-color:var(--accent); border-width:2px; }
+/* Schreibgeschuetzte Datei (setTagsWriteLock() in app.js): Felder gesperrt
+   und ausgegraut, Cover ohne Ablegen; eigene Tags bleiben bedienbar. */
+.tagslock { margin:12px 0 0; }
+.tagsbox.readonly .tagsmain .setfield input:disabled,
+.tagsbox.readonly .tagsmain .setfield textarea:disabled { opacity:.55; cursor:not-allowed; }
+.tagsbox.readonly .tagscover { pointer-events:none; opacity:.6; }
 .tagschanged { font-size:12px; color:var(--accent); white-space:nowrap; }
 /* Hauptaktion eines Dialogs: gefuellt in der Designfarbe. */
 button.act.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); }
@@ -2517,6 +2533,9 @@ body { padding-bottom:96px; }
    Panel unter der Suchleiste und Liederpool im Generator (.genadv). Ein
    Raster gleich breiter Felder, das mit der Breite umbricht. */
 #btnAdvSearch.on { border-color:var(--accent); color:var(--accent); background:var(--accent-bg); }
+/* Knoepfe der Suchleiste so hoch wie das Suchfeld (.searchwrap, min-height 36px). */
+.controls:has(> #searchBox) > button.act,
+.controls:has(> #searchBox) > .albumtoggle { height:36px; box-sizing:border-box; }
 #btnAdvSearch .countbadge[hidden] { display:none; }
 .advsearch { margin-top:12px; padding-top:12px; border-top:1px solid var(--line); }
 .advsearch[hidden] { display:none; }
@@ -2552,7 +2571,7 @@ body { padding-bottom:96px; }
    body[data-gen] setzt syncGeneratorPane(), solange ein Generator offen ist:
    er ersetzt Filter, Tabelle und "weitere laden". Nur Theme-Tokens, damit
    Light und Dark ohne eigene Regeln stimmen. */
-body[data-gen] #filterPanel, body[data-gen] .tablehead, body[data-gen] #colsMenu,
+body[data-gen] #filterPanel, body[data-gen] #colsMenu,
 body[data-gen] #stickyHead, body[data-gen] .tablewrap, body[data-gen] #more,
 body[data-gen] #plHeadBubblesRow, body[data-gen] #plHeadIssueBubblesRow,
 body[data-gen] #plHeadTagBubblesRow, body[data-gen] #plHeadBubblesExpand,
@@ -2814,7 +2833,7 @@ canvas.wave.genwave { flex:1 1 220px; min-width:120px; height:40px; border-radiu
         --dj-window:rgba(20,24,32,.45); --dj-selected:#14181f; }
 }
 /* Feste Liste: keine Aktionsspalte und kein Spalten-Menue (DJ_COLUMNS in app.js). */
-body[data-layout="dj"] .applayout th.links, body[data-layout="dj"] .applayout td.links, body[data-layout="dj"] #btnCols { display:none; }
+body[data-layout="dj"] .applayout th.links, body[data-layout="dj"] .applayout td.links { display:none; }
 .djtrack b { font-weight:600; }
 .djtrack span { color:var(--dim); }
 /* Kleine Zeile unter Titel/Interpret: Format + deklarierte Bitrate, Pfad-Knoepfe

@@ -2359,6 +2359,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_rewrite_drop()
         elif route == "/api/tags":
             self._post_tags()
+        elif route == "/api/file-writable":
+            self._post_file_writable()
         elif route == "/api/fix-tag-issues":
             self._post_fix_tag_issues()
         elif route == "/api/genre-rename":
@@ -4704,6 +4706,30 @@ class _Handler(BaseHTTPRequestHandler):
                 self._rebuild(cfg)
 
         self._json({"ok": True, "row": fresh_row})
+
+    def _post_file_writable(self) -> None:
+        """Welche Dateien TrackTab nicht beschreiben kann (Finder "Geschuetzt"
+        bzw. fehlende Schreibrechte, siehe tags.write_blocker()). Der Tags-
+        Dialog sperrt damit seine Felder, bevor ein Speichern scheitert.
+
+        Antwort: {"blocked": {pfad: "locked"|"readonly"}} -- nur blockierte
+        Pfade. Unbekannte Pfade fallen still heraus (keine Auskunft ueber
+        Dateien ausserhalb der Bibliothek). Nur stat()/access(), ohne Lock.
+        """
+        try:
+            payload = json.loads(self._body(2_000_000).decode("utf-8"))
+            paths = [str(p) for p in payload["paths"]][:5000]
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        blocked = {}
+        for path in paths:
+            if not self._authorize_fast(path):
+                continue
+            reason = tags_mod.write_blocker(path)
+            if reason:
+                blocked[path] = reason
+        self._json({"ok": True, "blocked": blocked})
 
     def _post_tags(self) -> None:
         """Titel/Interpret/Album/Albumkuenstler/Komponist/Genre/Jahr/BPM/

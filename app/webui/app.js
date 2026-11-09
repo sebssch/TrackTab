@@ -101,6 +101,8 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById(id).innerHTML = SVG(LUCIDE_ICONS[name]);
   }
   document.getElementById("tagsRenameIcon").innerHTML = ICONS.renameFile;
+  document.getElementById("tagsCoverResetIcon").innerHTML = ICONS.fieldReset;
+  document.getElementById("tagsLockIcon").innerHTML = ICONS.lock;
   initTagsChangeTracking();
 });
 
@@ -707,6 +709,9 @@ function saveFilters() {
 function syncControls() {
   const ga = document.getElementById("groupAlbums");
   if (ga) ga.checked = !!state.groupAlbums;
+  // DJ hat eine feste Spaltenliste (DJ_COLUMN_STORE): Knopf sichtbar, aber gesperrt.
+  const colsBtn = document.getElementById("btnCols");
+  if (colsBtn) colsBtn.disabled = state.layout === "dj";
   applyPinned();
   syncSortHeaders();
 }
@@ -870,6 +875,20 @@ function applyLayout(next) {
   saveFilters();
   renderPlayerBar();
   revealSelectedRow();
+  if (state.layout === "dj") openPlayingInDj();
+}
+
+// Wechsel nach DJ: den gerade laufenden Track (Player-Balken) aufklappen -- der
+// Player-Balken haelt an, der Editor steht an derselben Stelle bereit (djMount()).
+// Nur, wenn die Zeile in der Liste schon geladen ist: nichts nachladen, keinen
+// Filter aendern.
+function openPlayingInDj() {
+  const cur = queueState.current;
+  if (!cur || queueAudio.paused || queueAudio.ended || cur.ext || cur.gone) return;
+  const tr = document.querySelector(`#tb tr.row[data-i="${cur.i}"]`);
+  if (!tr || tr.classList.contains("expanded")) return;
+  tr.click();
+  tr.scrollIntoView({block: "center"});
 }
 
 // Erste markierte Zeile der Haupttabelle ins Bild holen, falls sie gerade
@@ -1260,6 +1279,8 @@ const ICONS = {
   stemMinimize: SVG(LUCIDE_ICONS["minimize-2"]),
   keySync: SVG(LUCIDE_ICONS["replace"]),
   renameFile: SVG(LUCIDE_ICONS["file-type-corner"]),
+  // Tags-Dialog: geaendertes Feld auf den Stand beim Oeffnen zuruecksetzen.
+  fieldReset: SVG(LUCIDE_ICONS["undo-2"]),
   spectrogram: SVG(LUCIDE_ICONS["chart-no-axes-column"] || LUCIDE_ICONS["audio-lines"]),
   pencil: SVG(LUCIDE_ICONS["pencil"]),
   sparkles: SVG(LUCIDE_ICONS["sparkles"]),
@@ -6352,6 +6373,14 @@ document.getElementById("btnCols").onclick = () => {
   // letzten Aufbau geaendert haben.
   if (open) renderColsMenu();
   menu.style.display = open ? "" : "none";
+  // Der Knopf sitzt in der (evtl. angehefteten) Filterleiste, das Menue ueber
+  // der Tabelle -- weiter unten gescrollt, das Menue unter die Leiste holen.
+  if (open) {
+    const top = document.body.classList.contains("pinned")
+      ? document.getElementById("filterPanel").getBoundingClientRect().bottom : 0;
+    const box = menu.getBoundingClientRect();
+    if (box.top < top) window.scrollBy(0, box.top - top - 8);
+  }
 };
 
 document.getElementById("btnDropCols").onclick = () => {
@@ -7922,13 +7951,15 @@ function rowMoreMenuItems(r) {
   const inList = apiMode ? currentPlaylistNode() : null;
   const rbList = currentRekordboxPlaylist(), musicList = currentMusicPlaylist();
   const live = !r.gone && apiMode;
+  // Bearbeiten: "Aus Playlist entfernen" steht als Icon in der Zeile.
+  const removeInMenu = layout !== "edit";
   const groups = [{head: t("bulk.group_lists"), items: [
     layout === "dj" && live && {icon: ICONS.listPlus, label: t("tree.add_to_playlist"), action: () => openPlaylistPicker([r.p])},
-    inList && {icon: ICONS.listX, label: t("tree.remove_from_list", {name: inList.name}),
+    removeInMenu && inList && {icon: ICONS.listX, label: t("tree.remove_from_list", {name: inList.name}),
       action: () => removeFromPlaylist(inList.id, [r.p])},
-    rbList && {icon: ICONS.listX, label: t("rb.remove_from_playlist", {playlist: rbList.name}),
+    removeInMenu && rbList && {icon: ICONS.listX, label: t("rb.remove_from_playlist", {playlist: rbList.name}),
       action: () => removeFromRekordboxPlaylist([r])},
-    musicList && {icon: ICONS.listMinus, label: t("music.remove_from_playlist", {playlist: musicList.name}),
+    removeInMenu && musicList && {icon: ICONS.listMinus, label: t("music.remove_from_playlist", {playlist: musicList.name}),
       action: () => removeFromMusicPlaylist([r])},
   ]}];
   if (layout !== "player") {
@@ -8247,8 +8278,11 @@ function render() {
   // Geoeffnete normale Rekordbox-Playlist: Zeilen lassen sich dort
   // umsortieren (inkl. Titel ohne lokale Datei).
   const rbReorderable = !!currentRekordboxPlaylist();
-  // Player: kein "…"-Menue; "Aus Playlist entfernen" steht als Knopf in der Zeile.
-  const playerRemove = state.layout === "player" && apiMode ? playerRemoveTarget() : null;
+  // "Aus Playlist entfernen" steht in Bearbeiten und Player als Knopf in der
+  // Zeile (Bearbeiten: neben "Zur Playlist hinzufuegen", nicht im "…"-Menue;
+  // Player: statt des "…"-Menues). DJ hat keine Aktionsspalte -> Menue.
+  const listRemove = (state.layout === "player" || state.layout === "edit") && apiMode
+    ? playerRemoveTarget() : null;
   state.totalFiltered = rows.length;
   // Ergebniszahl direkt an der Suchleiste -- state.totalFiltered ist bereits
   // NACH Liste/Verdikt-Chips/"nur harte Kante"/Suche gezaehlt (siehe
@@ -8382,10 +8416,14 @@ function render() {
       lastGroupKey = key;
     }
     const nowPlaying = queueState.current && queueState.current.i === r.i;
+    // Fremdzeilen (r.ext) nur aus Music-/Rekordbox-Listen; in Bearbeiten auch
+    // fehlende Dateien, damit sich ein toter Eintrag aus der Liste nehmen laesst.
+    const removeBtn = listRemove && (r.ext ? listRemove.kind !== "tracktab" : state.layout === "edit" || !r.gone)
+      ? `<button class="iconbtn plain" data-plremove="${r.i}" title="${esc(listRemove.title)}">${listRemove.icon}</button>` : "";
     const moreBtn = state.layout !== "player" && rowMoreMenuItems(r).length
       ? `<button class="iconbtn plain" data-more="${r.i}" title="${esc(t("action.more_options"))}">${ICONS.moreVert}</button>`
-      : playerRemove && (r.ext ? playerRemove.kind !== "tracktab" : !r.gone)
-      ? `<button class="iconbtn plain" data-plremove="${r.i}" title="${esc(playerRemove.title)}">${playerRemove.icon}</button>` : "";
+      : state.layout === "player" ? removeBtn : "";
+    const editRemoveBtn = state.layout === "edit" ? removeBtn : "";
     return groupHeader + `
     <tr class="row${r.ig ? " ign" : ""}${r.mc ? " corr" : ""}${r.ext ? " extrow" : r.gone ? " gone" : ""}${state.selected.has(r.i) ? " picked" : ""}${r.i === cursorRowI ? " kbcursor" : ""}${freshFrom >= 0 && i >= freshFrom ? " fresh" : ""}" data-i="${r.i}" draggable="${r.ext && !rbReorderable ? "false" : "true"}">
       <td class="sel"><input type="checkbox" class="selchk" data-sel="${r.i}" ${state.selected.has(r.i) ? "checked" : ""}>${
@@ -8394,7 +8432,7 @@ function render() {
       ${state.colOrder.filter(k => !hid(k) && CELL_RENDERERS[k]).map(k => CELL_RENDERERS[k](r, true)).join("")}
       <td class="filler">${state.layout === "dj" ? moreBtn : ""}</td>
       <td class="links"><div class="actions">
-        ${r.ext ? (moreBtn ? `<div class="actiongroup top">${moreBtn}</div>` : "") : `<div class="actiongroup top">
+        ${r.ext ? (moreBtn || editRemoveBtn ? `<div class="actiongroup top">${editRemoveBtn}${moreBtn}</div>` : "") : `<div class="actiongroup top">
           ${(!r.gone || r.ext || !apiMode) ? "" :
             `<button class="iconbtn plain" data-relink="${r.i}"
                      title="${esc(t("action.relink"))}">${ICONS.relink}</button>`}
@@ -8407,6 +8445,7 @@ function render() {
           ${(r.gone || !apiMode) ? "" :
             `<button class="iconbtn plain" data-playlistadd="${r.i}"
                      title="${esc(t("tree.add_to_playlist"))}">${ICONS.listPlus}</button>`}
+          ${editRemoveBtn}
           ${(r.gone || !apiMode) ? "" : `<span class="sep" data-sep="1"></span>`}
           ${r.gone || apiMode ? "" :
             `<a class="reveal-link" href="${fileURL(dirName(r.p))}" title="${esc(t("action.open_folder"))}">📁</a>`}
@@ -10724,9 +10763,11 @@ function setTagsPopupLocked(locked) {
 // tragen; Entfernen nimmt einen Tag bei allen weg, Hinzufuegen gibt ihn allen.
 let UT_DRAFT = [], UT_INITIAL = [];
 const utKey = tag => tag.trim().toLowerCase();
-function setupUserTagEditor(tags) {
+// initial: Vergleichsstand, falls er vom Entwurf abweicht (vorgemerkte
+// Aenderungen beim Blaettern, siehe TAGS_PENDING).
+function setupUserTagEditor(tags, initial = tags) {
   UT_DRAFT = tags.slice();
-  UT_INITIAL = tags.slice();
+  UT_INITIAL = initial.slice();
   const input = document.getElementById("tagsUserTagInput");
   if (!input.dataset.acBound) {
     input.dataset.acBound = "1";
@@ -10759,6 +10800,7 @@ function renderUserTagChips() {
     UT_DRAFT.splice(+b.dataset.utdel, 1);
     renderUserTagChips();
   });
+  refreshTagsChanged();
 }
 // {add, remove} gegenueber dem Stand beim Oeffnen; Tippen ohne Enter zaehlt mit.
 // Ohne Nebenwirkung (anders als userTagChanges(), das einen getippten Entwurf
@@ -10878,16 +10920,269 @@ function tagsChangedCount() {
   if (!TAGS_CHANGE_BASE) return 0;
   return TAGS_BULK_FIELD_MAP.filter(([id]) => document.getElementById(id).value !== TAGS_CHANGE_BASE[id]).length;
 }
+// Cover-Vormerkung des offenen Dialogs: beide Dialog-Arten (Einzeltrack,
+// Mehrfachauswahl) halten sie selbst und tragen hier ein, wie man sie
+// abfragt bzw. verwirft -- refreshTagsChanged() braucht beides fuer
+// Markierung und Zuruecksetzen-Knopf am Cover.
+let TAGS_COVER = {pending: () => false, reset: null};
+// Gekuerzter Ursprungswert fuer den Tooltip des Zuruecksetzen-Knopfs.
+function tagsOriginalLabel(values) {
+  const text = values.filter(Boolean).join(" / ");
+  if (!text) return t("tags.original_empty");
+  return text.length > 80 ? text.slice(0, 79) + "…" : text;
+}
+// Zuruecksetzen-Knopf am Label eines geaenderten Felds anlegen/aktualisieren
+// bzw. entfernen (onReset = null). Bleibt bestehen, solange das Feld geaendert
+// ist -- sonst wuerde jeder Tastendruck den Knopf (und seinen Tooltip) neu bauen.
+function setTagsFieldReset(field, original, onReset) {
+  const label = field && field.querySelector(":scope > label");
+  if (!label) return;
+  let btn = label.querySelector(".tagsreset");
+  if (!onReset) { if (btn) btn.remove(); return; }
+  if (!btn) {
+    btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tagsreset";
+    btn.innerHTML = ICONS.fieldReset;
+    label.append(btn);
+  }
+  const title = t("tags.field_reset", {value: original});
+  if (btn.dataset.orig !== title) { btn.dataset.orig = title; btn.title = title; }
+  btn.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); onReset(); };
+}
 function refreshTagsChanged() {
-  let n = 0;
+  const base = TAGS_CHANGE_BASE;
+  // Felder je .setfield buendeln: "Track" haelt Nr. und Gesamt in einem Feld --
+  // einzeln markiert haette das zweite Eingabefeld die Markierung des ersten
+  // wieder entfernt.
+  const groups = new Map();
   for (const [id] of TAGS_BULK_FIELD_MAP) {
-    const el = document.getElementById(id);
-    const changed = !!TAGS_CHANGE_BASE && el.value !== TAGS_CHANGE_BASE[id];
-    el.closest(".setfield").classList.toggle("chg", changed);
-    if (changed) n++;
+    const field = document.getElementById(id).closest(".setfield");
+    if (!groups.has(field)) groups.set(field, []);
+    groups.get(field).push(id);
+  }
+  let n = 0;
+  for (const [field, ids] of groups) {
+    const changed = !!base && ids.some(id => document.getElementById(id).value !== base[id]);
+    field.classList.toggle("chg", changed);
+    if (changed) n += ids.filter(id => document.getElementById(id).value !== base[id]).length;
+    setTagsFieldReset(field, changed ? tagsOriginalLabel(ids.map(id => base[id])) : "", changed ? () => {
+      for (const id of ids) document.getElementById(id).value = base[id];
+      refreshTagsChanged();
+    } : null);
+  }
+  // Eigene Tags: Entwurf gegen den Stand beim Oeffnen.
+  const utInput = document.getElementById("tagsUserTagInput");
+  if (utInput) {
+    const utField = utInput.closest(".setfield");
+    const utChanged = userTagChangesPending();
+    utField.classList.toggle("chg", utChanged);
+    setTagsFieldReset(utField, tagsOriginalLabel([UT_INITIAL.join(", ")]), utChanged ? () => {
+      utInput.value = "";
+      UT_DRAFT = UT_INITIAL.slice();
+      renderUserTagChips();
+    } : null);
+  }
+  // Cover: Vormerkung (Datei, Zwischenablage, Online, Loeschen).
+  const coverPending = !!TAGS_COVER.pending();
+  const zone = document.getElementById("tagsCoverZone");
+  if (zone) zone.classList.toggle("chg", coverPending);
+  const coverReset = document.getElementById("tagsCoverResetBtn");
+  if (coverReset) {
+    coverReset.hidden = !coverPending || !TAGS_COVER.reset;
+    coverReset.title = t("tags.cover_reset");
+    coverReset.onclick = () => { if (TAGS_COVER.reset) TAGS_COVER.reset(); refreshTagsChanged(); };
   }
   const box = document.getElementById("tagsChanged");
   if (box) box.textContent = n ? t("tags.changed_count", {count: n}) : "";
+  // Speichern-Knopf zaehlt die Tracks mit vorgemerkten Aenderungen (nur
+  // Einzelbearbeitung mit Vor/Zurueck, im Mehrfach-Modus ist TAGS_ENTRY null).
+  const saveLabel = document.getElementById("tagsSaveLabel");
+  if (saveLabel) {
+    const tracks = tagsPendingTracks();
+    saveLabel.textContent = tracks ? t("tags.save_count", {count: tracks}) : t("action.save");
+  }
+}
+
+// ── Vorgemerkte Aenderungen beim Blaettern (Einzelbearbeitung) ──────────
+// Ein Eintrag je Track, Schluessel wie markedKey in openTagsPopup() (r.i bzw.
+// r._id, beide ueberleben ein Umbenennen). Er haelt den Vergleichsstand vom
+// ersten Oeffnen (initial) und alles, was davon abweicht: Felder, Cover-
+// Vormerkung, eigene Tags. "Vorheriger"/"Nächster" merkt den angezeigten
+// Track vor (stashTagsEntry()), "Speichern" schreibt alle Eintraege,
+// "Abbrechen" verwirft alle (discardTagsPending()), ohne Rueckfrage.
+const TAGS_PENDING = new Map();
+// Ergebnis der Schreibschutz-Pruefung je Track (gleicher Schluessel), damit
+// Zurueckblaettern nicht erst entsperrt zeigt und dann neu fragt.
+const TAGS_BLOCKED = new Map();
+let TAGS_ENTRY = null;           // Eintrag des angezeigten Tracks, null im Mehrfach-Modus
+
+function tagsEntryKey(r, isDrop) { return isDrop ? "d:" + r._id : "l:" + r.i; }
+// Feldwerte einer Zeile so, wie openTagsPopup() sie in die Eingabefelder setzt.
+function tagsRowValues(r) {
+  const v = {
+    tagsTitle: r.t, tagsArtist: r.a, tagsAlbum: r.al, tagsTrackNo: r.tn, tagsTrackTotal: r.tt,
+    tagsAlbumArtist: r.aa, tagsComposer: r.cp, tagsGenre: r.ge, tagsYear: r.yr, tagsBpm: r.bp,
+    tagsKey: keyLabel(r.ky), tagsComment: r.cm,
+  };
+  // Durch ein Eingabefeld geschickt: Zahlen werden zu Text, 0/leer zu "".
+  for (const k in v) v[k] = v[k] ? String(v[k]) : "";
+  return v;
+}
+function newTagsEntry(r, isDrop) {
+  const tags = USER_TAGS.get(r.p) || [];
+  return {
+    key: tagsEntryKey(r, isDrop), r, isDrop,
+    initial: tagsRowValues(r), values: {},
+    cover: null,                 // File/Blob | {url} | "delete" | null
+    objectUrl: null,             // Vorschau einer Datei-Vormerkung
+    utInitial: tags.slice(), utDraft: tags.slice(),
+    // Kein Kuenstler-Tag in der Datei, das Feld zeigt nur den Albumkuenstler-
+    // Ersatz aus probe.py: Speichern schreibt ihn mit (siehe saveTagsEntry()),
+    // gilt aber nicht als Aenderung -- blosses Durchblaettern soll nichts vormerken.
+    artistFallback: !!r.a && (r.ti || []).some(x => x.code === "missing_artist"),
+    blocked: TAGS_BLOCKED.get(tagsEntryKey(r, isDrop)),  // undefined = ungeprueft, "" = frei
+  };
+}
+function releaseTagsEntry(e) {
+  if (e.objectUrl) { URL.revokeObjectURL(e.objectUrl); e.objectUrl = null; }
+  e.cover = null;
+}
+function utDiffers(a, b) {
+  const sa = new Set(a.map(utKey)), sb = new Set(b.map(utKey));
+  return a.some(x => !sb.has(utKey(x))) || b.some(x => !sa.has(utKey(x)));
+}
+function tagsEntryChanged(e) {
+  return Object.keys(e.values).length > 0 || !!e.cover || utDiffers(e.utDraft, e.utInitial);
+}
+// Stand des angezeigten Tracks aus dem Dialog in seinen Eintrag uebernehmen
+// und vormerken (bzw. aus der Vormerkung nehmen, wenn nichts mehr abweicht).
+function stashTagsEntry() {
+  const e = TAGS_ENTRY;
+  if (!e) return;
+  e.values = {};
+  for (const [id] of TAGS_BULK_FIELD_MAP) {
+    const v = document.getElementById(id).value;
+    if (v !== e.initial[id]) e.values[id] = v;
+  }
+  userTagChanges();              // getippten, noch nicht bestaetigten Tag uebernehmen
+  e.utDraft = UT_DRAFT.slice();
+  if (tagsEntryChanged(e)) TAGS_PENDING.set(e.key, e);
+  else { TAGS_PENDING.delete(e.key); releaseTagsEntry(e); }
+}
+// Zahl der Tracks mit Aenderungen: vorgemerkte plus der angezeigte (live).
+function tagsPendingTracks() {
+  const e = TAGS_ENTRY;
+  if (!e) return 0;
+  let n = 0;
+  for (const key of TAGS_PENDING.keys()) if (key !== e.key) n++;
+  if (tagsChangedCount() || e.cover || userTagChangesPending()) n++;
+  return n;
+}
+function discardTagsPending() {
+  for (const e of TAGS_PENDING.values()) releaseTagsEntry(e);
+  TAGS_PENDING.clear();
+  TAGS_BLOCKED.clear();
+  if (TAGS_ENTRY) releaseTagsEntry(TAGS_ENTRY);
+  TAGS_ENTRY = null;
+}
+// ── Schreibschutz im Tags-Dialog ────────────────────────────────────────
+// Der Server meldet ueber /api/file-writable, welche Dateien er nicht
+// beschreiben kann (tags.write_blocker(): Finder "Geschuetzt" = "locked",
+// fehlende Rechte = "readonly"). Gesperrt wird alles, was in die Datei
+// schreibt: Felder, Cover, Online-Uebernahme, Umbenennen. Eigene Tags liegen
+// nur in der DB und bleiben bearbeitbar. text ohne reason = nur Hinweis
+// (Mehrfach-Modus, in dem nur ein Teil der Dateien geschuetzt ist).
+function setTagsWriteLock(reason, text = "") {
+  const locked = !!reason;
+  document.querySelector("#tagsOverlay .tagsbox").classList.toggle("readonly", locked);
+  for (const [id] of TAGS_BULK_FIELD_MAP) document.getElementById(id).disabled = locked;
+  for (const id of ["tagsCoverBtn", "tagsCoverPasteBtn", "tagsCoverDeleteBtn"]) {
+    document.getElementById(id).disabled = locked;
+  }
+  const msg = text || (locked ? t("tags.write_" + reason) : "");
+  document.getElementById("tagsLockText").textContent = msg;
+  document.getElementById("tagsLockHint").hidden = !msg;
+}
+// {pfad: "locked"|"readonly"} nur fuer geschuetzte Dateien; ohne Server
+// bzw. bei einem Fehler leer (dann scheitert schlimmstenfalls das Speichern
+// mit der Meldung des Servers, wie vorher).
+async function fetchWriteBlockers(paths) {
+  if (!apiMode || !paths.length) return {};
+  try {
+    const res = await fetch("/api/file-writable", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({paths})});
+    const data = await res.json();
+    return data.ok ? data.blocked || {} : {};
+  } catch (err) {
+    return {};
+  }
+}
+
+// Einen vorgemerkten Track schreiben: Tags -> Cover -> eigene Tags (wie
+// frueher der Speichern-Knopf). Zeilen werden aktualisiert, neu gezeichnet
+// wird erst nach allen Eintraegen (saveBtn.onclick). Wirft beim ersten Fehler.
+async function saveTagsEntry(e) {
+  const r = e.r, isDrop = e.isDrop;
+  const fields = {};
+  for (const [id, , payloadKey] of TAGS_BULK_FIELD_MAP) {
+    if (!(id in e.values)) continue;
+    const raw = e.values[id];
+    if (payloadKey === "year") fields.year = raw ? parseInt(raw, 10) : 0;
+    else if (payloadKey === "bpm") fields.bpm = raw ? parseFloat(raw) : 0;
+    else if (payloadKey === "track_no" || payloadKey === "track_total") fields[payloadKey] = raw ? parseInt(raw, 10) : 0;
+    else fields[payloadKey] = raw;
+  }
+  if (e.artistFallback && !("artist" in fields) && e.initial.tagsArtist) fields.artist = e.initial.tagsArtist;
+  // Geschuetzte Datei: nur eigene Tags (DB), nichts in die Datei.
+  if (e.blocked) { for (const k in fields) delete fields[k]; releaseTagsEntry(e); }
+  if (Object.keys(fields).length) {
+    const res = await fetch("/api/tags", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({path: r.p, ...fields})});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    if (isDrop) {
+      Object.assign(r, fieldsToDropRow(fields));
+      if (data.issues) r.ti = data.issues;
+    } else {
+      applyRowUpdate(r.i, data.row);
+    }
+    e.values = {};
+    e.artistFallback = false;
+  }
+
+  // Vorgemerkte Cover-Aenderung (Datei/Zwischenablage/Drag&Drop/Online/Loeschen).
+  const cover = e.cover;
+  if (cover) {
+    let res2;
+    if (cover === "delete") {
+      res2 = await fetch(`/api/cover-delete?path=${encodeURIComponent(r.p)}`, {method: "POST"});
+    } else if (cover.url) {
+      // Online-Vorschlag bzw. Bild-URL: die Bytes liegen extern, deshalb
+      // derselbe Weg wie der "Nur Cover"-Knopf (serverseitiger Download).
+      res2 = await fetch("/api/lookup-cover", {method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({path: r.p, url: cover.url})});
+    } else {
+      res2 = await fetch(`/api/cover?path=${encodeURIComponent(r.p)}`, {
+        method: "POST", headers: {"Content-Type": cover.type || "image/jpeg"}, body: cover});
+    }
+    const data2 = await res2.json();
+    if (!data2.ok) throw new Error(data2.error || t("error.unknown"));
+    bumpCoverRev(r.p);
+    if (isDrop) r.cv = cover === "delete" ? 0 : 1;
+    else applyRowUpdate(r.i, data2.row);
+    releaseTagsEntry(e);
+    if (data2.music_cover_synced === false) {
+      note(t("toast.cover_music_failed_one", {name: baseName(r.p), error: data2.music_cover_error}), "soft");
+    }
+  }
+
+  if (utDiffers(e.utDraft, e.utInitial)) {
+    await saveUserTags({path: r.p, tags: e.utDraft});
+    e.utInitial = e.utDraft.slice();
+  }
 }
 function initTagsChangeTracking() {
   const fields = document.querySelector("#tagsOverlay .setfields");
@@ -10917,6 +11212,9 @@ function openTagsPopup(r, isDrop) {
   }
 
   const ov = document.getElementById("tagsOverlay");
+  // Frisch geoeffnet (nicht geblaettert): keine Vormerkungen aus einer
+  // frueheren Sitzung uebernehmen.
+  if (ov.style.display === "none" || !ov.style.display) discardTagsPending();
   let rows = isDrop ? drops.filter(x => x.nativePath) : filtered();
   // Sind mehrere Tracks markiert und gehoert die geoeffnete Zeile dazu,
   // blaettert Vor/Zurueck durch genau diese Markierung statt durch die
@@ -10947,14 +11245,27 @@ function openTagsPopup(r, isDrop) {
   const revealBtn = document.getElementById("tagsReveal");
   revealBtn.style.display = isDrop || r.gone ? "none" : "";
   revealBtn.onclick = () => reveal(r.p, revealBtn);
+
+  // Vorgemerkter Stand dieses Tracks (beim Blaettern), sonst ein neuer Eintrag.
+  const key = tagsEntryKey(r, isDrop);
+  const stashed = TAGS_PENDING.get(key);
+  const entry = stashed || newTagsEntry(r, isDrop);
+  TAGS_ENTRY = entry;
+
   // Umbenennen nach Namensmuster -- derselbe Weg wie im Zeilenmenue bzw. in den
   // Einzelpruefungen. Benannt wird nach den Tags IN DER DATEI, deshalb erst
   // speichern, wenn im Dialog etwas offen ist. Danach den Dialog mit dem neuen
   // Pfad neu aufbauen (r wird von beiden Wegen in place umgeschrieben).
   const renameBtn = document.getElementById("tagsRename");
-  renameBtn.style.display = r.gone || r.ext || (isDrop && !r.nativePath) ? "none" : "";
+  // Schreibschutz der Datei anwenden (auch Umbenennen scheitert dann) --
+  // sofort mit dem bekannten Stand, nach der Pruefung erneut.
+  const applyLock = () => {
+    setTagsWriteLock(entry.blocked || "");
+    renameBtn.style.display = entry.blocked || r.gone || r.ext || (isDrop && !r.nativePath) ? "none" : "";
+    document.querySelector(".tagslookup").style.display = entry.blocked ? "none" : "";
+  };
   renameBtn.onclick = async () => {
-    if (tagsChangedCount() || pendingCover || userTagChangesPending()) {
+    if (tagsChangedCount() || entry.cover || userTagChangesPending()) {
       note(t("tags.rename_save_first"), "soft");
       return;
     }
@@ -10967,96 +11278,98 @@ function openTagsPopup(r, isDrop) {
     }
     if (ov.style.display !== "none") openTagsPopup(r, isDrop);
   };
-  document.getElementById("tagsTitle").value = r.t || "";
-  document.getElementById("tagsArtist").value = r.a || "";
-  document.getElementById("tagsAlbum").value = r.al || "";
-  document.getElementById("tagsTrackNo").value = r.tn || "";
-  document.getElementById("tagsTrackTotal").value = r.tt || "";
-  document.getElementById("tagsAlbumArtist").value = r.aa || "";
-  document.getElementById("tagsComposer").value = r.cp || "";
-  document.getElementById("tagsGenre").value = r.ge || "";
+
+  // Felder befuellen: erst der Stand der Zeile, ein neuer Eintrag nimmt ihn
+  // (so wie die Eingabefelder ihn zurueckgeben) als Vergleichsstand. Beim
+  // Speichern wird nur verschickt, was davon abweicht -- ein unangetastetes
+  // Feld (z.B. Kommentar) darf keinen Wert ueberschreiben, den ein externes
+  // Tool (z.B. Mixed In Key) waehrend der offenen Dialogzeit geschrieben hat.
+  const rowValues = tagsRowValues(r);
+  for (const [id] of TAGS_BULK_FIELD_MAP) document.getElementById(id).value = rowValues[id];
+  if (!stashed) {
+    for (const [id] of TAGS_BULK_FIELD_MAP) entry.initial[id] = document.getElementById(id).value;
+  } else {
+    // Zurueck auf einem vorgemerkten Track: Vergleichsstand vom ersten Oeffnen,
+    // darueber die vorgemerkten Werte.
+    for (const [id] of TAGS_BULK_FIELD_MAP) {
+      document.getElementById(id).value = id in entry.values ? entry.values[id] : entry.initial[id];
+    }
+  }
   // Fuer den Vorschlags-Kopf im Genre-Dropdown (GENRE_AC_EXTRA).
   GENRE_AC_ROW = {r, isDrop};
   document.getElementById("tagsUserTagInput").placeholder = t("tags.user_tags_placeholder");
-  setupUserTagEditor(USER_TAGS.get(r.p) || []);
-  document.getElementById("tagsYear").value = r.yr || "";
-  document.getElementById("tagsBpm").value = r.bp || "";
-  document.getElementById("tagsKey").value = keyLabel(r.ky);
-  document.getElementById("tagsComment").value = r.cm || "";
-
-  // Schnappschuss der befuellten Werte -- beim Speichern wird nur verschickt,
-  // was sich gegenueber diesem Stand geaendert hat (siehe TAGS_BULK_FIELD_MAP
-  // weiter unten). Verhindert, dass ein unangetastetes Feld (z.B. Kommentar)
-  // einen Wert ueberschreibt, den ein externes Tool (z.B. Mixed In Key)
-  // waehrend der offenen Dialogzeit in die Datei geschrieben hat.
-  const initial = {};
-  for (const [id] of TAGS_BULK_FIELD_MAP) initial[id] = document.getElementById(id).value;
-  setTagsChangeBase(initial);
-  // Kein Kuenstler-Tag in der Datei, das Feld zeigt nur den Albumkuenstler-
-  // Ersatz aus probe.py: Hinweis einblenden und den Wert als Aenderung
-  // werten, sonst meldet Speichern "Keine Änderungen" und schreibt nichts.
-  const artistFallback = !!r.a && (r.ti || []).some(x => x.code === "missing_artist");
-  document.getElementById("tagsArtistHint").hidden = !artistFallback;
-  if (artistFallback) initial.tagsArtist = "";
+  document.getElementById("tagsArtistHint").hidden = !entry.artistFallback;
 
   const img = document.getElementById("tagsCoverImg");
   const empty = document.getElementById("tagsCoverEmpty");
   const zone = document.getElementById("tagsCoverZone");
+  const status = document.getElementById("tagsStatus");
   // Liefert der Server kein Bild (Datei inzwischen verschoben o. ae.), Platzhalter
   // statt des kaputten Bild-Symbols zeigen.
   img.onerror = () => { img.removeAttribute("src"); img.style.display = "none"; empty.style.display = ""; };
-  if (r.cv) {
-    img.src = `/api/cover?path=${encodeURIComponent(r.p)}&_=${Date.now()}`;
-    img.style.display = ""; empty.style.display = "none";
-  } else {
-    img.removeAttribute("src");
-    img.style.display = "none"; empty.style.display = "";
-  }
+  // Cover-Vorschau: Vormerkung des Eintrags, sonst das Cover der Datei.
+  const showCover = () => {
+    const c = entry.cover;
+    let src = "";
+    if (c && c !== "delete") src = c.url || entry.objectUrl || "";
+    else if (!c && r.cv) src = `/api/cover?path=${encodeURIComponent(r.p)}&_=${Date.now()}`;
+    if (src) { img.src = src; img.style.display = ""; empty.style.display = "none"; }
+    else { img.removeAttribute("src"); img.style.display = "none"; empty.style.display = ""; }
+  };
+  showCover();
 
-  // Cover-Aenderungen (Datei/Zwischenablage/Drag&Drop/Loeschen) werden erst
-  // lokal vorgemerkt (Vorschau via Object-URL) und beim Klick auf "Speichern"
-  // zusammen mit den Textfeldern committet -- nicht mehr sofort hochgeladen.
-  let pendingCover = null;         // File/Blob | {url} | "delete" | null
-  let pendingObjectUrl = null;
+  // Cover-Aenderungen (Datei/Zwischenablage/Drag&Drop/Loeschen/Online) werden
+  // im Eintrag vorgemerkt (Vorschau via Object-URL) und erst beim Klick auf
+  // "Speichern" geschrieben -- auch nach dem Weiterblaettern.
   let locked = false;              // waehrend saveBtn.onclick laeuft, siehe setTagsPopupLocked()
-  const discardPendingCover = () => {
-    if (pendingObjectUrl) { URL.revokeObjectURL(pendingObjectUrl); pendingObjectUrl = null; }
-    pendingCover = null;
+  const stageCover = (cover, objectUrl, message) => {
+    if (entry.blocked) { if (objectUrl) URL.revokeObjectURL(objectUrl); return; }
+    if (entry.objectUrl && entry.objectUrl !== objectUrl) URL.revokeObjectURL(entry.objectUrl);
+    entry.cover = cover;
+    entry.objectUrl = objectUrl;
+    showCover();
+    status.textContent = message; status.className = "";
+    refreshTagsChanged();
   };
   const stageCoverFile = file => {
     if (!file || !file.type || !file.type.startsWith("image/")) {
       status.textContent = t("tags.not_image_file"); status.className = "warn";
       return;
     }
-    if (pendingObjectUrl) URL.revokeObjectURL(pendingObjectUrl);
-    pendingObjectUrl = URL.createObjectURL(file);
-    pendingCover = file;
-    img.src = pendingObjectUrl;
-    img.style.display = ""; empty.style.display = "none";
-    status.textContent = t("tags.cover_selected");
-    status.className = "";
+    stageCover(file, URL.createObjectURL(file), t("tags.cover_selected"));
   };
-  const stageCoverDelete = () => {
-    if (pendingObjectUrl) { URL.revokeObjectURL(pendingObjectUrl); pendingObjectUrl = null; }
-    pendingCover = "delete";
-    img.removeAttribute("src");
-    img.style.display = "none"; empty.style.display = "";
-    status.textContent = t("tags.cover_will_delete"); status.className = "";
-  };
+  const stageCoverDelete = () => stageCover("delete", null, t("tags.cover_will_delete"));
   // Cover eines Online-Vorschlags: Bytes liegen extern, deshalb kein
   // Object-URL wie bei stageCoverFile -- die Vorschau zeigt direkt die
   // Quell-URL, geladen wird serverseitig erst beim Speichern (ueber
   // /api/lookup-cover, das denselben Weg wie der "Nur Cover"-Knopf nutzt).
-  const stageCoverUrl = (url, label = t("tags.cover_online_suggestion")) => {
-    if (pendingObjectUrl) { URL.revokeObjectURL(pendingObjectUrl); pendingObjectUrl = null; }
-    pendingCover = {url};
-    img.src = url;
-    img.style.display = ""; empty.style.display = "none";
-    status.textContent = t("tags.cover_from_source", {label});
-    status.className = "";
+  const stageCoverUrl = (url, label = t("tags.cover_online_suggestion")) =>
+    stageCover({url}, null, t("tags.cover_from_source", {label}));
+  TAGS_COVER = {
+    pending: () => !!entry.cover,
+    reset: () => { releaseTagsEntry(entry); showCover(); status.textContent = ""; status.className = ""; },
   };
 
-  const status = document.getElementById("tagsStatus");
+  // Eigene Tags und Vergleichsstand der Felder zuletzt: beide loesen
+  // refreshTagsChanged() aus, das TAGS_ENTRY/TAGS_COVER schon braucht.
+  setupUserTagEditor(entry.utDraft, entry.utInitial);
+  setTagsChangeBase(entry.initial);
+  applyLock();
+  if (entry.blocked === undefined && apiMode && !r.gone) {
+    fetchWriteBlockers([r.p]).then(blocked => {
+      entry.blocked = blocked[r.p] || "";
+      TAGS_BLOCKED.set(entry.key, entry.blocked);
+      // Inzwischen weitergeblaettert oder geschlossen: nur merken.
+      if (TAGS_ENTRY !== entry || !entry.blocked) return;
+      // Vor der Antwort Getipptes passt nicht mehr -- Stand der Datei zeigen.
+      for (const [id] of TAGS_BULK_FIELD_MAP) document.getElementById(id).value = entry.initial[id];
+      releaseTagsEntry(entry);
+      showCover();
+      applyLock();
+      refreshTagsChanged();
+    });
+  }
+
   status.textContent = ""; status.className = "";
   document.getElementById("tagsLookupStatus").textContent = "";
   document.getElementById("tagsLookupResults").innerHTML = "";
@@ -11069,11 +11382,20 @@ function openTagsPopup(r, isDrop) {
   nextBtn.disabled = pos < 0 || pos >= rows.length - 1;
   document.getElementById("tagsPos").textContent = pos >= 0 && rows.length > 1
     ? t("tags.position", {pos: (pos + 1).toLocaleString("de-DE"), total: rows.length.toLocaleString("de-DE")}) : "";
-  prevBtn.onclick = () => { if (pos > 0) { discardPendingCover(); openTagsPopup(rows[pos - 1], isDrop); } };
-  nextBtn.onclick = () => { if (pos >= 0 && pos < rows.length - 1) { discardPendingCover(); openTagsPopup(rows[pos + 1], isDrop); } };
+  // Blaettern merkt den angezeigten Track vor, statt seine Aenderungen zu verwerfen.
+  const go = target => { if (locked) return; stashTagsEntry(); openTagsPopup(target, isDrop); };
+  prevBtn.onclick = () => { if (pos > 0) go(rows[pos - 1]); };
+  nextBtn.onclick = () => { if (pos >= 0 && pos < rows.length - 1) go(rows[pos + 1]); };
 
   ov.style.display = "flex";
-  const close = () => { if (locked) return; discardPendingCover(); ov.style.display = "none"; document.onkeydown = null; };
+  // Abbrechen/Escape verwirft ALLE vorgemerkten Aenderungen, ohne Rueckfrage.
+  const close = () => {
+    if (locked) return;
+    discardTagsPending();
+    TAGS_COVER = {pending: () => false, reset: null};
+    ov.style.display = "none";
+    document.onkeydown = null;
+  };
   document.getElementById("tagsCancel").onclick = close;
   document.onkeydown = e => { if (e.key === "Escape") close(); };
 
@@ -11100,7 +11422,7 @@ function openTagsPopup(r, isDrop) {
   };
 
   document.getElementById("tagsCoverDeleteBtn").onclick = () => {
-    if (!r.cv && !pendingCover) {
+    if (!r.cv && !entry.cover) {
       status.textContent = t("tags.no_cover"); status.className = "";
       return;
     }
@@ -11158,6 +11480,7 @@ function openTagsPopup(r, isDrop) {
                          ${esc(t("lookup.cover_only_button"))}</button>` : ""}
         </div>`).join("");
       results.querySelectorAll("[data-cand]").forEach(el => el.onclick = () => {
+        if (entry.blocked) return;
         const c = data.results[+el.dataset.cand];
         if (c.artist) document.getElementById("tagsArtist").value = c.artist;
         if (c.title) document.getElementById("tagsTitle").value = c.title;
@@ -11194,23 +11517,16 @@ function openTagsPopup(r, isDrop) {
     if (ev.key === "Enter") { ev.preventDefault(); document.getElementById("tagsLookupBtn").click(); }
   };
 
+  // Speichern schreibt ALLE vorgemerkten Tracks nacheinander (je Track wie
+  // frueher: Tags -> Cover -> eigene Tags), der angezeigte zaehlt mit.
   const saveBtn = document.getElementById("tagsSave");
   saveBtn.onclick = async () => {
-    // Nur tatsaechlich geaenderte Felder verschicken (Vergleich gegen den
-    // initial-Schnappschuss von oben) -- unangetastete Felder duerfen die
-    // Server-/Datei-Seite nicht ueberschreiben, siehe Kommentar bei initial.
-    const fields = {};
-    for (const [id, key, payloadKey] of TAGS_BULK_FIELD_MAP) {
-      const raw = document.getElementById(id).value;
-      if (raw === initial[id]) continue;
-      if (payloadKey === "year") fields.year = raw ? parseInt(raw, 10) : 0;
-      else if (payloadKey === "bpm") fields.bpm = raw ? parseFloat(raw) : 0;
-      else if (payloadKey === "track_no" || payloadKey === "track_total") fields[payloadKey] = raw ? parseInt(raw, 10) : 0;
-      else fields[payloadKey] = raw;
-    }
-    const utChanges = userTagChanges();
-    const utChanged = utChanges.add.length || utChanges.remove.length;
-    if (!Object.keys(fields).length && !pendingCover && !utChanged) {
+    stashTagsEntry();
+    let list = [...TAGS_PENDING.values()];
+    // Nur der Albumkuenstler-Ersatz im Kuenstler-Feld: Speichern uebernimmt ihn
+    // (siehe Hinweis am Feld), auch ohne sonstige Aenderung.
+    if (!list.length && entry.artistFallback) list = [entry];
+    if (!list.length) {
       status.textContent = t("tags.no_changes");
       status.className = "";
       return;
@@ -11219,89 +11535,55 @@ function openTagsPopup(r, isDrop) {
     setTagsPopupLocked(true);
     saveBtn.disabled = true;
     saveBtn.classList.add("busy");
-    status.textContent = t("tags.saving"); status.className = "busy";
-    try {
-      if (Object.keys(fields).length) {
-        const res = await fetch("/api/tags", {method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({path: r.p, ...fields})});
-        const data = await res.json();
-        if (!data.ok) throw new Error(data.error || t("error.unknown"));
-        if (isDrop) {
-          Object.assign(r, fieldsToDropRow(fields));
-          if (data.issues) r.ti = data.issues;
-          renderDrops();
-        } else {
-          applyRowUpdate(r.i, data.row);
-          render();
-        }
+    status.className = "busy";
+    const failed = [];
+    let ok = 0;
+    for (const [n, e] of list.entries()) {
+      status.textContent = list.length > 1
+        ? t("tags.saving_progress", {pos: n + 1, total: list.length}) : t("tags.saving");
+      try {
+        await saveTagsEntry(e);
+        TAGS_PENDING.delete(e.key);
+        ok++;
+      } catch (err) {
+        failed.push({e, err});
       }
+    }
+    if (isDrop) renderDrops(); else render();
 
-      // Vorgemerkte Cover-Aenderung (Datei/Zwischenablage/Drag&Drop/Loeschen)
-      // erst jetzt tatsaechlich schreiben, zusammen mit den Textfeldern.
-      if (pendingCover === "delete") {
-        const res2 = await fetch(`/api/cover-delete?path=${encodeURIComponent(r.p)}`, {method: "POST"});
-        const data2 = await res2.json();
-        if (!data2.ok) throw new Error(data2.error || t("error.unknown"));
-        bumpCoverRev(r.p);
-        if (isDrop) { r.cv = 0; renderDrops(); } else { applyRowUpdate(r.i, data2.row); render(); }
-        img.removeAttribute("src");
-        img.style.display = "none"; empty.style.display = "";
-        discardPendingCover();
-        if (data2.music_cover_synced === false) {
-          note(t("toast.cover_music_failed_one", {name: baseName(r.p), error: data2.music_cover_error}), "soft");
-        }
-      } else if (pendingCover && pendingCover.url) {
-        // Aus einem Online-Vorschlag ausgewaehlt (stageCoverUrl) -- die Bytes
-        // liegen extern, deshalb derselbe Weg wie der "Nur Cover"-Knopf
-        // (serverseitiger Download) statt eines rohen Datei-Uploads.
-        const res2 = await fetch("/api/lookup-cover", {method: "POST",
-          headers: {"Content-Type": "application/json"},
-          body: JSON.stringify({path: r.p, url: pendingCover.url})});
-        const data2 = await res2.json();
-        if (!data2.ok) throw new Error(data2.error || t("error.unknown"));
-        bumpCoverRev(r.p);
-        if (isDrop) { r.cv = 1; renderDrops(); } else { applyRowUpdate(r.i, data2.row); render(); }
-        discardPendingCover();
-        img.src = `/api/cover?path=${encodeURIComponent(r.p)}&_=${Date.now()}`;
-        img.style.display = ""; empty.style.display = "none";
-        if (data2.music_cover_synced === false) {
-          note(t("toast.cover_music_failed_one", {name: baseName(r.p), error: data2.music_cover_error}), "soft");
-        }
-      } else if (pendingCover) {
-        const file = pendingCover;
-        const res2 = await fetch(`/api/cover?path=${encodeURIComponent(r.p)}`, {
-          method: "POST",
-          headers: {"Content-Type": file.type || "image/jpeg"},
-          body: file,
-        });
-        const data2 = await res2.json();
-        if (!data2.ok) throw new Error(data2.error || t("error.unknown"));
-        bumpCoverRev(r.p);
-        if (isDrop) { r.cv = 1; renderDrops(); } else { applyRowUpdate(r.i, data2.row); render(); }
-        discardPendingCover();
-        img.src = `/api/cover?path=${encodeURIComponent(r.p)}&_=${Date.now()}`;
-        img.style.display = ""; empty.style.display = "none";
-        if (data2.music_cover_synced === false) {
-          note(t("toast.cover_music_failed_one", {name: baseName(r.p), error: data2.music_cover_error}), "soft");
-        }
-      }
+    // Angezeigten Track neu aufsetzen: gespeichert -> neuer Vergleichsstand
+    // aus der aktualisierten Zeile; fehlgeschlagen -> bleibt vorgemerkt, die
+    // Eingaben stehen ohnehin noch im Dialog.
+    if (!TAGS_PENDING.has(entry.key)) {
+      // Die Handler dieses Dialogs haengen an "entry" -- in place neu aufsetzen.
+      const blocked = entry.blocked;
+      Object.assign(entry, newTagsEntry(r, isDrop), {blocked});
+      for (const [id] of TAGS_BULK_FIELD_MAP) document.getElementById(id).value = entry.initial[id];
+      for (const [id] of TAGS_BULK_FIELD_MAP) entry.initial[id] = document.getElementById(id).value;
+      document.getElementById("tagsArtistHint").hidden = !entry.artistFallback;
+      showCover();
+      setupUserTagEditor(entry.utDraft, entry.utInitial);
+      setTagsChangeBase(entry.initial);
+    } else {
+      refreshTagsChanged();
+    }
 
-      if (utChanged) {
-        await saveUserTags({path: r.p, tags: UT_DRAFT});
-        UT_INITIAL = UT_DRAFT.slice();
-        if (isDrop) renderDrops(); else render();
-      }
-
-      // Overlay bleibt bewusst offen -- nur ein kurzes Feedback, damit direkt
-      // weiter am selben Track editiert werden kann (z.B. Cover danach).
-      status.textContent = t("tags.saved"); status.className = "ok";
+    // Overlay bleibt bewusst offen -- nur ein kurzes Feedback, damit direkt
+    // weiter am selben Track editiert werden kann (z.B. Cover danach).
+    if (!failed.length) {
+      status.textContent = list.length > 1 ? t("tags.saved_count", {count: ok}) : t("tags.saved");
+      status.className = "ok";
       saveBtn.classList.add("done");
-      note(t("toast.tags_saved", {name: baseName(r.p)}));
-    } catch (err) {
-      status.textContent = t("error.failed", {error: err.message});
+      note(list.length > 1 ? t("toast.tags_saved_count", {count: ok})
+        : t("toast.tags_saved", {name: baseName(list[0].r.p)}));
+    } else {
+      const {e, err} = failed[0];
+      status.textContent = failed.length > 1
+        ? t("tags.save_failed_some", {count: failed.length, name: baseName(e.r.p), error: err.message})
+        : t("tags.save_failed_file", {name: baseName(e.r.p), error: err.message});
       status.className = "warn";
       saveBtn.classList.add("failed");
+      if (ok) note(t("toast.tags_saved_count", {count: ok}));
     }
     locked = false;
     setTagsPopupLocked(false);
@@ -11350,6 +11632,8 @@ function fieldsToDropRow(fields) {
 // das Ergebnis wandert deshalb direkt in den Eintrag und nach renderDrops().
 function openTagsPopupBulk(rows, isDrop) {
   const ov = document.getElementById("tagsOverlay");
+  // Kein Blaettern im Mehrfach-Modus -- Vormerkungen der Einzelbearbeitung verwerfen.
+  discardTagsPending();
   setTagsHead(t("tags.selected_count_files", {count: rows.length}), "", "");
   document.getElementById("tagsCopyPath").style.display = "none";
   document.getElementById("tagsReveal").style.display = "none";
@@ -11363,7 +11647,6 @@ function openTagsPopupBulk(rows, isDrop) {
     el.placeholder = values.size > 1 ? t("tags.multiple_values_placeholder") : "";
     initial[id] = common;
   }
-  setTagsChangeBase(initial);
 
   // Prev/Next und Online-Suche zielen auf genau einen Track -- im
   // Mehrfach-Modus ausblenden statt anzupassen.
@@ -11376,6 +11659,7 @@ function openTagsPopupBulk(rows, isDrop) {
   const common = (USER_TAGS.get(rows[0].p) || []).filter(tag => tagSets.every(set => set.has(utKey(tag))));
   document.getElementById("tagsUserTagInput").placeholder = t("tags.user_tags_bulk_placeholder");
   setupUserTagEditor(common);
+  setTagsChangeBase(initial);
 
   const img = document.getElementById("tagsCoverImg");
   const empty = document.getElementById("tagsCoverEmpty");
@@ -11403,6 +11687,7 @@ function openTagsPopupBulk(rows, isDrop) {
     img.style.display = ""; empty.style.display = "none";
     status.textContent = t("tags.cover_selected_bulk");
     status.className = "";
+    refreshTagsChanged();
   };
   const stageCoverDelete = () => {
     if (pendingObjectUrl) { URL.revokeObjectURL(pendingObjectUrl); pendingObjectUrl = null; }
@@ -11411,6 +11696,7 @@ function openTagsPopupBulk(rows, isDrop) {
     img.style.display = "none"; empty.style.display = "";
     empty.textContent = t("tags.cover_will_delete_bulk");
     status.textContent = ""; status.className = "";
+    refreshTagsChanged();
   };
   // Wie bei openTagsPopup(): Bild-URL statt Datei, z.B. per Drag&Drop aus
   // dem Browser -- geladen wird serverseitig erst beim Speichern je Track.
@@ -11421,13 +11707,30 @@ function openTagsPopupBulk(rows, isDrop) {
     img.style.display = ""; empty.style.display = "none";
     status.textContent = t("tags.cover_from_source_bulk", {label});
     status.className = "";
+    refreshTagsChanged();
+  };
+  TAGS_COVER = {
+    pending: () => !!pendingCover,
+    reset: () => {
+      discardPendingCover();
+      img.removeAttribute("src");
+      img.style.display = "none"; empty.style.display = "";
+      empty.textContent = t("tags.cover_varies");
+      status.textContent = ""; status.className = "";
+    },
   };
 
   const status = document.getElementById("tagsStatus");
   status.textContent = ""; status.className = "";
 
   ov.style.display = "flex";
-  const close = () => { if (locked) return; discardPendingCover(); ov.style.display = "none"; document.onkeydown = null; };
+  const close = () => {
+    if (locked) return;
+    discardPendingCover();
+    TAGS_COVER = {pending: () => false, reset: null};
+    ov.style.display = "none";
+    document.onkeydown = null;
+  };
   document.getElementById("tagsCancel").onclick = close;
   document.onkeydown = e => { if (e.key === "Escape") close(); };
 
@@ -11468,6 +11771,25 @@ function openTagsPopupBulk(rows, isDrop) {
     status.textContent = t("tags.no_image_recognized"); status.className = "warn";
   };
 
+  // Schreibschutz: geschuetzte Dateien werden beim Speichern uebersprungen
+  // (nur eigene Tags, die liegen in der DB); sind es alle, sperrt der Dialog
+  // wie beim Einzeltrack.
+  let blockedPaths = new Set();
+  setTagsWriteLock("");
+  fetchWriteBlockers(rows.map(x => x.p)).then(blocked => {
+    if (ov.style.display === "none" || TAGS_ENTRY) return;
+    blockedPaths = new Set(Object.keys(blocked));
+    if (!blockedPaths.size) return;
+    if (blockedPaths.size === rows.length) {
+      for (const [id] of TAGS_BULK_FIELD_MAP) document.getElementById(id).value = initial[id];
+      discardPendingCover();
+      setTagsWriteLock(Object.values(blocked)[0], t("tags.write_all_blocked", {count: rows.length}));
+    } else {
+      setTagsWriteLock("", t("tags.write_some_blocked", {count: blockedPaths.size, total: rows.length}));
+    }
+    refreshTagsChanged();
+  });
+
   const saveBtn = document.getElementById("tagsSave");
   saveBtn.onclick = async () => {
     const fields = {};
@@ -11501,7 +11823,8 @@ function openTagsPopupBulk(rows, isDrop) {
       } catch (err) { utError = err.message; }
     }
 
-    const queue = rows.slice();
+    const queue = rows.filter(x => !blockedPaths.has(x.p));
+    const writable = queue.length;
     let okCount = 0, failCount = 0, coverSyncMisses = 0;
     const worker = async () => {
       while (queue.length) {
@@ -11565,8 +11888,9 @@ function openTagsPopupBulk(rows, isDrop) {
       note(t("toast.cover_music_failed", {count: coverSyncMisses}), "soft");
     }
 
-    status.textContent = t("tags.bulk_saved", {ok: okCount, total: rows.length}) +
+    status.textContent = t("tags.bulk_saved", {ok: okCount, total: writable}) +
       (failCount ? t("tags.bulk_failed_suffix", {count: failCount}) : ".") +
+      (blockedPaths.size ? " " + t("tags.bulk_blocked_suffix", {count: blockedPaths.size}) : "") +
       (utError ? " " + t("tags.user_tags_failed", {error: utError}) : "");
     status.className = failCount || utError ? "warn" : "ok";
     saveBtn.classList.add(failCount || utError ? "failed" : "done");
@@ -11574,6 +11898,12 @@ function openTagsPopupBulk(rows, isDrop) {
     // Vorschau haengt noch daran und soll das uebernommene Bild
     // weiterzeigen. Aufgeraeumt wird beim Schliessen (close()).
     pendingCover = null;
+    // Gespeichertes ist der neue Vergleichsstand (Markierung und
+    // Zuruecksetzen-Knoepfe weg); nach Fehlern bleibt alles markiert.
+    if (!failCount) {
+      for (const [id] of TAGS_BULK_FIELD_MAP) initial[id] = document.getElementById(id).value;
+    }
+    refreshTagsChanged();
     locked = false;
     setTagsPopupLocked(false);
     saveBtn.disabled = false;

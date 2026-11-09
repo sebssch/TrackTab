@@ -6,8 +6,14 @@ Format lose angelehnt an [Keep a Changelog](https://keepachangelog.com/de/1.1.0/
 ## [2.0.0] - 2026-11-01
 
 ### Added
+- Tags-Dialog: Änderungen bleiben beim Blättern (Vorheriger/Nächster) je Track vorgemerkt und stehen beim Zurückblättern wieder da. „Speichern (N)“ zählt die Tracks mit Änderungen und schreibt alle auf einmal, „Abbrechen“ verwirft alle. Geänderte Felder sind eingefärbt; ein Pfeil am Label setzt einzelne Felder (auch Cover und eigene Tags) auf den ursprünglichen Wert zurück, z. B. nach dem Übernehmen eines Online-Vorschlags.
+- Tags-Dialog: Schreibgeschützte Dateien (im Finder „Geschützt“ oder ohne Schreibrechte) werden vorab erkannt. Felder, Cover, Online-Suche und Umbenennen sind dann gesperrt, eigene Tags bleiben bearbeitbar; im Mehrfach-Modus werden geschützte Dateien übersprungen. Schreibfehler melden den Grund statt „Operation not permitted“.
+- Bearbeiten: „Aus Playlist entfernen“ steht als Symbol in der Zeile neben „Zur Playlist hinzufügen“ statt im „…“-Menü.
+- DJ-Ansicht: Läuft ein Track im Player-Balken, klappt der Wechsel zu DJ ihn auf; die Wiedergabe hält an und der Editor steht an derselben Stelle. Beim Zurückwechseln steht der Player-Balken an der Stelle des Editors.
+- Spaltenauswahl als Symbol ganz rechts in der Suchleiste (in DJ gesperrt) statt eigener Leiste über der Tabelle.
+- Suchleiste: alle Knöpfe so hoch wie das Suchfeld; der aktive Ansichtsknopf (Player/DJ/Bearbeiten) ist nicht mehr fett, die Knöpfe springen beim Umschalten nicht mehr.
 - Shops: YouTube als neuer Standard-Shop. Alle Shops zeigen ihr Favicon; TrackTab holt es einmal von der Seite und speichert es lokal (nur Hosts aus der Shop-Liste, nur öffentliche Adressen, kein SVG). Lädt es nicht, bleibt das bisherige Symbol bzw. der Buchstabe. Wer die Shop-Liste schon einmal gespeichert hat, trägt YouTube von Hand nach.
-- Neue Spalte „Track – Interpret“ (Titel und Interpret in einer Zelle, darunter Format und Bitrate mit „Pfad kopieren“ und „Im Finder zeigen“) wie in der DJ-Ansicht, jetzt in jeder Ansicht über „Spalten ▾“ wählbar; im Player die Vorgabe.
+- Neue Spalte „Track – Interpret“ (Titel und Interpret in einer Zelle, darunter Format und Bitrate mit „Pfad kopieren“ und „Im Finder zeigen“) wie in der DJ-Ansicht, jetzt in jeder Ansicht über die Spaltenauswahl wählbar; im Player die Vorgabe.
 - Standard-Spaltenansichten wie in Apple Music: „Standard – Bearbeiten“ und „Standard – Player“ gelten für alle Listen ohne eigene Spaltenansicht in der jeweiligen Ansicht. Eine eigene Spaltenansicht einer Liste gilt in Bearbeiten und Player. Die frühere globale „Standard-Spaltenansicht“ entfällt; ihre Spalten werden einmalig nach „Standard – Bearbeiten“ übernommen, die Ansicht selbst bleibt gespeichert.
 - Player-Zeile: kein „…“-Menü mehr; in einer offenen Playlist (TrackTab, Rekordbox, Music.app) steht „Aus Playlist entfernen“ als Knopf neben „Zur Playlist“.
 - Zeilen-Play-Knopf wird beim Abspielen zum Pausensymbol; im Player pausiert ein Klick auf den laufenden Track, statt ihn neu zu starten.

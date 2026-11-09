@@ -322,6 +322,19 @@ function djDetailHTML(r) {
   </div></div>`;
 }
 
+// ── Uebergabe mit dem Player-Balken ─────────────────────
+// Oeffnet sich der Editor fuer den Track, den der Player-Balken (queueAudio) gerade
+// spielt (Wechsel zu DJ oder Aufklappen in DJ), haelt der Player-Balken an und das
+// Deck steht an derselben Stelle bereit -- weiter mit Play. Beim Verlassen der
+// DJ-Ansicht umgekehrt (djClose()). Bewusst PAUSE statt nahtloser Uebergabe
+// (Nutzervorgabe): queueAudio und Web Audio haben verschiedene Ausgabewege, auch
+// mit Latenzausgleich (Deck ~38 ms voraus, queueAudio ~45 ms Anlauf, beide gemessen)
+// blieb beim Umschalten ein Stolperer hoerbar. Die Dekodierung selbst ist identisch
+// (Kreuzkorrelation /api/audio gegen /api/dj-pcm: 0 Samples Versatz).
+function djIsQueueTrack(path) {
+  return !!(queueState.current && queueState.current.p === path);
+}
+
 function djMount(det, r) {
   const root = det.querySelector(".dj");
   if (!root) return;
@@ -404,7 +417,15 @@ function djMount(det, r) {
   djWireOver(ed);
   djMountRowCells(ed);
 
+  // Track des Player-Balkens: dort anhalten, Deck an dieselbe Stelle (siehe oben).
+  if (djIsQueueTrack(r.p) && isFinite(queueAudio.currentTime)) {
+    queueAudio.pause();
+    ed.pos = queueAudio.currentTime;
+    audio.currentTime = queueAudio.currentTime;
+    requestWavePaint();
+  }
   djRenderAll(ed);
+  djSyncPlayIcon(ed);
   // Nacheinander: bei Rekordbox-Tracks rechnet /api/dj-track die Wellenform fuer
   // den Versatz ohnehin mit, parallel liefe die Dekodierung zweimal.
   djLoad(ed).finally(() => { if (!ed.closed) djLoadDetail(ed); });
@@ -471,11 +492,19 @@ function djClose(ed) {
   clearInterval(ed.metroTimer);
   if (ed.closed) return;
   ed.closed = true;
+  // Verlaesst man die DJ-Ansicht mit dem Track des Player-Balkens, steht der
+  // Player-Balken danach an der Stelle des Editors, angehalten (Gegenstueck zu
+  // djMount()). Zuklappen innerhalb von DJ laesst den Player-Balken unberuehrt.
+  const handBack = state.layout !== "dj" && djIsQueueTrack(ed.path) && isFinite(ed.audio.currentTime);
+  const handBackAt = handBack ? ed.audio.currentTime : 0;
+
   djReleaseJump(ed);
   djRestoreRowCells(ed);
   djSave(ed, true);
   clearTimeout(ed.saveTimer);
   ed.audio.close();
+  // Player-Balken an die Stelle des Editors setzen, angehalten.
+  if (handBack && queueAudio.paused) { queueSeek(handBackAt); scheduleWavePaint(); }
   if (players.get(ed.path) === ed.zoomEntry) players.delete(ed.path);
   if (DJ === ed) DJ = undefined;
 }
