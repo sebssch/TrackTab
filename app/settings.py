@@ -11,6 +11,10 @@ jeweiligen Leiter in cfg["cutoff_classes"] zusammengesetzt.
 """
 from __future__ import annotations
 
+import functools
+import os
+import threading
+import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -120,7 +124,7 @@ GROUPS = [
             {"key": "infinite_scroll", "type": "bool",
              "label": "Endlos-Scrollen",
              "help": "Lädt beim Erreichen des unteren Listenendes automatisch "
-                     "50 weitere Treffer nach, statt \"weitere laden\" von "
+                     "20 weitere Treffer nach, statt \"weitere laden\" von "
                      "Hand anklicken zu müssen."},
             {"key": "external_browser", "type": "app", "appList": "browsers",
              "label": "Browser für Web-UI", "break": True, "width": "half",
@@ -345,6 +349,121 @@ GROUPS = [
         ],
     },
     {
+        "id": "tagclean", "title": "Titel-Bereinigung: Webseiten & Promo-Reste",
+        "note": "Nach Änderungen hier die Auffälligkeiten neu prüfen lassen (Scan-Dialog → „Auffälligkeiten neu prüfen“ bzw. „./run.command recheck-tags“).",
+        "fields": [
+            {"key": "tagclean_web", "type": "bool", "width": "full", "break": True,
+             "label": "Webseiten & Promo-Reste",
+             "help": "Entfernt Webadressen (http://…, www.…, name.com), Promo-Wörter in Klammern (z. B. „[Promo]“, „(Beatport)“) und „Downloaded from …“. Die Wörter und Domain-Endungen stehen in den Listen darunter."},
+            {"key": "tagclean_web_words", "type": "list", "width": "half", "break": True,
+             "label": "Promo-Wörter in Klammern",
+             "help": "Steht eines davon allein in (…) oder […], wird die Klammer entfernt, z. B. „Titel [Promo]“. Groß/Klein egal."},
+            {"key": "tagclean_web_tlds", "type": "list", "width": "half", "break": False,
+             "label": "Domain-Endungen",
+             "help": "„name.com“, „site.ru“ gilt als Webadresse, wenn die Endung hier steht."},
+        ],
+    },
+    {
+        "id": "tagclean_video", "title": "Titel-Bereinigung: Unerwünschte Begriffe",
+        "fields": [
+            {"key": "tagclean_video", "type": "bool", "width": "full", "break": True,
+             "label": "Unerwünschte Begriffe in Klammern",
+             "help": "Entfernt Zusätze aus Web-Uploads: „(Official Video)“, „[HD]“, „(Free Download)“, „(Out Now)“ und Endungen wie „- Official Audio“. Nicht im Kommentar."},
+            {"key": "tagclean_video_remove", "type": "list", "width": "half", "break": True,
+             "label": "Zu löschende Begriffe",
+             "help": "Eine Klammer (…) oder […] wird entfernt, wenn sie nur aus diesen Wörtern besteht, z. B. „(Official Video)“ oder „[HD]“. „free“, „music“, „out“ und „now“ dürfen dabei stehen („(Free Download)“), reichen allein aber nicht: „(Free)“ bleibt."},
+        ],
+    },
+    {
+        "id": "tagclean_spaces", "title": "Titel-Bereinigung: Unterstriche & Leerzeichen",
+        "fields": [
+            {"key": "tagclean_spaces", "type": "bool", "width": "full", "break": True,
+             "label": "Unterstriche & Leerzeichen",
+             "help": "Ersetzt Unterstriche („Daft_Punk__Get_Lucky“ → „Daft Punk - Get Lucky“), macht mehrfache Leerzeichen zu einem und entfernt Leerzeichen am Rand. Nicht im Kommentar."},
+            {"key": "tagclean_underscore_single", "type": "select", "width": "half", "break": True,
+             "label": "Einzelner Unterstrich wird",
+             "options": [{"value": "space", "label": "Leerzeichen"},
+                         {"value": "hyphen", "label": "Bindestrich (ohne Leerzeichen)"}],
+             "help": "„Daft_Punk“ → „Daft Punk“ bzw. „Daft-Punk“."},
+            {"key": "tagclean_underscore_double", "type": "select", "width": "half", "break": False,
+             "label": "Doppelter Unterstrich wird",
+             "options": [{"value": "dash", "label": "Bindestrich mit Leerzeichen ( - )"},
+                         {"value": "endash", "label": "Halbgeviertstrich ( – )"},
+                         {"value": "pipe", "label": "Senkrechter Strich ( | )"},
+                         {"value": "space", "label": "Leerzeichen"}],
+             "help": "Zwei oder mehr Unterstriche hintereinander trennen meist Interpret und Titel."},
+        ],
+    },
+    {
+        "id": "tagclean_trackno", "title": "Titel-Bereinigung: Tracknummer & Interpret im Titel",
+        "fields": [
+            {"key": "tagwatch_trackno", "type": "bool", "width": "full", "break": True,
+             "label": "Tracknummer / Interpret im Titel",
+             "help": "Meldet „01 - Titel“, „1. Titel“ und „Interpret - Titel“ als Auffälligkeit (wird nicht automatisch geändert, die Korrektur steht als Vorschlag im Tags-Dialog)."},
+        ],
+    },
+    {
+        "id": "tagclean_remix", "title": "Titel-Bereinigung: Remix-Schreibweise",
+        "fields": [
+            {"key": "tagwatch_remix", "type": "bool", "width": "full", "break": True,
+             "label": "Remix-Schreibweise",
+             "help": "Erkennt „(X Remix)“, „[X Remix]“ und „- X Remix“ und meldet Abweichungen von der gewählten Schreibweise; der Vorschlag steht im Tags-Dialog."},
+            {"key": "tagwatch_remix_style", "type": "select", "width": "half", "break": True,
+             "label": "Remix schreiben als",
+             "options": [{"value": "round", "label": "Rund: (X Remix)"},
+                         {"value": "square", "label": "Eckig: [X Remix]"},
+                         {"value": "dash", "label": "Bindestrich: - X Remix"}]},
+            {"key": "tagwatch_remix_words", "type": "list", "width": "half", "break": False,
+             "label": "Wörter, die eine Remix-Angabe kennzeichnen",
+             "help": "Ein Zusatz in Klammern oder nach „ - “ gilt als Remix-Angabe, wenn er mit einem dieser Wörter endet, z. B. „(Club Remix)“, „(Radio Edit)“, „- Extended Mix“. „(Live)“ bleibt unberührt. Gesucht wird nur im Titel."},
+        ],
+    },
+    {
+        "id": "tagclean_feat", "title": "Titel-Bereinigung: Featuring-Schreibweise",
+        "fields": [
+            {"key": "tagwatch_feat", "type": "bool", "width": "full", "break": True,
+             "label": "Featuring-Schreibweise",
+             "help": "Erkennt „ft.“, „feat“, „feat.“, „featuring“ (auch in Klammern) und meldet Abweichungen von der gewählten Schreibweise."},
+            {"key": "tagwatch_feat_word", "type": "select", "width": "half", "break": True,
+             "label": "Featuring schreiben als",
+             "options": [{"value": "feat", "label": "feat."},
+                         {"value": "ft", "label": "ft."},
+                         {"value": "featuring", "label": "featuring"}]},
+            {"key": "tagwatch_feat_bracket", "type": "select", "width": "half", "break": False,
+             "label": "Featuring-Klammer",
+             "options": [{"value": "none", "label": "Keine: feat. X"},
+                         {"value": "round", "label": "Rund: (feat. X)"},
+                         {"value": "square", "label": "Eckig: [feat. X]"}],
+             "help": "Gilt für Titel; im Interpreten-Feld steht „feat.“ immer ohne Klammer."},
+        ],
+    },
+    {
+        "id": "tagclean_case", "title": "Titel-Bereinigung: Groß-/Kleinschreibung",
+        "fields": [
+            {"key": "tagwatch_case", "type": "bool", "width": "full", "break": True,
+             "label": "Nur Groß- oder Kleinbuchstaben",
+             "help": "Meldet Titel und Album, die komplett groß oder komplett klein geschrieben sind. Kann Absicht sein, deshalb standardmäßig aus."},
+            {"key": "tagwatch_case_style", "type": "select", "width": "half", "break": True,
+             "label": "Vorschlag in",
+             "options": [{"value": "title", "label": "Jedes Wort groß"},
+                         {"value": "sentence", "label": "Nur erstes Wort groß"},
+                         {"value": "upper", "label": "GROSSBUCHSTABEN"},
+                         {"value": "lower", "label": "kleinbuchstaben"}]},
+        ],
+    },
+    {
+        "id": "tagclean_quotes", "title": "Titel-Bereinigung: Anführungszeichen",
+        "fields": [
+            {"key": "tagwatch_quotes", "type": "bool", "width": "full", "break": True,
+             "label": "Typografische Anführungszeichen",
+             "help": "„Typografisch“ = gebogen (’ ‘ “ ” „), „gerade“ = einfach (' \"). Meldet Zeichen, die nicht zur gewählten Form passen. Standardmäßig aus."},
+            {"key": "tagwatch_quotes_style", "type": "select", "width": "half", "break": True,
+             "label": "Anführungszeichen schreiben als",
+             "options": [{"value": "straight", "label": "Gerade: don't, \"Titel\""},
+                         {"value": "typographic", "label": "Typografisch: don’t, “Titel”"}]},
+        ],
+    },
+    {
         "id": "analysis", "title": "Analyse",
         "note": "Nach Änderungen hier muss neu gemessen werden (Scan erzwingen).",
         "fields": [
@@ -518,6 +637,16 @@ GROUPS = [
                          {"value": "ui", "label": "UI-Farbe (folgt dem Design)"}],
              "help": "Auf heller Fläche nimmt die Waveform eigene, dunklere Farben, "
                      "damit Weiß und helle Töne sichtbar bleiben."},
+            {"key": "dj_metronome_sound", "type": "select", "width": "half",
+             "label": "Metronom-Klang",
+             "options": [{"value": "beep", "label": "Piep (Standard)"},
+                         {"value": "click", "label": "Klick"},
+                         {"value": "wood", "label": "Woodblock"},
+                         {"value": "rim", "label": "Rimshot"},
+                         {"value": "cowbell", "label": "Cowbell"},
+                         {"value": "hihat", "label": "Hi-Hat"}],
+             "help": "Klang des Metronoms im DJ-Editor, die 1 im Takt klingt höher. "
+                     "Beim Umschalten ist der Klang kurz zu hören."},
         ],
     },
     {
@@ -668,13 +797,18 @@ def current(cfg: dict | None = None) -> dict:
 def describe() -> dict:
     from . import autocue, bpmkey, genremood, media, phrases, rekordbox, stems
     from .autocue import slots as autocue_slots
-    ensure_apple_music_column_view()
     migrate_column_view_default()
+    migrate_drop_column_view()
+    migrate_issues_column_view()
+    migrate_standard_column_views()
+    migrate_status_column()
     defaults = current(_defaults_cfg())
     detected = media.find_audio_editor()
     detected_mik = media.find_mixed_in_key()
     detected_rekordbox = media.find_rekordbox()
+    from .report import library_roots
     return {"groups": GROUPS, "values": current(), "defaults": defaults,
+            "library_roots": library_roots(cfgmod.load()),
             "local_file": str(cfgmod.local_config_path()),
             "detected_editor": detected or "",
             "detected_mik": detected_mik or "",
@@ -713,6 +847,7 @@ def describe() -> dict:
             # Kein UI-Feld (kein Setting zum Editieren, nur Anzeige im
             # Backup-Block) -- deshalb hier separat statt ueber _FIELDS/current().
             "backup_keep": int(cfgmod.load().get("backup_keep", 10)),
+            "backup_keep_days": int(cfgmod.load().get("backup_keep_days", 7)),
             "browsers": media.browser_apps(),
             "rekordboxes": media.list_rekordbox_apps(),
             "miks": media.list_mixed_in_key_apps(),
@@ -729,6 +864,8 @@ def describe() -> dict:
             "column_view_default": cfgmod.load().get("column_view_default", ""),
             "column_view_music_default": cfgmod.load().get("column_view_music_default", ""),
             "column_view_drop": cfgmod.load().get("column_view_drop", ""),
+            "column_view_edit": cfgmod.load().get("column_view_edit", ""),
+            "column_view_player": cfgmod.load().get("column_view_player", ""),
             "drop_column_order": cfgmod.load().get("drop_column_order", []),
             "drop_hidden_columns": cfgmod.load().get("drop_hidden_columns", []),
             "drop_column_widths": cfgmod.load().get("drop_column_widths", {})}
@@ -865,18 +1002,29 @@ def _check_descending(clean: dict, keys: tuple[str, ...]) -> None:
         )
 
 
+# Um jede Lese-Aendere-Schreibe-Folge auf config.local.yaml. Der Server nimmt
+# fuer die Spalten-Endpunkte zwar seinen eigenen Lock, /api/settings und
+# /api/settings/reset aber nicht -- ohne diesen hier konnten sich zwei
+# gleichzeitige Speichervorgaenge ueberholen. Reentrant, weil save_*-Funktionen
+# selbst wieder _write_local() rufen.
+_LOCAL_LOCK = threading.RLock()
+
+
+def _locked(fn):
+    """Fuehrt fn unter _LOCAL_LOCK aus."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _LOCAL_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
+
+
+@_locked
 def save(incoming: dict) -> dict:
     """Schreibt die Aenderungen nach config.local.yaml und laedt neu."""
     clean = validate(incoming)
 
-    stored: dict = {}
-    path = cfgmod.local_config_path()
-    if path.exists():
-        try:
-            with open(path, "r", encoding="utf-8") as fh:
-                stored = yaml.safe_load(fh) or {}
-        except (OSError, yaml.YAMLError):
-            stored = {}
+    stored = _read_local()
 
     all_class_keys = {k for keys in _LADDER_KEYS.values() for k in keys}
     classes = {k: v for k, v in clean.items() if k in all_class_keys}
@@ -912,12 +1060,7 @@ def save(incoming: dict) -> dict:
             ]
         stored["cutoff_classes"] = stored_ladders
 
-    header = ("# Vom Einstellungs-Dialog geschrieben.\n"
-              "# Überschreibt config.yaml. Datei löschen = zurück auf Vorgabe.\n")
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(header)
-        yaml.safe_dump(stored, fh, allow_unicode=True, sort_keys=True,
-                       default_flow_style=False)
+    _dump_local(stored)
     return cfgmod.reload()
 
 
@@ -971,16 +1114,51 @@ def _as_layout_map(value) -> dict:
     return {"edit": [], "player": []}
 
 
+_LOCAL_HEADER = ("# Vom Einstellungs-Dialog geschrieben.\n"
+                 "# Überschreibt config.yaml. Datei löschen = zurück auf Vorgabe.\n")
+
+
 def _read_local() -> dict:
-    """config.local.yaml als Dictionary -- fehlend oder kaputt = leer."""
+    """config.local.yaml als Dictionary, zum Aendern und Zurueckschreiben.
+
+    Fehlt die Datei, ist das Ergebnis leer. Ist sie da, aber nicht lesbar
+    oder kein gueltiges YAML, wird sie NICHT als leer behandelt: der naechste
+    Schreibvorgang wuerde sonst alles ueberschreiben, was noch darin steht
+    (Spaltenansichten, Merklisten, Shops, saemtliche Einstellungen). Eine
+    kaputte Datei wird stattdessen beiseitegelegt (config.local.yaml.defekt-
+    <zeit>), damit sie sich von Hand retten laesst; eine nur gerade nicht
+    lesbare bricht den Schreibvorgang mit einer Meldung ab.
+    """
     path = cfgmod.local_config_path()
     if not path.exists():
         return {}
     try:
         with open(path, "r", encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or {}
-    except (OSError, yaml.YAMLError):
+            data = yaml.safe_load(fh)
+    except OSError as exc:
+        raise ValueError(f"Einstellungsdatei nicht lesbar: {exc.strerror or exc}") from exc
+    except yaml.YAMLError:
+        data = None
+        broken = True
+    else:
+        broken = data is not None and not isinstance(data, dict)
+    if broken:
+        aside = path.with_name(path.name + time.strftime(".defekt-%Y%m%d-%H%M%S"))
+        try:
+            os.replace(path, aside)
+        except OSError as exc:
+            raise ValueError(f"Einstellungsdatei ist beschädigt und ließ sich "
+                             f"nicht sichern: {exc.strerror or exc}") from exc
         return {}
+    return data or {}
+
+
+def _dump_local(stored: dict) -> None:
+    """Schreibt config.local.yaml als Ganzes -- atomar, siehe
+    config.atomic_write_text(). Einzige Stelle, die diese Datei schreibt."""
+    text = _LOCAL_HEADER + yaml.safe_dump(stored, allow_unicode=True, sort_keys=True,
+                                          default_flow_style=False)
+    cfgmod.atomic_write_text(cfgmod.local_config_path(), text)
 
 
 def _write_local(values: dict) -> None:
@@ -989,14 +1167,10 @@ def _write_local(values: dict) -> None:
     Schreibweg fuer die Einstellungen, die nicht ueber GROUPS laufen (Shops,
     Merklisten, Spalten) -- vorher stand dieselbe Lese-Aendere-Schreibe-Folge
     in jeder dieser Funktionen einzeln."""
-    stored = _read_local()
-    stored.update(values)
-    header = ("# Vom Einstellungs-Dialog geschrieben.\n"
-              "# Überschreibt config.yaml. Datei löschen = zurück auf Vorgabe.\n")
-    with open(cfgmod.local_config_path(), "w", encoding="utf-8") as fh:
-        fh.write(header)
-        yaml.safe_dump(stored, fh, allow_unicode=True, sort_keys=True,
-                       default_flow_style=False)
+    with _LOCAL_LOCK:
+        stored = _read_local()
+        stored.update(values)
+        _dump_local(stored)
     cfgmod.reload()
 
 
@@ -1158,88 +1332,208 @@ def validate_column_views(items: list) -> list[dict]:
             "hidden": _clean_keys(raw.get("hidden")),
             "widths": _clean_widths(raw.get("widths")),
         })
-        if len(clean) >= _MAX_COLUMN_VIEWS:
-            break
-    return clean
+        if sum(1 for c in clean if c["id"] not in _FIXED_VIEW_NAMES) >= _MAX_COLUMN_VIEWS:
+            break                         # Deckel nur fuer eigene, die festen zaehlen nicht
+    return _with_fixed_views(clean)
 
 
-_APPLE_MUSIC_VIEW_ID = "cv_apple_music"
-_APPLE_MUSIC_COLUMNS = ["n", "cv", "a", "t"]
-# Rest der OPTIONAL_COLUMNS-Keys aus app.js (Zeile ~215-240), dort
-# massgeblich -- nur zum einmaligen Anlegen der Vorgabe-Ansicht hier
-# dupliziert.
-_APPLE_MUSIC_HIDDEN_COLUMNS = ["v", "co", "kb", "mk", "cf", "st", "lu", "tp", "du",
-                               "rb", "im", "da", "al", "tn", "aa", "cp", "ge", "yr",
-                               "bp", "ky", "cm"]
+# Alle Spalten-Keys in der Reihenfolge von OPTIONAL_COLUMNS in app.js (dort
+# massgeblich) -- nur zum Anlegen der festen Ansichten hier dupliziert, damit
+# 'hidden' = alle minus sichtbare gebildet werden kann. Fehlt hier ein Key,
+# haengt ihn normalizeColumnStore() im Client sichtbar hinten an.
+_ALL_COLUMNS = ["v", "po", "co", "kb", "mk", "cf", "st", "lu", "tp", "du", "rb", "im",
+                "da", "mt", "cv", "al", "tn", "aa", "cp", "ge", "yr", "bp", "ky", "eg", "mm",
+                "cm", "ta", "a", "t", "n", "ti"]
+
+# Feste Spaltenansichten: bearbeitbar, nie loeschbar. Bearbeiten/Player gelten
+# fuer jede Liste ohne (geerbte) Zuordnung im jeweiligen Layout, Pruefliste
+# haengt bei Erststart am Ordner "Pruefliste" (fd:sys_verdicts) und vererbt
+# sich von dort. Der angezeigte Name kommt im Client aus t() (cols.std_*),
+# der hier gespeicherte ist nur ein lesbarer Rueckfall.
+STD_EDIT_VIEW = "cv_std_edit"
+STD_PLAYER_VIEW = "cv_std_player"
+STD_CHECK_VIEW = "cv_std_check"
+# Einzelpruefung: Vorgabe-Ansicht der Drops (column_view_drop leer = diese). Loest
+# die fruehere eigene Spaltenkonfiguration drop_column_* ab (migrate_drop_column_view()).
+STD_DROP_VIEW = "cv_std_drop"
+# Auffaelligkeiten: haengt bei Erststart an der festen Ansicht "tag_issues"
+# (migrate_issues_column_view()).
+STD_ISSUES_VIEW = "cv_std_issues"
+_FIXED_VIEW_NAMES = {STD_EDIT_VIEW: "Bearbeiten",
+                     STD_PLAYER_VIEW: "Player",
+                     STD_CHECK_VIEW: "Prüfliste",
+                     STD_DROP_VIEW: "Einzelprüfung",
+                     STD_ISSUES_VIEW: "Auffälligkeiten"}
+_CHECK_COLUMNS = ["v", "cv", "a", "t", "co", "kb", "mk", "cf", "st", "du", "n"]
+_ISSUES_COLUMNS = ["ti", "cv", "ta"]
 
 
-def ensure_apple_music_column_view() -> None:
-    """Legt einmalig eine Spaltenansicht 'Apple Music' (Datei, Cover,
-    Kuenstler, Titel) an und setzt sie als Standard fuer Music.app-Playlisten
-    (column_view_music_default) -- diese Fremd-Listen bekommen ueber das
-    Sidebar-Menue bewusst keine eigene Zuordnung (siehe app.js), brauchen also
-    einen eigenen Vorgabe-Weg statt der allgemeinen Standard-Spaltenansicht.
-    Greift nur, wenn column_view_music_default noch nie geschrieben wurde --
-    ein bewusst geleerter Wert (Nutzer hat die Einstellung zurueckgesetzt)
-    wird nicht erneut ueberschrieben."""
+def _view_from_visible(ident: str, visible: list[str]) -> dict:
+    """Ansicht aus einer Liste sichtbarer Spalten: sichtbare vorn, alle uebrigen
+    ausgeblendet dahinter."""
+    rest = [k for k in _ALL_COLUMNS if k not in visible]
+    return {"id": ident, "name": _FIXED_VIEW_NAMES[ident],
+            "order": list(visible) + rest, "hidden": rest, "widths": {}}
+
+
+def _default_fixed_view(ident: str) -> dict:
+    """Vorgabe einer festen Ansicht -- dieselbe wie frueher state.columnsByLayout
+    in app.js (Bearbeiten ohne "Track – Interpret", Player ohne Titel/Interpret/Datei)."""
+    if ident == STD_CHECK_VIEW:
+        return _view_from_visible(ident, _CHECK_COLUMNS)
+    if ident == STD_ISSUES_VIEW:
+        return _view_from_visible(ident, _ISSUES_COLUMNS)
+    if ident == STD_DROP_VIEW:
+        # Wie frueher state.dropColumns in app.js: alles sichtbar ("#" blendet
+        # dropVisibleCols() ohnehin aus, Einzelpruefungen sind keine Playlist).
+        return {"id": ident, "name": _FIXED_VIEW_NAMES[ident],
+                "order": list(_ALL_COLUMNS), "hidden": [], "widths": {}}
+    hidden = ["ta"] if ident == STD_EDIT_VIEW else ["t", "a", "n"]
+    return {"id": ident, "name": _FIXED_VIEW_NAMES[ident],
+            "order": list(_ALL_COLUMNS), "hidden": hidden, "widths": {}}
+
+
+def _with_fixed_views(views: list[dict]) -> list[dict]:
+    """Feste Ansichten vorn einsortieren und fehlende ergaenzen -- ein POST ohne
+    sie (geloescht im Client, alter Stand) darf sie nie entfernen."""
+    by_id = {v["id"]: v for v in views}
+    fixed = []
+    for ident, name in _FIXED_VIEW_NAMES.items():
+        view = dict(by_id.get(ident) or _default_fixed_view(ident))
+        view["name"] = name
+        fixed.append(view)
+    return fixed + [v for v in views if v["id"] not in _FIXED_VIEW_NAMES]
+
+
+def save_column_view(item: dict, create: bool = False) -> dict:
+    """EINE Ansicht speichern (Spalten-Menue, Ziehgriff, Einzelpruefung) statt
+    der ganzen Liste. Eine schon vorhandene Id wird ersetzt, eine unbekannte
+    nur mit 'create' angelegt -- sonst ignoriert. Grund: ein zweites Fenster
+    mit altem Stand schickte vorher bei jeder Spaltenaenderung die komplette
+    Liste und holte damit eine in den Einstellungen geloeschte Ansicht (ohne
+    ihre Zuordnungen) zurueck. Die Antwort traegt immer den ganzen Stand, damit
+    ein solches Fenster sich angleichen kann."""
     stored = _read_local()
-    if "column_view_music_default" in stored:
+    current = validate_column_views(stored.get("column_views") or [])
+    clean = validate_column_views([item])
+    view = next((v for v in clean if v["id"] == str((item or {}).get("id", "")).strip()[:40]), None)
+    if view:
+        ids = [v["id"] for v in current]
+        if view["id"] in ids:
+            current[ids.index(view["id"])] = view
+        elif create:
+            current.append(view)
+        current = validate_column_views(current)
+        _write_local({"column_views": current})
+    stored = _read_local()
+    return {"column_views": current,
+            "column_view_assign": _as_assign_map(stored.get("column_view_assign")),
+            "column_view_drop": str(stored.get("column_view_drop") or ""),
+            "column_view_edit": str(stored.get("column_view_edit") or ""),
+            "column_view_player": str(stored.get("column_view_player") or "")}
+
+
+def migrate_drop_column_view() -> None:
+    """Einmalig: feste Ansicht "Einzelpruefung" aus der bisherigen eigenen
+    Spaltenkonfiguration der Drops (drop_column_order/_hidden_columns/_widths).
+
+    Muss VOR migrate_standard_column_views() laufen und schreibt die Liste roh
+    (ohne validate_column_views()): sonst legte _with_fixed_views() hier schon
+    Bearbeiten/Player an, und deren Migration (samt Zuordnung des Pruefliste-
+    Ordners) hielte sich fuer erledigt. column_view_drop bleibt, wie es ist --
+    leer heisst ab jetzt "diese Ansicht"."""
+    stored = _read_local()
+    views = [v for v in stored.get("column_views") or [] if isinstance(v, dict)]
+    if any(v.get("id") == STD_DROP_VIEW for v in views):
         return
-    views = list(cfgmod.load().get("column_views", []))
-    if not any(v.get("id") == _APPLE_MUSIC_VIEW_ID for v in views):
-        views.append({
-            "id": _APPLE_MUSIC_VIEW_ID, "name": "Apple Music",
-            "order": _APPLE_MUSIC_COLUMNS + _APPLE_MUSIC_HIDDEN_COLUMNS,
-            "hidden": list(_APPLE_MUSIC_HIDDEN_COLUMNS), "widths": {},
-        })
-    clean = validate_column_views(views)
-    _write_local({"column_views": clean, "column_view_music_default": _APPLE_MUSIC_VIEW_ID})
+    view = _default_fixed_view(STD_DROP_VIEW)
+    order = _clean_keys(stored.get("drop_column_order"))
+    if order:
+        view["order"] = order
+        view["hidden"] = _clean_keys(stored.get("drop_hidden_columns"))
+    view["widths"] = _clean_widths(stored.get("drop_column_widths"))
+    _write_local({"column_views": views + [view]})
 
 
-def save_column_views(items: list, default_id: str | None = None,
-                       music_default_id: str | None = None,
-                       drop_view_id: str | None = None) -> dict:
-    """Schreibt die Spaltenansichten nach config.local.yaml, zusammen mit der
-    Standard-Spaltenansicht (welche Ansicht jede Liste ohne eigene Zuordnung
-    bekommt). Zuordnungen auf eine inzwischen geloeschte Ansicht fallen dabei
-    weg -- sonst zeigte eine Liste dauerhaft auf etwas, das es nicht mehr
-    gibt, und laege stumm wieder auf den Standard-Spalten.
+def migrate_issues_column_view() -> None:
+    """Einmalig: feste Ansicht "Auffaelligkeiten" anlegen und der festen Ansicht
+    tag_issues zuweisen (nur, wenn dort noch nichts steht). Laeuft wie
+    migrate_drop_column_view() VOR migrate_standard_column_views() und schreibt
+    roh, aus demselben Grund (siehe dort)."""
+    stored = _read_local()
+    views = [v for v in stored.get("column_views") or [] if isinstance(v, dict)]
+    if any(v.get("id") == STD_ISSUES_VIEW for v in views):
+        return
+    assign = _as_assign_map(stored.get("column_view_assign"))
+    assign.setdefault("tag_issues", STD_ISSUES_VIEW)
+    _write_local({"column_views": views + [_default_fixed_view(STD_ISSUES_VIEW)],
+                  "column_view_assign": assign})
 
-    'default_id' None laesst die bisherige Standardansicht stehen (nur die
-    Pruefung gegen die geloeschten Ansichten laeuft trotzdem) -- der
-    Spalten-Menue-Weg schickt sie nicht mit, der Einstellungs-Dialog schon.
-    'music_default_id' ist das Gegenstueck fuer Apple-Music-Playlisten
-    (column_view_music_default, siehe ensure_apple_music_column_view()),
-    gleiche None-laesst-stehen-Logik."""
+
+def migrate_standard_column_views() -> None:
+    """Einmalig: feste Ansichten anlegen (Merker = cv_std_edit vorhanden).
+
+    Bearbeiten/Player uebernehmen die bisherigen unbenannten Standard-Spalten
+    (column_order/hidden_columns/column_widths je Layout), sonst sahe jede Liste
+    ohne Zuordnung nach dem Update anders aus. Pruefliste kommt mit Vorgabe-
+    Spalten dazu und wird dem Ordner "Pruefliste" zugewiesen. Eine fruehere
+    Vorgabe fuer Apple-Music-Playlisten (column_view_music_default) wird zur
+    Zuordnung der Music-Wurzel -- die Einstellung selbst gibt es nicht mehr,
+    die Wurzel vererbt dasselbe."""
+    stored = _read_local()
+    views = [v for v in stored.get("column_views") or [] if isinstance(v, dict)]
+    if any(v.get("id") == STD_EDIT_VIEW for v in views):
+        return
+    order = _as_layout_map(stored.get("column_order"))
+    hidden = _as_layout_map(stored.get("hidden_columns"))
+    widths = _as_width_map(stored.get("column_widths"))
+    fixed = []
+    for layout, ident in (("edit", STD_EDIT_VIEW), ("player", STD_PLAYER_VIEW)):
+        view = _default_fixed_view(ident)
+        if order.get(layout):
+            view["order"] = _clean_keys(order[layout])
+            view["hidden"] = _clean_keys(hidden.get(layout))
+        view["widths"] = _clean_widths(widths.get(layout))
+        fixed.append(view)
+    fixed.append(_default_fixed_view(STD_CHECK_VIEW))
+    assign = _as_assign_map(stored.get("column_view_assign"))
+    assign.setdefault("fd:sys_verdicts", STD_CHECK_VIEW)
+    music = str(stored.get("column_view_music_default") or "").strip()
+    if music and any(v.get("id") == music for v in views):
+        assign.setdefault("root:music", music)
+    clean = validate_column_views(fixed + views)
+    _write_local({"column_views": clean, "column_view_assign": assign,
+                  "column_view_music_default": ""})
+
+
+def save_column_views(items: list, drop_view_id: str | None = None,
+                      edit_view_id: str | None = None,
+                      player_view_id: str | None = None) -> dict:
+    """Schreibt die Spaltenansichten nach config.local.yaml. Zuordnungen auf
+    eine inzwischen geloeschte Ansicht fallen dabei weg -- die Liste (bzw. der
+    Ordner) erbt danach wieder von oben, statt stumm auf etwas zu zeigen, das
+    es nicht mehr gibt. Die festen Ansichten setzt validate_column_views()
+    immer wieder ein.
+
+    'drop_view_id' (Spaltenansicht der Einzelpruefung), 'edit_view_id'/
+    'player_view_id' (Standard je Layout, leer = feste Ansicht des Layouts):
+    None laesst den Wert stehen (Spalten-Menue), mitgeschickt = setzen
+    (Einstellungs-Dialog). Eine unbekannte Id wird geleert."""
     clean = validate_column_views(items)
     known = {v["id"] for v in clean}
     stored = _read_local()
     assign = {view: target for view, target
               in _as_assign_map(stored.get("column_view_assign")).items()
               if target in known}
-    if default_id is None:
-        default_id = str(stored.get("column_view_default") or "")
-    default_id = str(default_id).strip()
-    if default_id and default_id not in known:
-        default_id = ""
-    if music_default_id is None:
-        music_default_id = str(stored.get("column_view_music_default") or "")
-    music_default_id = str(music_default_id).strip()
-    if music_default_id and music_default_id not in known:
-        music_default_id = ""
-    if drop_view_id is None:
-        drop_view_id = str(stored.get("column_view_drop") or "")
-    drop_view_id = str(drop_view_id).strip()
-    if drop_view_id and drop_view_id not in known:
-        drop_view_id = ""
-    _write_local({"column_views": clean, "column_view_assign": assign,
-                  "column_view_default": default_id,
-                  "column_view_music_default": music_default_id,
-                  "column_view_drop": drop_view_id})
-    return {"column_views": clean, "column_view_assign": assign,
-            "column_view_default": default_id,
-            "column_view_music_default": music_default_id,
-            "column_view_drop": drop_view_id}
+    picked = {}
+    for key, value in (("column_view_drop", drop_view_id), ("column_view_edit", edit_view_id),
+                       ("column_view_player", player_view_id)):
+        if value is None:
+            value = str(stored.get(key) or "")
+        value = str(value).strip()
+        picked[key] = value if value in known else ""
+    _write_local({"column_views": clean, "column_view_assign": assign, **picked})
+    return {"column_views": clean, "column_view_assign": assign, **picked}
 
 
 def migrate_column_view_default() -> None:
@@ -1270,6 +1564,37 @@ def migrate_column_view_default() -> None:
                        "column_widths": column_widths})
     _write_local(values)
     cfgmod.reload()
+
+
+def migrate_status_column() -> None:
+    """Einmalig: Status (v) in allen gespeicherten Spaltenreihenfolgen nach vorn.
+
+    Frueher stand die Status-Spalte fest direkt nach der Auswahl-Checkbox, ihr
+    Eintrag in 'order' wurde nicht ausgewertet (und lag oft irgendwo hinten).
+    Seit sie wie jede andere Spalte verschoben werden kann, gilt dieser Eintrag
+    -- ohne Umzug sprang die Spalte nach dem Update an eine zufaellige Stelle.
+    Vorne einsortiert sieht jede Ansicht aus wie vorher. Merker
+    'status_column_movable' in config.local.yaml, damit spaeteres Verschieben
+    durch den Nutzer nicht wieder zurueckgesetzt wird."""
+    stored = _read_local()
+    if stored.get("status_column_movable"):
+        return
+
+    def front(order) -> list:
+        keys = _clean_keys(order)
+        return ["v", *[k for k in keys if k != "v"]] if keys else keys
+
+    values: dict = {"status_column_movable": True}
+    if "column_order" in stored:
+        column_order = _as_layout_map(stored.get("column_order"))
+        values["column_order"] = {lay: front(keys) for lay, keys in column_order.items()}
+    if isinstance(stored.get("column_views"), list):
+        values["column_views"] = [
+            {**v, "order": front(v.get("order"))} if isinstance(v, dict) else v
+            for v in stored["column_views"]]
+    if "drop_column_order" in stored:
+        values["drop_column_order"] = front(stored.get("drop_column_order"))
+    _write_local(values)
 
 
 def save_column_assign(view_id: str, column_view_id: str) -> dict:
@@ -1338,6 +1663,7 @@ def save_shops(items: list) -> list[dict]:
     return clean
 
 
+@_locked
 def reset(group_id: str | None = None) -> dict:
     """Eine Gruppe (oder alles) auf die Vorgabe zuruecksetzen."""
     path = cfgmod.local_config_path()
@@ -1350,15 +1676,10 @@ def reset(group_id: str | None = None) -> dict:
     group = next((g for g in GROUPS if g["id"] == group_id), None)
     if group is None and group_id != "shops":
         raise ValueError("Unbekannte Gruppe")
-    try:
-        with open(path, "r", encoding="utf-8") as fh:
-            stored = yaml.safe_load(fh) or {}
-    except (OSError, yaml.YAMLError):
-        stored = {}
+    stored = _read_local()
     if group_id == "shops":
         stored.pop("shops", None)
-        with open(path, "w", encoding="utf-8") as fh:
-            yaml.safe_dump(stored, fh, allow_unicode=True, sort_keys=True)
+        _dump_local(stored)
         return cfgmod.reload()
     stored_ladders = stored.get("cutoff_classes")
     if isinstance(stored_ladders, list):
@@ -1371,6 +1692,5 @@ def reset(group_id: str | None = None) -> dict:
                 stored_ladders.pop(ladder, None)
     if isinstance(stored_ladders, dict) and not stored_ladders:
         stored.pop("cutoff_classes", None)
-    with open(path, "w", encoding="utf-8") as fh:
-        yaml.safe_dump(stored, fh, allow_unicode=True, sort_keys=True)
+    _dump_local(stored)
     return cfgmod.reload()

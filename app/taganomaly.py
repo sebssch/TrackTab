@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import re
+from types import SimpleNamespace
 import unicodedata
 from pathlib import Path
 
@@ -48,6 +49,16 @@ UNRESOLVED_GENRE_CODE = "unresolved_genre_code"
 DUPLICATE_FRAMES = "duplicate_frames"
 NFC_NFD_MISMATCH = "nfc_nfd_mismatch"
 EXT_CODEC_MISMATCH = "ext_codec_mismatch"
+# Titel-/Namens-Bereinigung (Schalter je Regel: tagclean_*/tagwatch_*, siehe _rules())
+WEB_JUNK = "web_junk"
+VIDEO_WORDS = "video_words"
+UNDERSCORE_SPACES = "underscore_spaces"
+TRACKNO_IN_TITLE = "trackno_in_title"
+ARTIST_IN_TITLE = "artist_in_title"
+REMIX_NOTATION = "remix_notation"
+FEAT_NOTATION = "feat_notation"
+CASE_ALL = "case_all"
+TYPO_QUOTES = "typo_quotes"
 
 # Sicher automatisch behebbar (siehe fix_safe()) -- ein einziger
 # write_tags()-Aufruf mit bereinigten Werten erledigt Text-Normalisierung
@@ -56,13 +67,15 @@ EXT_CODEC_MISMATCH = "ext_codec_mismatch"
 # (setall() ersetzt IMMER alle vorhandenen Frames eines Typs).
 AUTO_FIXABLE = {CONTROL_CHARS, LEADING_TRAILING_WS, ID3_V1_ONLY, ID3_V22,
                 UNRESOLVED_GENRE_CODE, DUPLICATE_FRAMES, NFC_NFD_MISMATCH,
-                OVERSIZED_COVER}
+                OVERSIZED_COVER, WEB_JUNK, VIDEO_WORDS, UNDERSCORE_SPACES}
 # Erfordert menschliches Urteilsvermoegen -- nie automatisch schreiben,
 # nur anzeigen (ggf. mit 'suggestion') und in den Tags-Dialog verweisen.
 MANUAL_ONLY = {MOJIBAKE, UNBALANCED_BRACKETS, TAG_EQUALS_FILENAME,
                IMPLAUSIBLE_YEAR, MALFORMED_TRACKNO, MISSING_TITLE,
                MISSING_ARTIST, MISSING_COVER,
-               CORRUPT_COVER, EXT_CODEC_MISMATCH}
+               CORRUPT_COVER, EXT_CODEC_MISMATCH,
+               TRACKNO_IN_TITLE, ARTIST_IN_TITLE, REMIX_NOTATION,
+               FEAT_NOTATION, CASE_ALL, TYPO_QUOTES}
 
 # Zielgroesse fuer uebergrosse eingebettete Cover -- laengere Kante,
 # Seitenverhaeltnis bleibt erhalten.
@@ -131,6 +144,351 @@ _EXPECTED_SUFFIXES = {
     "lossy_aac": {".m4a", ".mp4", ".aac"},
     "lossless": {".flac", ".wav", ".aiff", ".aif", ".m4a", ".mp4"},
 }
+
+
+# ── Titel-/Namens-Bereinigung ────────────────────────────────────────────
+# Vorgabe je Regel (config.yaml/UI ueberschreiben): die drei sicheren laufen
+# als Auto-Fix, der Rest meldet nur (MANUAL_ONLY) und gibt in 'suggestion'
+# den bereinigten Wert an.
+_RULE_DEFAULTS = {
+    "tagclean_web": True, "tagclean_video": True, "tagclean_spaces": True,
+    "tagwatch_trackno": True, "tagwatch_remix": True, "tagwatch_feat": True,
+    "tagwatch_case": False, "tagwatch_quotes": False,
+}
+
+
+def _cfg() -> dict:
+    try:
+        from . import config as cfgmod
+        return cfgmod.load()
+    except Exception:                                  # noqa: BLE001
+        return {}
+
+
+# Regel-Schalter -> Auffaelligkeit, die er steuert (siehe _RULE_DEFAULTS).
+_RULE_CODES = {
+    "tagclean_web": WEB_JUNK, "tagclean_video": VIDEO_WORDS, "tagclean_spaces": UNDERSCORE_SPACES,
+    "tagwatch_trackno": TRACKNO_IN_TITLE, "tagwatch_remix": REMIX_NOTATION,
+    "tagwatch_feat": FEAT_NOTATION, "tagwatch_case": CASE_ALL, "tagwatch_quotes": TYPO_QUOTES,
+}
+
+
+def enabled_issues(issues: list[dict], cfg: dict) -> list[dict]:
+    """Gespeicherte Auffaelligkeiten ohne die Codes, deren Regel in den Einstellungen aus ist.
+    In der DB steht der Stand der letzten Pruefung; wer eine Regel danach abschaltet, soll die
+    Meldung sofort loswerden, ohne neu zu pruefen (Anzeige, nicht Speicherung)."""
+    off = {code for key, code in _RULE_CODES.items()
+           if not bool(cfg.get(key, _RULE_DEFAULTS[key]))}
+    return [i for i in issues if i.get("code") not in off] if off else issues
+
+
+def _rules() -> dict:
+    cfg = _cfg()
+    return {k: bool(cfg.get(k, d)) for k, d in _RULE_DEFAULTS.items()}
+
+
+# Wortlisten und Ziel-Schreibweisen (config.py/Einstellungen). Fehlt ein Wert
+# oder ist er leer/ungueltig, gilt die Vorgabe aus config.defaults().
+_CHOICES = {
+    "tagclean_underscore_single": ("space", "hyphen"),
+    "tagclean_underscore_double": ("dash", "endash", "pipe", "space"),
+    "tagwatch_remix_style": ("round", "square", "dash"),
+    "tagwatch_feat_word": ("feat", "ft", "featuring"),
+    "tagwatch_feat_bracket": ("none", "round", "square"),
+    "tagwatch_case_style": ("title", "sentence", "upper", "lower"),
+    "tagwatch_quotes_style": ("straight", "typographic"),
+}
+_LIST_KEYS = ("tagclean_web_words", "tagclean_web_tlds", "tagclean_video_remove",
+              "tagwatch_remix_words")
+# Duerfen neben einem Listenwort in der Klammer stehen ("Free Download").
+_VIDEO_FILLER = {"free", "music", "out", "now"}
+_UNDERSCORE_SINGLE = {"space": " ", "hyphen": "-"}
+_UNDERSCORE_DOUBLE = {"dash": " - ", "endash": " \u2013 ", "pipe": " | ", "space": " "}
+_FEAT_WORDS = {"feat": "feat.", "ft": "ft.", "featuring": "featuring"}
+_RS_CACHE: list = [None, None]
+
+
+def _alt(words) -> str:
+    """Regex-Alternative aus einer Wortliste (laengste zuerst, Leerzeichen
+    im Wort passen auf beliebig viel Leerraum)."""
+    ws = sorted({str(w).strip().lower() for w in words if str(w).strip()},
+                key=len, reverse=True)
+    return "|".join(re.escape(w).replace(r"\ ", r"\s*") for w in ws)
+
+
+def _ruleset() -> SimpleNamespace:
+    """Aus den Einstellungen gebaute Regexe und Ziel-Schreibweisen. Wird bei
+    unveraenderter Config wiederverwendet (der Aufruf steht je Datei und Feld)."""
+    cfg = _cfg()
+    try:
+        from . import config as cfgmod
+        dflt = cfgmod.defaults()
+    except Exception:                                  # noqa: BLE001
+        dflt = {}
+    vals: dict = {}
+    for k in _LIST_KEYS:
+        v = cfg.get(k)
+        vals[k] = tuple(str(x) for x in v) if isinstance(v, (list, tuple)) and v \
+            else tuple(dflt.get(k, ()))
+    for k, allowed in _CHOICES.items():
+        v = str(cfg.get(k, "")).strip()
+        vals[k] = v if v in allowed else (dflt.get(k) or allowed[0])
+    key = tuple(sorted(vals.items()))
+    if _RS_CACHE[0] == key:
+        return _RS_CACHE[1]
+
+    web_alt = _alt(vals["tagclean_web_words"])
+    promo = (r"\s*[(\[]\s*(?:" + (web_alt + "|" if web_alt else "") +
+             r"downloaded\s+from[^)\]]*|download\s+from[^)\]]*|www[^)\]]*)\s*[)\]]")
+    tlds = "|".join(re.escape(t.strip().lstrip(".").lower())
+                    for t in vals["tagclean_web_tlds"] if t.strip())
+    remix_alt = _alt(vals["tagwatch_remix_words"]) or "remix"
+    inner = r"([^()\[\]]*?\b(?:" + remix_alt + r"))"
+    rs = SimpleNamespace(
+        promo_re=re.compile(promo, re.I),
+        domain_re=(re.compile(r"(?<![\w@])[\w-]+(?:\.[\w-]+)*\.(?:" + tlds + r")(?![\w.])", re.I)
+                   if tlds else None),
+        video_remove={w.strip().lower() for w in vals["tagclean_video_remove"]},
+        us_single=_UNDERSCORE_SINGLE[vals["tagclean_underscore_single"]],
+        us_double=_UNDERSCORE_DOUBLE[vals["tagclean_underscore_double"]],
+        remix_style=vals["tagwatch_remix_style"],
+        remix_round=re.compile(r"\(" + inner + r"\)", re.I),
+        remix_square=re.compile(r"\[" + inner + r"\]", re.I),
+        remix_dash=re.compile(
+            r"\s+[-\u2013]\s+((?:(?!\s[-\u2013]\s)[^()\[\]])*?\b(?:" + remix_alt + r"))\s*$", re.I),
+        remix_trailing=re.compile(r"\s*[(\[]" + inner + r"[)\]]\s*$", re.I),
+        feat_word=_FEAT_WORDS[vals["tagwatch_feat_word"]],
+        feat_bracket=vals["tagwatch_feat_bracket"],
+        case_style=vals["tagwatch_case_style"],
+        quotes_style=vals["tagwatch_quotes_style"],
+    )
+    _RS_CACHE[0], _RS_CACHE[1] = key, rs
+    return rs
+
+
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s)\]>]+", re.I)
+_DOWNLOADED_FROM_RE = re.compile(r"\b(?:downloaded|download)\s+(?:from|at|on)\s+\S+", re.I)
+_BRACKET_RE = re.compile(r"\s*[(\[]([^()\[\]]{1,40})[)\]]")
+_VIDEO_TRAILING_RE = re.compile(
+    r"\s*[-\u2013|]\s*(?:official\s+)?(?:music\s+)?(?:video|audio)\s*$"
+    r"|\s*[-\u2013|]\s*lyrics?(?:\s+video)?\s*$", re.I)
+
+_SEP_TIDY_RE = re.compile(r"^[\s\-\u2013|,;:_]+|[\s\-\u2013|,;:_]+$")
+_EMPTY_BRACKETS_RE = re.compile(r"\s*[(\[]\s*[)\]]")
+_MULTI_SPACE_RE = re.compile(r"[ \t]{2,}")
+
+
+def _tidy(s: str) -> str:
+    s = _EMPTY_BRACKETS_RE.sub("", s)
+    s = _MULTI_SPACE_RE.sub(" ", s)
+    return _SEP_TIDY_RE.sub("", s)
+
+
+def _strip_web(value: str) -> str:
+    rs = _ruleset()
+    v = rs.promo_re.sub("", value)
+    v = _DOWNLOADED_FROM_RE.sub("", v)
+    v = _URL_RE.sub("", v)
+    if rs.domain_re:
+        v = rs.domain_re.sub("", v)
+    return _tidy(v) if v != value else value
+
+
+def _strip_video(value: str) -> str:
+    rs = _ruleset()
+
+    def repl(m: re.Match) -> str:
+        words = re.findall(r"[\w]+", m.group(1).lower())
+        if words and all(w in rs.video_remove or w in _VIDEO_FILLER for w in words) and (
+                any(w in rs.video_remove for w in words) or words == ["out", "now"]):
+            return ""
+        return m.group(0)
+    v = _BRACKET_RE.sub(repl, value)
+    v = _VIDEO_TRAILING_RE.sub("", v)
+    return _tidy(v) if v != value else value
+
+
+_EDGE_UNDERSCORE_RE = re.compile(r"^[\s_]+|[\s_]+$")
+
+
+def _fix_spaces(value: str, field: str) -> str:
+    """Unterstriche ersetzen (einzeln und doppelt getrennt einstellbar),
+    Mehrfach-Leerzeichen zu einem, Rand trimmen. Nicht im Kommentar."""
+    if field == "comment":
+        return value
+    rs = _ruleset()
+    v = _EDGE_UNDERSCORE_RE.sub("", value)
+    v = re.sub(r"_{2,}", rs.us_double, v)
+    v = v.replace("_", rs.us_single)
+    v = _MULTI_SPACE_RE.sub(" ", v)
+    v = v.strip()
+    return v if v != value else value
+
+
+_TRACKNO_TITLE_RE = re.compile(
+    r"^(?:(?:0\d{1,2}|\d{1,3})\s*[-\u2013._)]\s+|0\d{1,2}\s*[-\u2013._)])(?=\S)")
+_FEAT_WORD_RE = re.compile(r"\b(?:ft\.?|featuring|feat\.?)(?=\s)", re.I)
+# Klammerform "(feat. X)" bzw. nackte Form "feat. X" (bis zur naechsten
+# Klammer, einem " - " oder dem Ende); Namen enthalten nie Klammern.
+_FEAT_STRUCT_RE = re.compile(
+    r"[(\[]\s*(?:ft|feat|featuring)\.?\s+([^()\[\]]+?)\s*[)\]]"
+    r"|(?<![(\[\w.])\b(?:ft|feat|featuring)\.?\s+([^()\[\]]+?)(?=\s[(\[]|\s[-\u2013]\s|$)",
+    re.I)
+_TYPO_MAP = str.maketrans({"\u2019": "'", "\u2018": "'", "\u00b4": "'", "`": "'",
+                           "\u201c": '"', "\u201d": '"', "\u201e": '"',
+                           "\u201a": "'", "\u00ab": '"', "\u00bb": '"'})
+_WORD_RE = re.compile(r"[^\W_]+(?:['\u2019][^\W_]+)*")
+
+
+def _trackno_clean(title: str) -> str:
+    return _TRACKNO_TITLE_RE.sub("", title, count=1).strip()
+
+
+def _artist_in_title_clean(artist: str, title: str) -> str | None:
+    a = artist.strip()
+    if len(a) < 2:
+        return None
+    m = re.match(re.escape(a) + r"\s+[-\u2013]\s+(?=\S)", title, re.I)
+    return title[m.end():].strip() if m else None
+
+
+def _remix_clean(title: str) -> str:
+    """Remix-Zusatz in die gewaehlte Schreibweise bringen. Erkannt werden alle
+    drei Formen ((X Remix), [X Remix], - X Remix). Bindestrich nur am Ende."""
+    rs = _ruleset()
+    v = title
+    if rs.remix_style == "dash":
+        return rs.remix_trailing.sub(lambda m: f" - {m.group(1).strip()}", v)
+    o, c = ("(", ")") if rs.remix_style == "round" else ("[", "]")
+    other = rs.remix_square if rs.remix_style == "round" else rs.remix_round
+    v = other.sub(lambda m: f"{o}{m.group(1)}{c}", v)
+    return rs.remix_dash.sub(lambda m: f" {o}{m.group(1)}{c}", v)
+
+
+def _feat_clean(value: str, field: str = "title") -> str:
+    """Featuring in die gewaehlte Schreibweise (Wort + Klammer) bringen.
+    Im Interpretenfeld nie mit Klammer."""
+    rs = _ruleset()
+    word = rs.feat_word
+    bracket = "none" if field == "artist" else rs.feat_bracket
+
+    def render(m: re.Match) -> str:
+        names = (m.group(1) or m.group(2) or "").strip()
+        text = f"{word} {names}"
+        if bracket == "round":
+            return f"({text})"
+        if bracket == "square":
+            return f"[{text}]"
+        return text
+    v = _FEAT_STRUCT_RE.sub(render, value)
+    return _FEAT_WORD_RE.sub(word, v)
+
+
+def _title_case(value: str) -> str:
+    return _WORD_RE.sub(lambda m: m.group(0)[0].upper() + m.group(0)[1:].lower(), value)
+
+
+def _case_clean(value: str, style: str) -> str:
+    if style == "upper":
+        return value.upper()
+    if style == "lower":
+        return value.lower()
+    if style == "sentence":
+        low = value.lower()
+        for i, ch in enumerate(low):
+            if ch.isalpha():
+                return low[:i] + ch.upper() + low[i + 1:]
+        return low
+    return _title_case(value)
+
+
+def _quotes_clean(value: str, style: str) -> str:
+    if style != "typographic":
+        return value.translate(_TYPO_MAP)
+    v = value.translate(str.maketrans({"\u00b4": "\u2019", "`": "\u2019"}))
+    out: list[str] = []
+    for i, ch in enumerate(v):
+        prev = v[i - 1] if i else ""
+        nxt = v[i + 1] if i + 1 < len(v) else ""
+        opening = (not prev) or prev.isspace() or prev in "([{-\u2013/"
+        if ch == '"':
+            out.append("\u201c" if opening else "\u201d")
+        elif ch == "'":
+            if prev.isalnum() and nxt.isalpha():
+                out.append("\u2019")                        # Apostroph: don't
+            else:
+                out.append("\u2018" if opening else "\u2019")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _check_cleanup(artist: str, title: str, fields: dict) -> list[dict]:
+    """Bereinigungs-Regeln ueber die Textfelder. 'fields' = {Feldname: Wert}
+    (nur gesetzte). Jede Regel meldet je Feld einmal, mit dem bereinigten
+    Wert als 'suggestion'. Unabhaengig vom Container, daher von allen drei
+    Detektoren gleich aufgerufen."""
+    rules = _rules()
+    rs = _ruleset()
+    issues: list[dict] = []
+    for field, value in fields.items():
+        if not value:
+            continue
+        # Die Regeln laufen nacheinander auf dem schon bereinigten Wert, so
+        # traegt die LETZTE Meldung je Feld den vollstaendig bereinigten Wert
+        # (Vorschlag im Tags-Dialog); 'value' bleibt der Ausgangswert.
+        cur = value
+
+        def add(code: str, new: str) -> None:
+            nonlocal cur
+            issues.append(_issue(code, field, value, new))
+            cur = new
+
+        if rules["tagclean_web"]:
+            c = _strip_web(cur)
+            if c != cur:
+                add(WEB_JUNK, c)
+        if rules["tagclean_video"] and field != "comment":
+            c = _strip_video(cur)
+            if c != cur:
+                add(VIDEO_WORDS, c)
+        if rules["tagclean_spaces"]:
+            c = _fix_spaces(cur, field)
+            if c != cur and c.strip():
+                add(UNDERSCORE_SPACES, c)
+        if field == "title" and rules["tagwatch_trackno"]:
+            c = _trackno_clean(cur)
+            if c != cur and c:
+                add(TRACKNO_IN_TITLE, c)
+            elif artist:
+                c2 = _artist_in_title_clean(artist, cur)
+                if c2:
+                    add(ARTIST_IN_TITLE, c2)
+        if field == "title" and rules["tagwatch_remix"]:
+            c = _remix_clean(cur)
+            if c != cur:
+                add(REMIX_NOTATION, c)
+        if rules["tagwatch_feat"] and field in ("title", "artist"):
+            c = _feat_clean(cur, field)
+            if c != cur:
+                add(FEAT_NOTATION, c)
+        if (rules["tagwatch_case"] and field in ("title", "album")
+                and " " in cur.strip()):
+            letters = [ch for ch in cur if ch.isalpha()]
+            if len(letters) >= 6:
+                # Titel-/Satzschreibweise: nur komplett grosse/kleine Werte
+                # sind eindeutig falsch. Bei "alles gross/klein" gilt jede
+                # Abweichung vom Ziel.
+                judged = (cur.isupper() or cur.islower()
+                          if rs.case_style in ("title", "sentence") else True)
+                c = _case_clean(cur, rs.case_style)
+                if judged and c != cur:
+                    add(CASE_ALL, c)
+        if rules["tagwatch_quotes"] and field in ("title", "artist", "album"):
+            c = _quotes_clean(cur, rs.quotes_style)
+            if c != cur:
+                add(TYPO_QUOTES, c)
+    return issues
 
 
 def _issue(code: str, field: str = "", value: str | None = None,
@@ -208,6 +566,9 @@ def _detect_id3(path: str, suffix: str) -> list[dict]:
     artist = str(id3.getall("TPE1")[0]) if id3.getall("TPE1") else ""
     issues.extend(_check_required(path, artist, title))
     issues.extend(_check_bracket_balance(title))
+    issues.extend(_check_cleanup(artist, title, {
+        fld: str(id3.getall(fid)[0]) for fid, fld in _FRAME_TO_FIELD.items()
+        if fld != "genre" and id3.getall(fid)}))
 
     apic = id3.getall("APIC")
     issues.extend(_check_cover(apic[0].data if apic else None))
@@ -244,6 +605,9 @@ def _detect_mp4(path: str) -> list[dict]:
     artist = (tags.get("\xa9ART") or [""])[0]
     issues.extend(_check_required(path, str(artist), str(title)))
     issues.extend(_check_bracket_balance(str(title)))
+    issues.extend(_check_cleanup(str(artist), str(title), {
+        fld: str(tags[atom][0]) for atom, fld in _ATOM_TO_FIELD.items()
+        if fld != "genre" and tags.get(atom)}))
 
     covers = tags.get("covr")
     issues.extend(_check_cover(bytes(covers[0]) if covers else None))
@@ -281,6 +645,9 @@ def _detect_flac(path: str) -> list[dict]:
     artist = (audio.get("artist") or [""])[0]
     issues.extend(_check_required(path, str(artist), str(title)))
     issues.extend(_check_bracket_balance(str(title)))
+    issues.extend(_check_cleanup(str(artist), str(title), {
+        fld: str(audio[vk][0]) for vk, fld in _VC_TO_FIELD.items()
+        if fld != "genre" and audio.get(vk)}))
 
     issues.extend(_check_cover(bytes(audio.pictures[0].data) if audio.pictures else None))
     return issues
@@ -441,6 +808,12 @@ def fix_safe(path: str) -> tuple[list[str], dict]:
                 continue
             cleaned = _CONTROL_CHAR_RE.sub("", current).strip()
             cleaned = unicodedata.normalize("NFC", cleaned)
+            if code == WEB_JUNK:
+                cleaned = _strip_web(cleaned)
+            elif code == VIDEO_WORDS:
+                cleaned = _strip_video(cleaned)
+            elif code == UNDERSCORE_SPACES:
+                cleaned = _fix_spaces(cleaned, field)
             fields[field] = cleaned
             fixed_codes.add(code)
         elif code == DUPLICATE_FRAMES and field:

@@ -5,7 +5,9 @@
 # Die mitgelieferten Programme/Bibliotheken in vendor/ (FFmpeg, x264, x265,
 # LAME, mpg123) stehen unter GPL bzw. LGPL. Wer sie weitergibt, muss den
 # Quellcode GENAU dieser Versionen bereitstellen (siehe THIRD_PARTY_LICENSES.md).
-# Das gilt auch fuer mutagen (GPL), das als Python-Paket in der App steckt.
+# Das gilt auch fuer mutagen (GPL), das als Python-Paket in der App steckt, und
+# fuer das Phrasenmodell aus GlideMix (GPL, vendor/models/phrases/phrases.onnx):
+# steckt es im Build, gehoert das GlideMix-Quellarchiv dazu (samt Trainingsskript).
 # Dieses Skript laedt die Quell-Archive nach dist/sources/ und packt sie samt
 # Lizenztexten in dist/TrackTab-<Version>-third-party-sources.zip -- diese eine
 # Datei gehoert an dasselbe GitHub-Release wie die .dmg.
@@ -29,6 +31,8 @@ LAME_VERSION="4.0"
 MPG123_VERSION="1.33.7"
 # Aus dem .venv, damit es immer die gebuendelte Version ist.
 MUTAGEN_VERSION=$(./.venv/bin/python -c "import importlib.metadata as m; print(m.version('mutagen'))")
+# Einzige Quelle der GlideMix-Version ist fetch_models.sh (dort haengt auch die Pruefsumme).
+GLIDEMIX_VERSION=$(sed -n 's/^GLIDEMIX_VERSION="\(.*\)"$/\1/p' fetch_models.sh)
 TRACKTAB_VERSION=$(./.venv/bin/python -c "from app import __version__; print(__version__)")
 
 DEST="dist/sources"
@@ -43,6 +47,16 @@ SOURCES=(
   "mpg123-${MPG123_VERSION}.tar.bz2|https://www.mpg123.de/download/mpg123-${MPG123_VERSION}.tar.bz2"
   "mutagen-${MUTAGEN_VERSION}.tar.gz|https://files.pythonhosted.org/packages/source/m/mutagen/mutagen-${MUTAGEN_VERSION}.tar.gz"
 )
+
+# GlideMix nur, wenn das Phrasenmodell wirklich mit ausgeliefert wird.
+if [ -s vendor/models/phrases/phrases.onnx ]; then
+  if [ -z "$GLIDEMIX_VERSION" ]; then
+    echo "FEHLER: GLIDEMIX_VERSION nicht in fetch_models.sh gefunden."; exit 1
+  fi
+  SOURCES+=("GlideMix-${GLIDEMIX_VERSION}-source.tar.xz|https://github.com/cristitm76/glidemix-releases/releases/download/v${GLIDEMIX_VERSION}/GlideMix-${GLIDEMIX_VERSION}-source.tar.xz")
+else
+  echo "Hinweis: kein Phrasenmodell in vendor/ — GlideMix-Quellcode wird nicht beigelegt."
+fi
 
 for entry in "${SOURCES[@]}"; do
   name="${entry%%|*}"
@@ -71,6 +85,12 @@ done
   echo "Mitgelieferte Bibliotheken (vendor/libs):"
   ls -1 vendor/libs 2>/dev/null | sed 's/^/  /'
   echo
+  if [ -s vendor/models/phrases/phrases.onnx ]; then
+    echo "Phrasenmodell (vendor/models/phrases/phrases.onnx) aus GlideMix ${GLIDEMIX_VERSION}:"
+    echo "  SHA-256 $(shasum -a 256 vendor/models/phrases/phrases.onnx | cut -d' ' -f1)"
+    echo "  im Quellarchiv: src/mixhouse/models/glidemix_phrases.onnx, Training: tools/trainer/"
+    echo
+  fi
   echo "Lizenzen: siehe LICENSE, NOTICE.md und THIRD_PARTY_LICENSES.md."
 } > "$DEST/BUILD-INFO.txt"
 cp LICENSE NOTICE.md THIRD_PARTY_LICENSES.md "$DEST/"

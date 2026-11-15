@@ -7,3 +7,4 @@ Lizenztexte der Drittanbieter-Software, die TrackTab nutzt oder mitliefert. Uebe
 - `ffmpeg-libs/` — FFmpeg und seine Bibliotheken in `vendor/libs`
 - `native/` — weitere native Bibliotheken (libomp fuer das Auto-Cue-Training)
 - `ui/` — Bestandteile der Oberflaeche (von Hand gepflegt)
+- `other/` — Texte, die kein Paket mitbringt (von Hand gepflegt): SQLCipher (in sqlcipher3-wheels eingebettet), flatbuffers

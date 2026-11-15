@@ -42,6 +42,14 @@ _COVER_MIMES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp",
                           "image/avif", "image/bmp"})
 
 
+_COVER_HOPS = 3        # Umleitungen, denen fetch_cover() hoechstens folgt
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):    # Weiterleitungen pruefen wir selbst
+        return None
+
+
 def _is_public_host(host: str) -> bool:
     """
     Zeigt der Name auf eine oeffentlich erreichbare Adresse?
@@ -94,32 +102,39 @@ def fetch_cover(url: str) -> tuple[bytes, str] | None:
     auch file:/ftp:/... oeffnen (lokale Dateien lesbar machen). Aus demselben
     Grund muss das Ziel oeffentlich erreichbar sein (_is_public_host), die
     Antwort ein Bild und ihre Groesse begrenzt."""
-    parts = urllib.parse.urlsplit(url)
-    if parts.scheme not in ("http", "https"):
-        return None
-    try:
-        if not _is_public_host(parts.hostname or ""):
+    # Umleitungen selbst verfolgen statt urlopen() folgen zu lassen: sonst
+    # ist die Anfrage an das Umleitungsziel schon unterwegs, bevor es
+    # geprueft werden kann -- eine oeffentliche Adresse koennte so einen
+    # Abruf ins lokale Netz ausloesen (Router, Dienste auf localhost), auch
+    # wenn dessen Antwort danach verworfen wird.
+    opener = urllib.request.build_opener(_NoRedirect)
+    for _ in range(_COVER_HOPS + 1):
+        parts = urllib.parse.urlsplit(url)
+        if parts.scheme not in ("http", "https"):
             return None
-    except ValueError:
-        return None
-    req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
-    try:
-        with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
-            # urlopen folgt Umleitungen selbst -- die koennen wieder im
-            # lokalen Netz landen, also das tatsaechliche Ziel pruefen.
-            final = urllib.parse.urlsplit(resp.geturl())
-            if final.scheme not in ("http", "https") \
-                    or not _is_public_host(final.hostname or ""):
+        try:
+            if not _is_public_host(parts.hostname or ""):
                 return None
-            mime = (resp.headers.get_content_type() or "").strip().lower()
-            if mime not in _COVER_MIMES:
+        except ValueError:
+            return None
+        req = urllib.request.Request(url, headers={"User-Agent": _USER_AGENT})
+        try:
+            with opener.open(req, timeout=_TIMEOUT_S) as resp:
+                mime = (resp.headers.get_content_type() or "").strip().lower()
+                if mime not in _COVER_MIMES:
+                    return None
+                data = resp.read(_MAX_COVER_BYTES + 1)
+                if len(data) > _MAX_COVER_BYTES:
+                    return None
+                return data, mime
+        except urllib.error.HTTPError as exc:
+            loc = exc.headers.get("Location") if exc.code in (301, 302, 303, 307, 308) else None
+            if not loc:
                 return None
-            data = resp.read(_MAX_COVER_BYTES + 1)
-            if len(data) > _MAX_COVER_BYTES:
-                return None
-            return data, mime
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
-        return None
+            url = urllib.parse.urljoin(url, loc)
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            return None
+    return None
 
 
 def search_itunes(artist: str, title: str, query: str = "") -> list[dict]:
@@ -339,11 +354,6 @@ def search(artist: str, title: str, query: str = "") -> list[dict]:
 _FAVICON_MAX = 200 * 1024
 _favicon_failed: dict[str, float] = {}      # Host -> Zeitpunkt des Fehlschlags
 _FAVICON_RETRY_S = 6 * 3600
-
-
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *a, **k):    # Weiterleitungen pruefen wir selbst
-        return None
 
 
 def _favicon_mime(data: bytes) -> str:

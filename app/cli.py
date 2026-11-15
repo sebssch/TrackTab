@@ -126,6 +126,13 @@ def cmd_scan(args) -> int:
     if result["removed"]:
         console.print(f"[dim]{result['removed']} verschwundene Dateien "
                       f"aus der DB entfernt[/dim]")
+    if result.get("replaced"):
+        console.print(f"[dim]{result['replaced']} ersetzte Dateien erkannt, "
+                      f"deren Messungen verworfen[/dim]")
+    if result.get("prune_kept"):
+        console.print(f"[yellow]{result['prune_kept']} fehlende Dateien nicht "
+                      f"aufgeräumt[/yellow] [dim](Bibliotheksordner nicht "
+                      f"erreichbar oder ungewöhnlich viele)[/dim]")
     if result.get("covers_filled"):
         console.print(f"[dim]{result['covers_filled']} Cover automatisch "
                       f"aus Music.app ergänzt[/dim]")
@@ -310,7 +317,7 @@ def cmd_report(args) -> int:
     if db_mod.summary(conn)["total"] == 0:
         console.print("[red]Datenbank ist leer.[/red] Zuerst 'scan' ausführen.")
         return 1
-    paths = report_mod.build_all(conn, cfg)
+    paths = report_mod.build_all(conn, cfg, exports=True)
     console.print("[bold green]Report erzeugt:[/bold green]")
     for label, path in paths.items():
         console.print(f"  {label:<6} {path}")

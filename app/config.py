@@ -18,6 +18,8 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import threading
+from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path
 
@@ -139,6 +141,50 @@ def local_config_path() -> Path:
     return base_dir() / "config.local.yaml"
 
 
+@contextmanager
+def atomic_open(path, encoding: str = "utf-8", newline: str | None = None,
+                fsync: bool = True):
+    """Wie open(pfad, "w"), aber die Datei erscheint erst als Ganzes.
+
+    Verlaesst der with-Block mit einer Ausnahme, bleibt die bisherige Datei
+    unveraendert stehen.
+
+    Schreibt eine Datei so, dass nie ein halber Stand liegen bleibt.
+
+    Erst in eine Nachbardatei, dann per os.replace() an die Stelle der alten
+    -- der Tausch ist auf demselben Dateisystem ein einziger Schritt. Ein
+    direktes open(pfad, "w") leert die Datei dagegen sofort; bricht der
+    Prozess danach ab (Absturz, Sofort beenden, Stromausfall), bleibt sie
+    leer oder halb geschrieben zurueck. Bei config.local.yaml hiess das: alle
+    Einstellungen, Spaltenansichten und Merklisten weg.
+
+    fsync=False fuer grosse, jederzeit neu erzeugbare Dateien (der gebackene
+    Report): dort zaehlt nur, dass kein Leser einen halben Stand sieht.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.{os.getpid()}-{threading.get_ident()}.tmp")
+    try:
+        with open(tmp, "w", encoding=encoding, newline=newline) as fh:
+            yield fh
+            if fsync:
+                fh.flush()
+                os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def atomic_write_text(path, text: str, encoding: str = "utf-8",
+                      fsync: bool = True) -> None:
+    """Ganzen Text atomar schreiben, siehe atomic_open()."""
+    with atomic_open(path, encoding=encoding, fsync=fsync) as fh:
+        fh.write(text)
+
+
 def resolve(path_value: str) -> Path:
     """Relative Pfade beziehen sich auf base_dir(), ~ wird expandiert."""
     p = Path(os.path.expanduser(str(path_value)))
@@ -184,6 +230,39 @@ def defaults() -> dict:
         # verlustfreien Formaten also z.B. {bitrate}. Umbenannt werden nur
         # Dateien AUSSERHALB der library_paths oben.
         "rename_pattern": "{artist}_{title}_{bpm}_{key}_{bitrate}_{year}",
+        # Titel-Bereinigung (Auffaelligkeiten, app/taganomaly.py): die drei
+        # tagclean_* sind sicher automatisch behebbar, tagwatch_* melden nur.
+        "tagclean_web": True,
+        "tagclean_video": True,
+        "tagclean_spaces": True,
+        "tagwatch_trackno": True,
+        "tagwatch_remix": True,
+        "tagwatch_feat": True,
+        "tagwatch_case": False,
+        "tagwatch_quotes": False,
+        # Wortlisten und Ziel-Schreibweisen der Titel-Bereinigung.
+        "tagclean_web_words": ["promo", "promo only", "free dl", "beatport",
+                                "traxsource", "junodownload", "juno download",
+                                "bandcamp", "soundcloud", "zippyshare"],
+        "tagclean_web_tlds": ["com", "net", "org", "info", "biz", "ru", "ws",
+                               "cc", "to", "tv", "fm", "me", "us", "de", "eu",
+                               "io", "xyz", "club", "top", "site", "co.uk",
+                               "pw", "sx", "ac", "nu", "vc"],
+        # Woerter, die eine Klammer als Video-Zusatz kennzeichnen. Fuellwoerter
+        # (free, music, out, now) duerfen daneben stehen, genuegen allein aber nicht.
+        "tagclean_video_remove": ["video", "audio", "lyric", "lyrics", "hd",
+                                   "hq", "4k", "1080p", "720p", "download",
+                                   "dl", "visualizer", "visualiser", "official",
+                                   "clip", "premiere"],
+        "tagclean_underscore_single": "space",   # space | hyphen
+        "tagclean_underscore_double": "dash",    # dash | endash | pipe | space
+        "tagwatch_remix_words": ["remix", "mix", "edit", "bootleg", "rework",
+                                  "vip", "dub", "version"],
+        "tagwatch_remix_style": "round",         # round | square | dash
+        "tagwatch_feat_word": "feat",            # feat | ft | featuring
+        "tagwatch_feat_bracket": "none",         # none | round | square
+        "tagwatch_case_style": "title",          # title | sentence | upper | lower
+        "tagwatch_quotes_style": "straight",     # straight | typographic
 
         "max_analysis_s": 420,
         "skip_head_pct": 0.03,
@@ -271,10 +350,13 @@ def defaults() -> dict:
         "stats_path": "data/stats.json",
         "spectrum_points": 160,
 
-        # Automatisches Backup: hoechstens eins pro Kalendertag (siehe
-        # backup.py), die aeltesten werden ueber backup_keep hinaus geloescht.
+        # Automatisches Backup (siehe backup.py): es bleiben die juengsten
+        # backup_keep und zusaetzlich je das letzte Backup der juengsten
+        # backup_keep_days Tage mit Backup -- sonst belegten mehrere Sitzungen
+        # am selben Tag alle Plaetze und es gaebe keinen aelteren Stand mehr.
         "backup_path": "backup",
         "backup_keep": 10,
+        "backup_keep_days": 7,
 
         # Taegliches Aenderungsprotokoll (siehe audit_log.py) -- eine Datei
         # pro Kalendertag (JSON Lines), wird nicht automatisch geloescht.
@@ -313,6 +395,7 @@ def defaults() -> dict:
         "dj_waveform_source": "fallback",
         "dj_waveform_style": "rgb",
         "dj_waveform_surface": "dark",
+        "dj_metronome_sound": "beep",
         # Beim Hinzufuegen zu einer Rekordbox-Playlist erkannte Stimmungen
         # und eigene Tags als Rekordbox-"My Tag" setzen -- in der My-Tag-
         # Spalte rekordbox_mytag_category (muss in Rekordbox existieren,
@@ -361,6 +444,9 @@ def defaults() -> dict:
         # Reihenfolge der ausblendbaren Tabellenspalten (Web-UI, per Drag
         # sortierbar), je Ansicht (Bearbeiten/Player, siehe Layout-Umschalter)
         # getrennt. Leer = Vorgabe-Reihenfolge aus OPTIONAL_COLUMNS in app.js.
+        # Seit den festen Spaltenansichten (cv_std_edit/cv_std_player, siehe
+        # settings.migrate_standard_column_views()) nur noch Quelle der
+        # einmaligen Uebernahme und Rueckfall des Clients ohne Server.
         "column_order": {"edit": [], "player": []},
 
         # Ausgeblendete Tabellenspalten (Web-UI, Spalten-Menue), ebenfalls je
@@ -397,23 +483,32 @@ def defaults() -> dict:
         # (column_order/hidden_columns/column_widths["edit"]) und leert ihn.
         "column_view_default": "",
 
-        # Fallback speziell fuer Apple-Music-Playlisten (view_id "mu:<id>"):
-        # diese Fremd-Listen bekommen ueber das Sidebar-Menue bewusst keine
-        # eigene Zuordnung (siehe app.js), werden also vor den Standard-
-        # Spalten der Ansicht gegen diesen Wert aufgeloest. Leer = Standard.
+        # Frueher: Spaltenansicht fuer alle Apple-Music-Playlisten. Wird nicht
+        # mehr gesetzt -- settings.migrate_standard_column_views() macht daraus
+        # einmalig eine Zuordnung der Music-Wurzel (root:music), die sich wie
+        # jede Ordner-Zuordnung nach unten vererbt.
         "column_view_music_default": "",
 
+        # Standard-Spaltenansicht je Layout (Id aus column_views): gilt fuer jede
+        # Liste ohne (geerbte) Zuordnung. Leer = die feste Ansicht des Layouts
+        # (cv_std_edit/cv_std_player, siehe settings.STD_*_VIEW).
+        "column_view_edit": "",
+        "column_view_player": "",
+
         # Spaltenansicht der Einzelpruefungen (Id aus column_views). Leer = die
-        # eigene, unabhaengige Spaltenkonfiguration (drop_column_*). Gesetzt =
-        # die Einzelpruefung nutzt Reihenfolge/Sichtbarkeit/Breiten dieser
-        # Ansicht, jede Anpassung dort aendert die Ansicht selbst.
+        # feste Ansicht "Einzelpruefung" (cv_std_drop, settings.STD_DROP_VIEW).
+        # Jede Anpassung im Spalten-Menue der Einzelpruefung aendert die
+        # gewaehlte Ansicht selbst. drop_column_* weiter unten sind nur noch
+        # Quelle der einmaligen Uebernahme und Rueckfall ohne Server.
         "column_view_drop": "",
 
-        # Welche Spaltenansicht welche Liste bekommt: {view_id: column_view_id}.
-        # 'view_id' ist die Kennung aus VIEWS in app.js ("all", "ignored",
-        # "pl:<id>", "sm:<id>", "fl:list1", ...). Nicht eingetragene Listen
-        # nehmen die Standard-Spalten (column_order/hidden_columns/
-        # column_widths der aktiven Ansicht).
+        # Welche Spaltenansicht welche Liste bzw. welcher Ordner bekommt:
+        # {schluessel: column_view_id}. Listen: Kennung aus VIEWS in app.js
+        # ("all", "pl:<id>", "sm:<id>", "mu:<id>", "rb:<id>", ...), Ordner:
+        # "fd:<id>" bzw. "mu:<id>"/"rb:<id>", Wurzeln: "root:tracktab",
+        # "root:music", "root:rekordbox". Eine Zuordnung vererbt sich nach
+        # unten (resolveColumnView() in app.js); ohne Treffer gilt die feste
+        # Ansicht des Layouts (cv_std_edit/cv_std_player, settings.py).
         "column_view_assign": {},
 
         # Spaltenkonfiguration der Einzelprueflungen (Web-UI, eigener

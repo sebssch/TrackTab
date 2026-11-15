@@ -1,2 +1,0 @@
-flatbuffers 25.12.19
-Lizenz laut Paket-Metadaten: Apache 2.0

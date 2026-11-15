@@ -8,6 +8,11 @@ unveraendert. Die Filter laufen als FFT-Faltung statt je Sample in Python, das E
 weicht nur um die abgeschnittene Impulsantwort ab. Empirische Naeherung, nicht Rekordbox'
 eigene Rechnung: PWV4-PWV7 ersetzt Rekordbox beim ersten Laden selbst, Grid, PSSI, PWV3,
 PWAV und PWV2 bleiben byteweise stehen (an AIF, FLAC, M4A, WAV und MP3 geprueft).
+
+Original: Copyright der rbxport-Autoren, GPL-2.0-oder-spaeter. Diese Datei ist eine
+veraenderte Fassung (2026, Sebastian Gabler: Uebertragung nach Python, FFT-Faltung) und
+wird nach der "oder spaeter"-Klausel unter GPL-3.0-oder-spaeter weitergegeben (LICENSE,
+NOTICE.md, THIRD_PARTY_LICENSES.md).
 """
 from __future__ import annotations
 

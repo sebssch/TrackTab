@@ -133,17 +133,15 @@
       <span class="plhead-count" id="plHeadCount"></span>
       <span class="plhead-link" id="plHeadLink" hidden></span>
       <span class="plhead-actions">
-        <button type="button" class="act small" id="plHeadMergeToggle" hidden
-                data-i18n-title="genres.merge_toggle_title" title="Zusammenführungs-Vorschläge">
-          <span class="btnicon" id="plHeadMergeToggleIcon"></span>
-          <span data-i18n="genres.merge_toggle_label">Vorschläge</span>
-        </button>
+        <!-- A-Z | Vorschlaege bei Genre/Album/Kuenstler, renderPlaylistHeaderValueBox() -->
+        <span class="layoutswitch duptabs valuemode" id="plHeadValueMode" hidden></span>
         <button class="act small" id="plUndo" data-i18n-title="undo.undo" title="Rückgängig">↩</button>
         <button class="act small" id="plRedo" data-i18n-title="undo.redo" title="Wiederherstellen">↪</button>
       </span>
     </div>
     <div id="plHeadBubblesRow" class="chipsrow genrebox-bubbles" hidden></div>
     <div id="plHeadIssueBubblesRow" class="chipsrow genrebox-bubbles" hidden></div>
+    <div id="plHeadDupTabsRow" class="chipsrow duptabsrow" hidden></div>
     <div id="plHeadTagBubblesRow" class="chipsrow genrebox-bubbles" hidden></div>
     <button type="button" class="genrebox-expandlink" id="plHeadBubblesExpand" hidden>
       <span class="btnicon" id="plHeadBubblesExpandIcon"></span>
@@ -196,7 +194,7 @@
     <table class="trk">
       <thead><tr>
         <th class="sel" style="width:54px"><input type="checkbox" id="selAll" data-i18n-title="table.select_all_title" title="Alle angezeigten auswählen"></th>
-        <th data-k="v" style="width:90px" data-i18n="col.status">Status</th>
+        <th class="dupcol" style="width:84px;display:none" data-i18n="dup.keep">Behalten</th>
         <th id="colsAnchor" style="display:none"></th>
         <th class="filler"></th>
         <th class="links" style="width:220px" data-i18n="col.open">Öffnen</th>
@@ -576,9 +574,15 @@
       <div><b>FFmpeg / ffprobe</b> — Dekodieren, Encodieren · GPL-3.0-oder-später (mitgelieferter Build mit x264/x265; Quellcode siehe THIRD_PARTY_LICENSES.md) · <a href="https://ffmpeg.org/legal.html" target="_blank" rel="noopener">ffmpeg.org</a></div>
       <div><b>pyrekordbox</b> — Rekordbox-Datenbank · MIT</div>
       <div><b>mutagen</b> — Tags · GPL-2.0-oder-später</div>
-      <div><b>NumPy</b> — BSD-3 · <b>Pillow</b> — MIT-CMU · <b>PyYAML</b>, <b>rich</b>, <b>PyObjC</b> — MIT</div>
+      <div><b>LAME</b> — MP3 · LGPL-2.0-or-later · <a href="https://lame.sourceforge.io" target="_blank" rel="noopener">lame.sourceforge.io</a></div>
+      <div><b>rbxport</b> — Beatgrid, ANLZ · GPL-2.0-or-later · <a href="https://github.com/chrisle/rbxport" target="_blank" rel="noopener">github.com/chrisle/rbxport</a></div>
+      <div><b>GlideMix</b> — Phrasen · GPL · <a href="https://github.com/cristitm76/glidemix-releases" target="_blank" rel="noopener">github.com/cristitm76/glidemix-releases</a></div>
+      <div><b>librosa</b> — Auto Cue · ISC · <a href="https://github.com/librosa/librosa" target="_blank" rel="noopener">github.com/librosa/librosa</a></div>
+      <div><b>NumPy</b>, <b>SciPy</b> — BSD-3 · <b>Pillow</b> — MIT-CMU · <b>PyYAML</b>, <b>rich</b>, <b>PyObjC</b>, <b>LightGBM</b> — MIT</div>
+      <div><b>SQLCipher</b> — BSD-3 · <b>OpenSSL</b> — Apache-2.0 · <b>bidict</b> — MPL-2.0 · <b>CPython</b> — PSF-2.0</div>
       <div><b>Lucide</b> — Icons · ISC · <a href="https://lucide.dev" target="_blank" rel="noopener">lucide.dev</a></div>
     </div>
+    <p class="confirmnote" data-i18n="lic.warranty">© 2026 Sebastian Gabler (sgt.works). TrackTab wird ohne jede Gewährleistung bereitgestellt. Du darfst es unter den Bedingungen der GPL weitergeben und verändern.</p>
     <p class="confirmnote" data-i18n="lic.nc_note">Die mit „nicht-kommerziell“ gekennzeichneten Modelle dürfen nicht verkauft oder kommerziell genutzt werden; das gilt damit auch für TrackTab mit diesen Modellen.</p>
     <div class="confirmbtns"><button class="act" id="licClose" data-i18n="action.close">Schließen</button></div>
   </div>
@@ -601,7 +605,7 @@
           <label for="rbSyncPending" class="optlabel" id="rbSyncPendingLabel" data-i18n="rbsync.pending_label">Vorgemerkte Tags übertragen</label>
           <div class="opthelp" data-i18n="rbsync.pending_help">Schreibt Genre-, Interpret- und Album-Änderungen aus dem Zusammenführen gesammelt nach Rekordbox — mit nur einem Backup. Rekordbox muss geschlossen sein.</div>
         </div>
-        <label class="toggle"><input id="rbSyncPending" type="checkbox" checked>
+        <label class="toggle"><input id="rbSyncPending" type="checkbox">
           <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
       </div>
       <div class="optrow">
@@ -610,7 +614,15 @@
           <div class="opthelp" data-i18n="rbsync.presence_help">Gleicht ab, welche Tracks bereits in Rekordbox'
             Sammlung liegen, und aktualisiert das entsprechende Zeichen in der Prüfliste.</div>
         </div>
-        <label class="toggle"><input id="rbSyncPresence" type="checkbox" checked>
+        <label class="toggle"><input id="rbSyncPresence" type="checkbox">
+          <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
+      </div>
+      <div class="optrow">
+        <div class="opttext">
+          <label for="rbSyncTags" class="optlabel" data-i18n="rbsync.tags_label">Metadaten nach Rekordbox übertragen</label>
+          <div class="opthelp" data-i18n="rbsync.tags_help"></div>
+        </div>
+        <label class="toggle"><input id="rbSyncTags" type="checkbox">
           <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
       </div>
       <div class="optrow">
@@ -618,7 +630,7 @@
           <label for="rbSyncLoad" class="optlabel" data-i18n="rbsync.load_label">Beatgrid, Phrasen und Cues laden</label>
           <div class="opthelp" data-i18n="rbsync.load_help">Übernimmt die Werte aus Rekordbox für alles, was in TrackTab noch fehlt. Vorhandenes wird nie überschrieben.</div>
         </div>
-        <label class="toggle"><input id="rbSyncLoad" type="checkbox" checked>
+        <label class="toggle"><input id="rbSyncLoad" type="checkbox">
           <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
       </div>
       <div class="optrow">
@@ -627,7 +639,7 @@
           <div class="opthelp" data-i18n="rbsync.fixpaths_help">Sucht Rekordbox-Einträge, deren Datei fehlt, unter
             den eigenen Bibliothekspfaden wieder — vor dem Schreiben wird eine Vorschau angezeigt.</div>
         </div>
-        <label class="toggle"><input id="rbSyncFixPaths" type="checkbox" checked>
+        <label class="toggle"><input id="rbSyncFixPaths" type="checkbox">
           <span class="toggle-track"><span class="toggle-thumb"></span></span></label>
       </div>
     </div>
@@ -791,12 +803,16 @@
       </div>
       <div class="setfields">
         <div class="setfield full"><label for="tagsTitle" data-i18n="field.title">Titel</label>
-          <input type="text" id="tagsTitle"></div>
+          <input type="text" id="tagsTitle">
+          <button type="button" class="tagsuggest" id="tagsSuggestTitle" data-field="title" hidden></button>
+          <button type="button" class="tagsuggest" id="tagsTempoSuggest" hidden></button></div>
         <div class="setfield full"><label for="tagsArtist" data-i18n="field.artist">Künstler</label>
           <input type="text" id="tagsArtist">
-          <div class="fieldhint info" id="tagsArtistHint" hidden role="note"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><span data-i18n="tags.artist_fallback_hint"></span></div></div>
+          <div class="fieldhint info" id="tagsArtistHint" hidden role="note"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg><span data-i18n="tags.artist_fallback_hint"></span></div>
+          <button type="button" class="tagsuggest" id="tagsSuggestArtist" data-field="artist" hidden></button></div>
         <div class="setfield half"><label for="tagsAlbum" data-i18n="field.album">Album</label>
-          <input type="text" id="tagsAlbum"></div>
+          <input type="text" id="tagsAlbum">
+          <button type="button" class="tagsuggest" id="tagsSuggestAlbum" data-field="album" hidden></button></div>
         <div class="setfield half"><label for="tagsAlbumArtist" data-i18n="field.album_artist">Albumkünstler</label>
           <input type="text" id="tagsAlbumArtist"></div>
         <div class="setfield half"><label for="tagsTrackNo" data-i18n="tags.track_label">Track</label>
@@ -816,6 +832,12 @@
           <input type="number" id="tagsBpm" min="0" max="400" step="0.1"></div>
         <div class="setfield"><label for="tagsKey" data-i18n="field.key">Tonart</label>
           <input type="text" id="tagsKey" maxlength="12" autocomplete="off"></div>
+        <div class="setfield"><label for="tagsCompilation" data-i18n="field.compilation">Sampler</label>
+          <select id="tagsCompilation">
+            <option value="" data-i18n="tags.compilation_no">Nein</option>
+            <option value="1" data-i18n="tags.compilation_yes">Ja (Compilation)</option>
+            <option value="~" disabled hidden data-i18n="tags.compilation_mixed">· verschieden ·</option>
+          </select></div>
         <div class="setfield full"><label for="tagsComment" data-i18n="tags.comment_label">Kommentare</label>
           <textarea id="tagsComment" rows="2"></textarea></div>
         <div class="setfield full"><label for="tagsUserTagInput" data-i18n="tags.user_tags">Eigene Tags</label>

@@ -59,7 +59,10 @@ CREATE TABLE IF NOT EXISTS files (
     file_hash       TEXT,
     tag_issues      TEXT,
     key             TEXT,
-    key_raw         TEXT
+    key_raw         TEXT,
+    audio_hash      TEXT,
+    cover_hash      TEXT,
+    compilation     INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_verdict ON files(verdict);
 CREATE INDEX IF NOT EXISTS idx_cutoff  ON files(cutoff_hz);
@@ -406,7 +409,8 @@ _COLUMNS = [
     "integrated_lufs", "true_peak_dbtp", "lra_lu",
     "genre", "bpm", "has_cover",
     "album_artist", "composer", "year", "comment", "track_no", "track_total",
-    "file_hash", "tag_issues", "key", "key_raw",
+    "file_hash", "tag_issues", "key", "key_raw", "audio_hash", "cover_hash",
+    "compilation",
 ]
 
 # Spalten, die nach dem urspruenglichen Release der 'files'-Tabelle
@@ -435,6 +439,9 @@ _MIGRATIONS = [
     ("key_raw", "TEXT"),
     ("plateau_db", "REAL"),
     ("edge_segments", "TEXT"),
+    ("audio_hash", "TEXT"),
+    ("cover_hash", "TEXT"),
+    ("compilation", "INTEGER"),
 ]
 
 
@@ -645,9 +652,68 @@ def is_current(cache: dict, path: str, size: int, mtime: float) -> bool:
     return entry[0] == size and abs(entry[1] - mtime) < 1.0
 
 
-def save(conn: sqlite3.Connection, rows: list[dict]) -> None:
+# Messungen am Audioinhalt, die keinen eigenen Dateistempel tragen (bzw. den
+# der alten Datei): sie gelten nur fuer genau die Aufnahme, an der gemessen
+# wurde. Bewusst NICHT dabei: dj_track und autocue_log (Nutzerdaten),
+# rb_snapshot (Rekordbox' Stand, nicht unserer) und alles, was am Pfad statt
+# am Inhalt haengt (rekordbox, music_added, Playlisten, Markierungen).
+_AUDIO_TABLES = ("genremood", "phrases", "waveform", "waveform_color", "grid_tempo")
+
+
+def drop_replaced_measurements(conn: sqlite3.Connection, rows: list[dict]) -> list[str]:
+    """Verwirft die Messungen von Dateien, deren Audioinhalt sich geaendert hat.
+
+    Anlass: wird eine Datei im Finder durch eine andere Fassung gleichen
+    Namens ersetzt, sieht der Scan nur "neue Groesse/mtime" und misst die
+    files-Zeile neu -- Genre/Stimmung und Phrasen/Beatgrid blieben aber die
+    der alten Datei, und weil dort schon eine Zeile steht, mass sie niemand
+    neu. Groesse/mtime taugen als Ausloeser nicht: jeder Tag-Edit aendert
+    sie, und die Messungen kosten je Datei Sekunden.
+
+    Verglichen wird deshalb files.audio_hash (media.audio_fingerprint()).
+    Verworfen wird nur, wenn alte UND neue Kennung bekannt sind und sich
+    unterscheiden -- eine Zeile aus der Zeit vor diesem Feature (NULL) oder
+    ein gescheiterter ffmpeg-Lauf ('') loest nichts aus. Muss VOR dem
+    Speichern der neuen Zeilen laufen. Ohne commit, das macht save().
+    """
+    fresh = {r["path"]: r.get("audio_hash") for r in rows if r.get("audio_hash")}
+    if not fresh:
+        return []
+    paths = list(fresh)
+    replaced: list[str] = []
+    for i in range(0, len(paths), 500):
+        chunk = paths[i:i + 500]
+        marks = ",".join("?" * len(chunk))
+        for r in conn.execute(
+                f"SELECT path, audio_hash FROM files WHERE path IN ({marks})", chunk):
+            if r["audio_hash"] and r["audio_hash"] != fresh[r["path"]]:
+                replaced.append(r["path"])
+    for table in _AUDIO_TABLES:
+        conn.executemany(f"DELETE FROM {table} WHERE path = ?", [(p,) for p in replaced])
+    return replaced
+
+
+def paths_without_audio_hash(conn: sqlite3.Connection) -> list[str]:
+    """Fertige Zeilen, deren Audio-Kennung noch nie gebildet wurde (vor diesem
+    Feature gescannt). '' heisst "versucht, ging nicht" und zaehlt nicht."""
+    return [r["path"] for r in conn.execute(
+        "SELECT path FROM files WHERE audio_hash IS NULL AND status = 'ok'")]
+
+
+def set_audio_hashes(conn: sqlite3.Connection, hashes: dict[str, str]) -> None:
+    conn.executemany("UPDATE files SET audio_hash = ? WHERE path = ?",
+                     [(h, p) for p, h in hashes.items()])
+    conn.commit()
+
+
+def save(conn: sqlite3.Connection, rows: list[dict],
+         drop_replaced: bool = False) -> list[str]:
+    """Zeilen speichern. drop_replaced=True (Scan, Neu-Analyse) verwirft vorher
+    die Messungen ersetzter Dateien, siehe drop_replaced_measurements().
+    Liefert deren Pfade."""
     if not rows:
-        return
+        return []
+    replaced = drop_replaced_measurements(conn, rows) if drop_replaced else []
     now = time.time()
     payload = []
     for r in rows:
@@ -664,10 +730,12 @@ def save(conn: sqlite3.Connection, rows: list[dict]) -> None:
         payload,
     )
     conn.commit()
+    return replaced
 
 
 _TAG_FIELDS = ("artist", "title", "album", "album_artist", "composer",
-               "genre", "year", "bpm", "key", "key_raw", "comment", "track_no", "track_total")
+               "genre", "year", "bpm", "key", "key_raw", "comment", "track_no", "track_total",
+               "compilation")
 
 
 def update_tags(conn: sqlite3.Connection, path: str, fields: dict) -> None:
@@ -690,6 +758,38 @@ def paths_without_key(conn: sqlite3.Connection) -> list[str]:
     da"."""
     return [r["path"] for r in conn.execute(
         "SELECT path FROM files WHERE key_raw IS NULL")]
+
+
+def paths_without_cover_hash(conn: sqlite3.Connection) -> list[str]:
+    """Zeilen mit Cover, deren Bild-Hash noch nie gelesen wurde (NULL, vor
+    diesem Feature gescannt). Ohne Cover steht sofort '' (siehe set_cover_hashes)."""
+    return [r["path"] for r in conn.execute(
+        "SELECT path FROM files WHERE cover_hash IS NULL")]
+
+
+def paths_without_compilation(conn: sqlite3.Connection) -> list[str]:
+    """Zeilen, deren Sampler-Markierung (compilation) noch nie gelesen wurde
+    (NULL, vor diesem Feature gescannt)."""
+    return [r["path"] for r in conn.execute(
+        "SELECT path FROM files WHERE compilation IS NULL")]
+
+
+def set_compilations(conn: sqlite3.Connection, flags: dict[str, int]) -> int:
+    changed = 0
+    for path, flag in flags.items():
+        changed += conn.execute(
+            "UPDATE files SET compilation = ? WHERE path = ?", (int(flag), path)).rowcount
+    conn.commit()
+    return changed
+
+
+def set_cover_hashes(conn: sqlite3.Connection, hashes: dict[str, str]) -> int:
+    changed = 0
+    for path, h in hashes.items():
+        changed += conn.execute(
+            "UPDATE files SET cover_hash = ? WHERE path = ?", (h, path)).rowcount
+    conn.commit()
+    return changed
 
 
 def set_keys(conn: sqlite3.Connection, keys: dict[str, tuple[str, str]]) -> int:
@@ -726,8 +826,11 @@ def refresh_stat(conn: sqlite3.Connection, path: str) -> None:
         st = os.stat(path)
     except OSError:
         return
-    conn.execute("UPDATE files SET size = ?, mtime = ? WHERE path = ?",
-                 (st.st_size, st.st_mtime, path))
+    # Cover kann sich gerade geaendert haben (Tags-Dialog, Online-Vorschlag,
+    # Verkleinern): Hash fuer die Auffaelligkeit duplicate_cover mitziehen.
+    from . import tags as tags_mod
+    conn.execute("UPDATE files SET size = ?, mtime = ?, cover_hash = ? WHERE path = ?",
+                 (st.st_size, st.st_mtime, tags_mod.read_cover_hash(path), path))
     conn.commit()
 
 
@@ -955,6 +1058,25 @@ def prune_missing(conn: sqlite3.Connection, existing: set[str]) -> list[str]:
     return gone
 
 
+def forget_file(conn: sqlite3.Connection, path: str) -> None:
+    """Alles zu einer Datei abraeumen, die der Nutzer selbst entfernt hat
+    (Papierkorb): ihre Zeile, saemtliche Caches und Messungen aus
+    `_PRUNE_TABLES`, ein zwischengespeichertes Cover und die beiden
+    Markierungen, die sich auf den Befund dieser einen Datei beziehen.
+
+    Wichtig fuer den ueblichen Ablauf "Fake loeschen, bessere Fassung unter
+    demselben Namen ablegen": Genre/Stimmung, Phrasen/Beatgrid, Farbwellenform
+    und Rekordbox-Snapshot haben keinen Dateistempel. Bleiben sie stehen,
+    erbt die neue Datei die Messungen der alten, und der Scan misst nicht neu.
+
+    Stehen bleibt, was der Nutzer von Hand angelegt hat (Playlisten, eigene
+    Tags, DJ-Bearbeitungen) -- wie bei prune_missing().
+    """
+    for table in _PRUNE_TABLES + ("cover_cache", "ignored", "corrected"):
+        conn.execute(f"DELETE FROM {table} WHERE path = ?", (path,))
+    conn.commit()
+
+
 def ignored_paths(conn: sqlite3.Connection) -> set[str]:
     return {r["path"] for r in conn.execute("SELECT path FROM ignored")}
 
@@ -1163,7 +1285,9 @@ def dj_edited_bpms(conn: sqlite3.Connection) -> dict:
             if not segs:
                 continue
             ends = [s["t"] for s in segs[1:]] + [beats[-1][0] / 1000 if beats else segs[-1]["t"]]
-            out[row["path"]] = max(zip(segs, ends), key=lambda p: p[1] - p[0]["t"])[0]["bpm"]
+            # Eine Rampe (dj.js) ist der Weg zwischen zwei Tempi, kein eigenes.
+            steady = [p for p in zip(segs, ends) if not (p[0].get("ramp") or {}).get("beats")] or list(zip(segs, ends))
+            out[row["path"]] = max(steady, key=lambda p: p[1] - p[0]["t"])[0]["bpm"]
         except (TypeError, ValueError, KeyError, IndexError):
             continue
     return out
@@ -1792,6 +1916,13 @@ def forget_rekordbox_tracks(conn: sqlite3.Connection, paths: list[str]) -> None:
         locks = {f: locks[f] and edits[f] is not None for f in locks}
         _write_dj_track(conn, path, edits, {"rb": {}, "pushed": {}}, locks)
     conn.commit()
+
+
+def is_music_added(conn: sqlite3.Connection, path: str) -> bool:
+    """Steht dieser eine Pfad in der Music.app-Bibliothek? Fuer Einzelabfragen
+    -- music_added_map() liest dafuer die ganze Tabelle."""
+    return conn.execute("SELECT 1 FROM music_added WHERE path = ?",
+                        (path,)).fetchone() is not None
 
 
 def music_added_map(conn: sqlite3.Connection) -> dict[str, float]:

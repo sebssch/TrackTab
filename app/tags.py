@@ -358,7 +358,14 @@ def _read_extra_id3(path: str, suffix: str) -> dict:
             "album_artist": album_artist, "composer": composer,
             "year": year, "comment": comment,
             "track_no": track_no, "track_total": track_total,
-            "key": normalize_key(_raw_id3(tags)), "key_raw": _raw_id3(tags)}
+            "key": normalize_key(_raw_id3(tags)), "key_raw": _raw_id3(tags),
+            "compilation": _compilation_id3(tags)}
+
+
+def _compilation_id3(tags) -> int:
+    """Sampler-Markierung (TCMP, iTunes/Music.app): '1' = Compilation."""
+    frames = tags.getall("TCMP")
+    return 1 if frames and str(frames[0]).strip() not in ("", "0") else 0
 
 
 def _write_tags_id3(path: str, suffix: str, fields: dict) -> None:
@@ -376,6 +383,12 @@ def _write_tags_id3(path: str, suffix: str, fields: dict) -> None:
         tags.setall("TCOM", [TCOM(encoding=3, text=[fields["composer"] or ""])])
     if "genre" in fields:
         tags.setall("TCON", [TCON(encoding=3, text=[fields["genre"] or ""])])
+    if "compilation" in fields:
+        from mutagen.id3 import TCMP
+        if fields["compilation"]:
+            tags.setall("TCMP", [TCMP(encoding=3, text=["1"])])
+        else:
+            tags.delall("TCMP")
     if "year" in fields:
         year = fields["year"]
         if year:
@@ -468,7 +481,8 @@ def _read_extra_mp4(path: str) -> dict:
             "year": year, "comment": comment,
             "track_no": track_no, "track_total": track_total,
             "key": normalize_key(_key_from_mp4(tags)),
-            "key_raw": _key_from_mp4(tags).strip()}
+            "key_raw": _key_from_mp4(tags).strip(),
+            "compilation": 1 if tags.get("cpil") else 0}
 
 
 # Es gibt kein Standard-Atom fuer die Tonart: iTunes/Mixed In Key schreiben ein
@@ -504,6 +518,11 @@ def _write_tags_mp4(path: str, fields: dict) -> None:
         tags["\xa9wrt"] = [fields["composer"] or ""]
     if "genre" in fields:
         tags["\xa9gen"] = [fields["genre"] or ""]
+    if "compilation" in fields:
+        if fields["compilation"]:
+            tags["cpil"] = True
+        elif "cpil" in tags:
+            del tags["cpil"]
     if "year" in fields:
         year = fields["year"]
         tags["\xa9day"] = [str(int(year))] if year else [""]
@@ -592,7 +611,8 @@ def _read_extra_flac(path: str) -> dict:
             "year": year, "comment": comment,
             "track_no": track_no, "track_total": track_total,
             "key": normalize_key(_key_from_flac(audio)),
-            "key_raw": _key_from_flac(audio).strip()}
+            "key_raw": _key_from_flac(audio).strip(),
+            "compilation": 1 if (audio.get("compilation") or [""])[0].strip() not in ("", "0") else 0}
 
 
 def _key_from_flac(audio) -> str:
@@ -617,6 +637,11 @@ def _write_tags_flac(path: str, fields: dict) -> None:
         audio["composer"] = fields["composer"] or ""
     if "genre" in fields:
         audio["genre"] = fields["genre"] or ""
+    if "compilation" in fields:
+        if fields["compilation"]:
+            audio["compilation"] = "1"
+        elif "compilation" in audio:
+            del audio["compilation"]
     if "year" in fields:
         year = fields["year"]
         audio["date"] = str(int(year)) if year else ""
@@ -694,17 +719,57 @@ def read_extra(path: str) -> dict:
     """
     suffix = Path(path).suffix.lower()
     try:
+        extra = None
         if suffix in _ID3_LIKE_SUFFIXES:
-            return _read_extra_id3(path, suffix)
-        if suffix in _MP4_SUFFIXES:
-            return _read_extra_mp4(path)
-        if suffix in _FLAC_SUFFIXES:
-            return _read_extra_flac(path)
+            extra = _read_extra_id3(path, suffix)
+        elif suffix in _MP4_SUFFIXES:
+            extra = _read_extra_mp4(path)
+        elif suffix in _FLAC_SUFFIXES:
+            extra = _read_extra_flac(path)
+        if extra is not None:
+            extra["cover_hash"] = read_cover_hash(path) if extra.get("has_cover") else ""
+            return extra
     except Exception:                                  # noqa: BLE001
         pass
     return {"genre": "", "bpm": 0.0, "has_cover": 0,
             "album_artist": "", "composer": "", "year": 0, "comment": "",
-            "track_no": 0, "track_total": 0, "key": "", "key_raw": ""}
+            "track_no": 0, "track_total": 0, "key": "", "key_raw": "",
+            "cover_hash": "", "compilation": 0}
+
+
+def read_compilation(path: str) -> int:
+    """Sampler-Markierung (ID3 TCMP, MP4 cpil, Vorbis COMPILATION) -- reiner
+    Tag-Read fuer das Nachtragen alter Zeilen. 0 bei jedem Fehler."""
+    try:
+        return int(read_extra(path).get("compilation") or 0)
+    except Exception:                                  # noqa: BLE001
+        return 0
+
+
+def read_cover_hash(path: str) -> str:
+    """MD5 der Bilddaten des ersten eingebetteten Covers ('' = keins oder nicht
+    lesbar). Dient nur dem Vergleich zwischen Dateien (gleiches Bild bei
+    verschiedenen Alben = Auffaelligkeit duplicate_cover), nie der Sicherheit.
+    Best effort wie read_extra()."""
+    import hashlib
+    suffix = Path(path).suffix.lower()
+    try:
+        data = b""
+        if suffix in _ID3_LIKE_SUFFIXES:
+            tags, _ = _id3_tags(path, suffix)
+            frames = tags.getall("APIC")
+            data = bytes(frames[0].data) if frames else b""
+        elif suffix in _MP4_SUFFIXES:
+            from mutagen.mp4 import MP4
+            covr = (MP4(path).tags or {}).get("covr")
+            data = bytes(covr[0]) if covr else b""
+        elif suffix in _FLAC_SUFFIXES:
+            from mutagen.flac import FLAC
+            pics = FLAC(path).pictures
+            data = bytes(pics[0].data) if pics else b""
+        return hashlib.md5(data).hexdigest() if data else ""
+    except Exception:                                  # noqa: BLE001
+        return ""
 
 
 def read_key(path: str) -> str:

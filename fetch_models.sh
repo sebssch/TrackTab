@@ -1,6 +1,6 @@
 #!/bin/bash
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  TrackTab — Modelle laden (Genre/Stimmung/Energie)      ║
+# ║  TrackTab — Modelle laden (Genre/Stimmung/Energie, Phrasen) ║
 # ╚══════════════════════════════════════════════════════════════╝
 # Laedt die Essentia-Modelle (MTG, Universitat Pompeu Fabra) einmalig nach
 # vendor/models/essentia/. Lizenz der Modelle: CC BY-NC-SA 4.0 -- nur
@@ -67,6 +67,57 @@ done
 # Pruefsummen festhalten -- ein spaeterer Lauf erkennt so beschaedigte Dateien.
 ( cd "$DEST" && shasum -a 256 *.onnx *.json > SHA256SUMS )
 echo "Modelle liegen in $DEST ($(du -sh "$DEST" | cut -f1))."
+
+# ── Phrasenmodell (Beatgrid & Phrasen, app/phrases.py) ─────────────────────
+# Unveraendert aus GlideMix (glidemix.com, GPL): im Quellarchiv des Releases
+# als src/mixhouse/models/glidemix_phrases.onnx. Einzeln gibt es die Datei
+# nicht, deshalb wird das Archiv (~70 MB) einmalig geladen und nur das Modell
+# (1,2 MB) herausgezogen. Die Pruefsumme ist festgeschrieben: app/phrases.py
+# rechnet genau die Eingangswerte dieser Fassung. Wer GLIDEMIX_VERSION aendert,
+# passt die Pruefsumme an und prueft phrases.py gegen den neuen Quellcode.
+# package_sources.sh liest GLIDEMIX_VERSION von hier (Quellcode zum Release).
+# Ein Fehler bricht nichts ab: ohne Modell blendet die App die Funktion aus.
+GLIDEMIX_VERSION="1.3.0"
+PHRASES_SHA256="a0c0b5d90d8f3899c29499b0d080334f1efbeebdb4578f3780f0cfd91181b89b"
+PHRASES_DEST="vendor/models/phrases"
+PHRASES_FILE="$PHRASES_DEST/phrases.onnx"
+
+fetch_phrases() {
+  if [ -s "$PHRASES_FILE" ]; then
+    if [ "$(shasum -a 256 "$PHRASES_FILE" | cut -d' ' -f1)" = "$PHRASES_SHA256" ]; then
+      return 0
+    fi
+    echo "Hinweis: $PHRASES_FILE ist nicht das Modell aus GlideMix $GLIDEMIX_VERSION — bleibt unverändert."
+    echo "         Herkunft und Lizenz dieser Datei vor einer Weitergabe selbst klären."
+    return 0
+  fi
+  local archive="GlideMix-${GLIDEMIX_VERSION}-source.tar.xz"
+  local url="https://github.com/cristitm76/glidemix-releases/releases/download/v${GLIDEMIX_VERSION}/${archive}"
+  local tmp
+  tmp="$(mktemp -d)" || return 1
+  echo "Lade Phrasenmodell aus $archive (~70 MB) …"
+  # Liegt das Archiv schon fuer das Release bereit, kein zweiter Download.
+  if [ -s "dist/sources/$archive" ]; then
+    cp "dist/sources/$archive" "$tmp/$archive"
+  elif ! curl -fsSL -o "$tmp/$archive" "$url"; then
+    rm -rf "$tmp"; return 1
+  fi
+  if ! tar -xJf "$tmp/$archive" -C "$tmp" \
+       "GlideMix-${GLIDEMIX_VERSION}-source/src/mixhouse/models/glidemix_phrases.onnx"; then
+    rm -rf "$tmp"; return 1
+  fi
+  local got="$tmp/GlideMix-${GLIDEMIX_VERSION}-source/src/mixhouse/models/glidemix_phrases.onnx"
+  if [ "$(shasum -a 256 "$got" | cut -d' ' -f1)" != "$PHRASES_SHA256" ]; then
+    echo "FEHLER: Prüfsumme des Phrasenmodells stimmt nicht — nicht übernommen."
+    rm -rf "$tmp"; return 1
+  fi
+  mkdir -p "$PHRASES_DEST"
+  mv "$got" "$PHRASES_FILE"
+  ( cd "$PHRASES_DEST" && shasum -a 256 phrases.onnx > SHA256SUMS )
+  rm -rf "$tmp"
+  echo "Phrasenmodell liegt in $PHRASES_FILE."
+}
+fetch_phrases || echo "Hinweis: Phrasenmodell ließ sich nicht laden — die App kommt ohne Phrasenerkennung."
 
 # Stem-Trennung (Demucs): bewusst NICHT hier -- die Gewichte werden nicht
 # mit der App ausgeliefert, der Nutzer laedt sie in den Einstellungen

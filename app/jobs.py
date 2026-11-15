@@ -13,14 +13,65 @@ import threading
 import time
 from concurrent.futures import (FIRST_COMPLETED, ProcessPoolExecutor,
                                 ThreadPoolExecutor, as_completed, wait)
+from concurrent.futures.process import BrokenProcessPool
 
 from . import config as cfgmod
 from . import db as db_mod
 from . import scanner
 from . import tags as tags_mod
-from .analyzer import SPECTRAL_SKIPPED_REASON, analyse_file
+from .analyzer import SPECTRAL_SKIPPED_REASON, analyse_file, blank_row
 
 _BATCH = 200
+
+# Schutz vor Massenloeschung beim Aufraeumen (siehe _safe_prune): fehlen mehr
+# Dateien als das, wird nicht automatisch aufgeraeumt. Gleiche Idee wie
+# playlistsync.GUARD_MIN/GUARD_SHARE.
+_PRUNE_GUARD_MIN = 25
+_PRUNE_GUARD_SHARE = 0.25
+
+
+def _safe_prune(conn, cfg: dict, all_files: list, result: dict) -> None:
+    """Raeumt Zeilen verschwundener Dateien ab -- aber nicht, wenn die Dateien
+    wahrscheinlich nur gerade nicht erreichbar sind.
+
+    Anlass: iter_files() ueberspringt einen fehlenden Bibliotheksordner still
+    (externe Platte nicht eingehaengt, Ordnerzugriff entzogen). Ohne diesen
+    Schutz galten dann alle Dateien darunter als geloescht, und prune_missing()
+    entfernte ihre Zeilen samt allem, was Stunden an Messung gekostet hat
+    (Genre/Stimmung, Phrasen/Beatgrid, Rekordbox-Snapshot).
+
+    Zwei Regeln:
+    - Liegt eine fehlende Datei unter einem Bibliotheksordner, der nicht da
+      ist oder in dem der Scan keine einzige Datei gefunden hat, bleibt ihre
+      Zeile stehen.
+    - Fehlen ausserhalb davon mehr als max(_PRUNE_GUARD_MIN, 25 %) der
+      bekannten Dateien wirklich auf der Platte, bleibt auch das stehen.
+    Stehengebliebene Zeilen zeigt die Oberflaeche als "Datei fehlt"; dort
+    raeumt der Knopf der Hinweisleiste (/api/prune) sie ausdruecklich ab.
+    Zeilen, deren Datei noch existiert, aber nicht mehr zum Scan gehoert
+    (Ordner aus den Einstellungen genommen), fallen wie bisher heraus.
+    """
+    existing = {p for p, _, _ in all_files}
+    known = [r["path"] for r in conn.execute("SELECT path FROM files")]
+    gone = [p for p in known if p not in existing]
+    result["prune_kept"] = 0
+    if not gone:
+        return
+
+    dead: list[str] = []
+    for root in cfg.get("library_paths") or []:
+        base = os.path.expanduser(str(root))
+        prefix = base.rstrip(os.sep) + os.sep
+        if not os.path.isdir(base) or not any(p.startswith(prefix) for p in existing):
+            dead.append(prefix)
+    keep = {p for p in gone if any(p.startswith(d) for d in dead)}
+
+    missing = [p for p in gone if p not in keep and not os.path.exists(p)]
+    if len(missing) > max(_PRUNE_GUARD_MIN, _PRUNE_GUARD_SHARE * len(known)):
+        keep.update(missing)
+
+    result["removed"] = len(db_mod.prune_missing(conn, existing | keep))
+    result["prune_kept"] = len(keep)
 
 
 def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
@@ -110,30 +161,49 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
         report(0, total, "analysieren")
         if not total:
             if prune and not limit and not paths:
-                result["removed"] = len(db_mod.prune_missing(
-                    conn, {p for p, _, _ in all_files}))
+                _safe_prune(conn, cfg, all_files, result)
+            if not paths and not limit:
+                _backfill_audio_hashes(conn, result, report, cancelled)
             _backfill_keys(conn, result)
             _fill_covers(conn, cfg, result)
+            _backfill_cover_hashes(conn, result)
+            _backfill_compilations(conn)
             _recheck_tag_issues(conn, cfg, result, enabled=recheck_tag_issues)
             _analyse_genremood(conn, cfg, result, genremood, report, cancelled)
             return result
 
         batch: list[dict] = []
         done = 0
+        replaced = 0
         # Bewusst as_completed statt map: der Fortschritt soll mit jedem
         # fertigen Track weiterzaehlen und nicht blockweise springen, und ein
         # Abbruch soll sofort greifen statt erst am Ende eines Blocks.
+        # Auftrag je Future merken: scheitert ein Worker, gehoert der Fehler
+        # an den Pfad der Datei. Frueher landete dafuer eine Zeile mit dem
+        # Pfad "?" in der Datenbank.
+        broken = False
         with ProcessPoolExecutor(max_workers=cfgmod.worker_count()) as pool:
-            futures = [pool.submit(analyse_file, job) for job in todo]
+            futures = {pool.submit(analyse_file, job): job for job in todo}
             for future in as_completed(futures):
+                job = futures[future]
                 try:
                     batch.append(future.result())
+                except BrokenProcessPool:
+                    # Ein Worker-Prozess ist gestorben (Speichermangel,
+                    # Absturz in einer nativen Bibliothek). Der Pool ist damit
+                    # unbrauchbar, ALLE offenen Auftraege scheitern sofort --
+                    # sie als Fehlerzeilen zu speichern hiesse, die halbe
+                    # Bibliothek als kaputt zu melden.
+                    broken = True
+                    break
                 except Exception as exc:            # noqa: BLE001
-                    batch.append({"path": "?", "status": "error",
-                                  "error": f"Worker: {exc}"})
+                    row = blank_row(job[0], job[1], job[2])
+                    row["error"] = f"Worker: {exc}"
+                    row["reasons"] = [row["error"]]
+                    batch.append(row)
                 done += 1
                 if len(batch) >= _BATCH:
-                    db_mod.save(conn, batch)
+                    replaced += len(db_mod.save(conn, batch, drop_replaced=True))
                     batch = []
                 report(done, total, "analysieren")
                 if cancelled():
@@ -143,20 +213,78 @@ def run_scan(cfg: dict, paths: list[str] | None = None, force: bool = False,
                 for future in futures:
                     future.cancel()
                 pool.shutdown(wait=False, cancel_futures=True)
-        db_mod.save(conn, batch)
+        replaced += len(db_mod.save(conn, batch, drop_replaced=True))
         result["done"] = done
+        # Dateien, unter deren Pfad jetzt eine andere Aufnahme liegt: ihre
+        # Messungen sind verworfen (db.drop_replaced_measurements()).
+        result["replaced"] = replaced
+        if broken:
+            raise RuntimeError(
+                "Ein Analyse-Prozess wurde unerwartet beendet (z. B. durch "
+                f"Speichermangel). {done} von {total} Dateien sind gespeichert, "
+                "ein erneuter Scan macht beim Rest weiter.")
 
         if prune and not limit and not paths and not result["cancelled"]:
-            result["removed"] = len(db_mod.prune_missing(
-                conn, {p for p, _, _ in all_files}))
+            _safe_prune(conn, cfg, all_files, result)
+        # Nur beim vollen Scan: eine Neu-Analyse einzelner Tracks (paths) soll
+        # nicht bis zu 45 s auf das Nachtragen fuer den Rest warten.
+        if not result["cancelled"] and not paths and not limit:
+            _backfill_audio_hashes(conn, result, report, cancelled)
         _backfill_keys(conn, result)
         _fill_covers(conn, cfg, result)
+        _backfill_cover_hashes(conn, result)
+        _backfill_compilations(conn)
         _recheck_tag_issues(conn, cfg, result, enabled=recheck_tag_issues)
         if not result["cancelled"]:
             _analyse_genremood(conn, cfg, result, genremood, report, cancelled)
         return result
     finally:
         conn.close()
+
+
+# Zeitbudget je Scan fuer das Nachtragen der Audio-Kennung. Rund 0,1 s je
+# Datei bei vier parallelen ffmpeg-Laeufen: eine grosse, vor diesem Feature
+# gescannte Bibliothek ist nach wenigen Scans vollstaendig, ohne dass einer
+# davon spuerbar laenger dauert.
+_AUDIO_HASH_BUDGET_S = 45.0
+
+
+def _backfill_audio_hashes(conn, result: dict, report, cancelled) -> None:
+    """Audio-Kennung fuer Zeilen nachtragen, die vor diesem Feature gescannt
+    wurden (audio_hash IS NULL) -- erst mit einer gemerkten Kennung faellt
+    spaeter auf, dass die Datei ersetzt wurde (db.drop_replaced_measurements()).
+    Liest nur (ffmpeg ohne Dekodieren), schreibt nie in Dateien. Hoert nach
+    _AUDIO_HASH_BUDGET_S auf, der naechste Scan macht weiter. Best effort wie
+    _backfill_keys(): ein Fehler darf den Scan nicht kippen."""
+    from . import media
+    result["audio_hashes_filled"] = 0
+    try:
+        todo = db_mod.paths_without_audio_hash(conn)
+        if not todo:
+            return
+        deadline = time.monotonic() + _AUDIO_HASH_BUDGET_S
+        done: dict[str, str] = {}
+        pending = iter(todo)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            running = {pool.submit(media.audio_fingerprint, p): p
+                       for p in itertools.islice(pending, 8)}
+            while running:
+                finished, _ = wait(running, return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    path = running.pop(fut)
+                    try:
+                        done[path] = fut.result()
+                    except Exception:                      # noqa: BLE001
+                        done[path] = ""
+                report(len(done), len(todo), "Audio-Kennung")
+                if cancelled() or time.monotonic() > deadline:
+                    continue                # laufende noch abholen, nichts Neues
+                for p in itertools.islice(pending, len(finished)):
+                    running[pool.submit(media.audio_fingerprint, p)] = p
+        db_mod.set_audio_hashes(conn, done)
+        result["audio_hashes_filled"] = sum(1 for h in done.values() if h)
+    except Exception:                                      # noqa: BLE001
+        return
 
 
 def _backfill_keys(conn, result: dict) -> None:
@@ -175,6 +303,30 @@ def _backfill_keys(conn, result: dict) -> None:
     except Exception:                                      # noqa: BLE001
         return
     result["keys_filled"] = sum(1 for k, _ in keys.values() if k)
+
+
+def _backfill_cover_hashes(conn, result: dict) -> None:
+    """Bild-Hash des Covers fuer Zeilen nachtragen, die vor diesem Feature
+    gescannt wurden (cover_hash IS NULL) -- reiner Tag-Read wie
+    _backfill_keys(), kein --force noetig. Best effort."""
+    result["cover_hashes_filled"] = 0
+    try:
+        hashes = {p: tags_mod.read_cover_hash(p) for p in db_mod.paths_without_cover_hash(conn)}
+        db_mod.set_cover_hashes(conn, hashes)
+    except Exception:                                      # noqa: BLE001
+        return
+    result["cover_hashes_filled"] = sum(1 for h in hashes.values() if h)
+
+
+def _backfill_compilations(conn) -> None:
+    """Sampler-Markierung fuer Zeilen nachtragen, die vor diesem Feature
+    gescannt wurden (compilation IS NULL) -- reiner Tag-Read, kein --force."""
+    try:
+        flags = {p: tags_mod.read_compilation(p)
+                 for p in db_mod.paths_without_compilation(conn)}
+        db_mod.set_compilations(conn, flags)
+    except Exception:                                      # noqa: BLE001
+        return
 
 
 def _fill_covers(conn, cfg: dict, result: dict, force: bool = False) -> None:

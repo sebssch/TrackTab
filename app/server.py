@@ -38,12 +38,13 @@ import uuid
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, quote, unquote, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 from . import __version__
 from . import anlzwrite as anlzwrite_mod
 from . import audit_log
 from . import backup as backup_mod
+from . import beatgrid as beatgrid_mod
 from . import bpmkey as bpmkey_mod
 from . import genremood as genremood_mod
 from . import gridstore
@@ -62,6 +63,7 @@ from . import classify as classify_mod
 from . import convert as convert_mod
 from . import coverfill
 from . import db as db_mod
+from . import errlog
 from . import jobs
 from . import lookup as lookup_mod
 from . import media
@@ -94,6 +96,10 @@ _HTTPD: ThreadingHTTPServer | None = None
 # _Handler._same_origin()). Gebunden ist nur 127.0.0.1; ::1 steht der
 # Vollstaendigkeit halber dabei, falls das Binden spaeter erweitert wird.
 _LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+# Unter diesen Pfaden liegt die Seite selbst. Nur sie darf von einer fremden
+# Seite aus per Link geoeffnet werden (siehe _Handler._fetch_site_ok()).
+_PAGE_ROUTES = ("/", "/tracktab.html", "/index.html")
 
 
 def _split_hostport(raw: str | None, default_port: int) -> tuple[str, int]:
@@ -457,6 +463,8 @@ class _ReportBuilder:
             cfg = cfg or cfgmod.load()
             conn = db_mod.connect(cfg)
             try:
+                # Nur die HTML-Datei. CSV und M3U entstehen ausschliesslich
+                # auf Anforderung (./run.command report), siehe report.build_all().
                 report_mod.build_all(conn, cfg)
             finally:
                 conn.close()
@@ -503,10 +511,7 @@ class _ReportBuilder:
 
     @staticmethod
     def _log_error(label: str, exc: Exception) -> None:
-        import sys
-        import traceback
-        print(f"[report] {label}: {exc}", file=sys.stderr)
-        traceback.print_exc(file=sys.stderr)
+        errlog.log(f"[report] {label}", exc)
 
 
 REPORT = _ReportBuilder()
@@ -775,6 +780,26 @@ def _dj_time(value, lo: float = 0) -> float:
     return round(t, 4)
 
 
+def _clean_dj_ramp(ramp) -> dict:
+    """Tempo-Rampe eines Abschnitts (dj.js, djRampTimes()): Schlagzahl, Anker [[k, s]] bzw.
+    [[k, s, 1]] (von Hand gesetzt, "An Audio anpassen" laesst ihn stehen) und das Tempo je
+    Schlag, das der Client aus den ungerundeten Zeiten rechnet."""
+    beats = int(ramp["beats"])               # 0 = offen ("Rampe Start" ohne Ende)
+    if not 0 <= beats <= 4096:
+        raise ValueError("Ungültige Rampe")
+    anchors = []
+    for anchor in ramp.get("anchors") or []:
+        k, sec = anchor[0], anchor[1]
+        if not 0 < int(k) < beats:
+            raise ValueError("Ungültiger Rampen-Anker")
+        manual = len(anchor) > 2 and bool(anchor[2])
+        anchors.append([int(k), _dj_time(sec), 1] if manual else [int(k), _dj_time(sec)])
+    tempos = [round(float(b), 3) for b in ramp.get("tempos") or []]
+    if len(anchors) > beats or len(tempos) > beats or any(not 20 <= b <= 400 for b in tempos):
+        raise ValueError("Ungültige Rampe")
+    return {"beats": beats, "anchors": anchors, "tempos": tempos}
+
+
 def _clean_dj_grid(grid) -> dict | None:
     if grid is None:
         return None
@@ -786,7 +811,10 @@ def _clean_dj_grid(grid) -> dict | None:
         bpm, beat = float(seg["bpm"]), int(seg["n"])
         if not 20 <= bpm <= 400 or not 1 <= beat <= 4:
             raise ValueError("Ungültiger Grid-Abschnitt")
-        clean_segments.append({"t": _dj_time(seg["t"]), "bpm": round(bpm, 3), "n": beat})
+        clean = {"t": _dj_time(seg["t"]), "bpm": round(bpm, 3), "n": beat}
+        if seg.get("ramp"):
+            clean["ramp"] = _clean_dj_ramp(seg["ramp"])
+        clean_segments.append(clean)
     return {"segments": clean_segments, "locked": bool(grid.get("locked")),
             "beats": [[int(b[0]), int(b[1])] for b in beats]}
 
@@ -1040,6 +1068,8 @@ class _Handler(BaseHTTPRequestHandler):
         # laeuft, und wird sonst korrekt abgewiesen.
         if not self._is_own_address(*_split_hostport(self.headers.get("Host"), 80)):
             return False
+        if not self._fetch_site_ok():
+            return False
         origin = self.headers.get("Origin")
         if origin:
             parts = urlparse(origin)
@@ -1049,6 +1079,38 @@ class _Handler(BaseHTTPRequestHandler):
                 return False
             return self._is_own_address(*_split_hostport(parts.netloc, 80))
         return self.command == "GET"
+
+    def _fetch_site_ok(self) -> bool:
+        """Weist Anfragen ab, die eine FREMDE Seite ausgeloest hat.
+
+        Luecke, die Host- und Origin-Abgleich offen lassen: ein GET ohne
+        Origin ist erlaubt (so ruft der Browser die Seite selbst auf), und
+        genau so sieht auch ein <img src="http://127.0.0.1:8756/api/...">
+        auf einer beliebigen Webseite aus. Lesen kann die fremde Seite die
+        Antwort nicht, ausloesen aber schon: ffmpeg-Laeufe ueber
+        /api/spectrogram oder /api/dj-pcm, Temp-Dateien ueber
+        /api/download-zip, Netzabrufe ueber /api/check-update.
+
+        Sec-Fetch-Site sagt, woher eine Anfrage stammt; der Browser setzt die
+        Kopfzeile selbst, eine Seite kann sie nicht faelschen. "same-origin"
+        ist die eigene Oberflaeche, "none" der Nutzer (Adresszeile,
+        Lesezeichen, von der App geoeffnet). "cross-site" und "same-site"
+        sind fremde Seiten -- "same-site" ist z. B. ein anderer Port auf
+        127.0.0.1, also genau der Fall aus _is_own_address().
+
+        Einzige Ausnahme: ein Link auf die Seite selbst (Navigation auf
+        _PAGE_ROUTES) -- das laedt nur die Oberflaeche, wie ein Lesezeichen.
+
+        Fehlt die Kopfzeile (aeltere Browser, curl), entscheiden wie bisher
+        Host und Origin.
+        """
+        site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        if site not in ("cross-site", "same-site"):
+            return True
+        return (self.command == "GET"
+                and (self.headers.get("Sec-Fetch-Mode") or "").strip().lower() == "navigate"
+                and (self.headers.get("Sec-Fetch-Dest") or "").strip().lower() == "document"
+                and urlparse(self.path).path in _PAGE_ROUTES)
 
     def _known_file(self, path: str):
         """Pfad nur freigeben, wenn er analysiert wurde und noch existiert.
@@ -1145,7 +1207,7 @@ class _Handler(BaseHTTPRequestHandler):
             conn = db_mod.connect(cfg)
             try:
                 row = db_mod.row_for_path(conn, path)
-                if row is None or path not in db_mod.music_added_map(conn):
+                if row is None or not db_mod.is_music_added(conn, path):
                     return None
                 known = {r["path"] for r in conn.execute("SELECT path FROM files")}
                 missing_row = {"path": path, "size": row["size"],
@@ -1279,15 +1341,56 @@ class _Handler(BaseHTTPRequestHandler):
             rest -= len(block)
         return length
 
-    # ── GET ───────────────────────────────────────────────────────────────
+    # ── Auffangnetz ───────────────────────────────────────────────────────
+    def send_response(self, code, message=None):
+        # Merken, dass die Antwort begonnen hat -- _guarded() darf dann keine
+        # zweite hinterherschicken.
+        self._responded = True
+        super().send_response(code, message)
+
+    def _guarded(self, dispatch) -> None:
+        """Faengt alles, was ein Endpunkt nicht selbst behandelt.
+
+        Ohne das beendet eine unerwartete Ausnahme (ein int("abc") auf einem
+        Anfragefeld, ein Sonderfall in einer Bibliothek) die Verbindung ohne
+        Antwort: der Browser meldet nur "Failed to fetch", und in der per
+        Doppelklick gestarteten App sieht den Traceback niemand. Jetzt gibt es
+        eine 500-Antwort mit Text und einen Eintrag im Fehlerprotokoll
+        (errlog.py).
+
+        Die Verbindung wird danach geschlossen: ob der Anfragekoerper schon
+        gelesen wurde, ist an dieser Stelle unbekannt, und ein Rest im Puffer
+        wuerde als naechste Anfrage gedeutet.
+        """
+        self._responded = False
+        try:
+            dispatch()
+        except (BrokenPipeError, ConnectionResetError):
+            self.close_connection = True       # Browser hat abgebrochen
+        except Exception as exc:               # noqa: BLE001
+            errlog.log(f"{self.command} {urlparse(self.path).path}", exc)
+            self.close_connection = True
+            if not self._responded:
+                try:
+                    self._fail(f"Interner Fehler: {exc}", 500)
+                except Exception:              # noqa: BLE001
+                    pass
+
     def do_GET(self):                          # noqa: N802
+        self._guarded(self._dispatch_get)
+
+    def do_POST(self):                         # noqa: N802
+        self._guarded(self._dispatch_post)
+
+    # ── GET ───────────────────────────────────────────────────────────────
+    def _dispatch_get(self) -> None:
         if not self._same_origin():
             self._send(403, "Anfrage von fremder Herkunft abgelehnt.".encode("utf-8"),
                        "text/plain; charset=utf-8")
             return
         route = urlparse(self.path).path
 
-        if route in ("/", "/tracktab.html", "/index.html"):
+        if route in _PAGE_ROUTES:
             self._serve_report()
         elif route == "/manifest.json":
             self._get_manifest()
@@ -1438,22 +1541,25 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._send(200, body, "text/html; charset=utf-8")
 
+    # Die reinen Lesepfade unten laufen ohne self.lock: unter WAL (siehe
+    # db.connect) duerfen Leser parallel zu einem Schreiber ran. Mit Lock
+    # warteten sie hinter jedem langen Schreibvorgang (Neubewertung,
+    # Umbenennen eines Tag-Werts ueber viele Dateien). _get_playlists()
+    # behaelt ihn: es liest zwei Tabellen, die zueinander passen muessen.
     def _get_ignored(self) -> None:
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                paths = sorted(db_mod.ignored_paths(conn))
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            paths = sorted(db_mod.ignored_paths(conn))
+        finally:
+            conn.close()
         self._json({"ignored": paths})
 
     def _get_user_tags(self) -> None:
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                tags = db_mod.user_tags_map(conn)
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            tags = db_mod.user_tags_map(conn)
+        finally:
+            conn.close()
         self._json({"ok": True, "tags": tags})
 
     _USER_TAG_MAX = 60
@@ -1624,12 +1730,11 @@ class _Handler(BaseHTTPRequestHandler):
         except Exception as exc:                  # noqa: BLE001
             self._json({"ok": False, "error": str(exc)[:300]})
             return
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                known = {r["path"] for r in conn.execute("SELECT path FROM files")}
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            known = {r["path"] for r in conn.execute("SELECT path FROM files")}
+        finally:
+            conn.close()
         # macOS-Standardvolumes sind case-insensitiv, aber case-preserving:
         # derselbe Ordner kann in Rekordbox' FolderPath und in unserem
         # eigenen Scan mit unterschiedlicher Gross-/Kleinschreibung stehen
@@ -1663,42 +1768,38 @@ class _Handler(BaseHTTPRequestHandler):
         self._json({"ok": True, "tracks": tracks})
 
     def _get_corrected(self) -> None:
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                paths = sorted(db_mod.corrected_paths(conn))
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            paths = sorted(db_mod.corrected_paths(conn))
+        finally:
+            conn.close()
         self._json({"corrected": paths})
 
     def _get_dup_dismissed(self) -> None:
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                paths = sorted(db_mod.dup_dismissed_paths(conn))
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            paths = sorted(db_mod.dup_dismissed_paths(conn))
+        finally:
+            conn.close()
         self._json({"dup_dismissed": paths})
 
     def _get_rekordbox(self) -> None:
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                paths = sorted(db_mod.rekordbox_paths(conn))
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            paths = sorted(db_mod.rekordbox_paths(conn))
+        finally:
+            conn.close()
         self._json({"paths": paths})
 
     def _get_rekordbox_pending(self) -> None:
         """Anzahl der fuer Rekordbox vorgemerkten Tag-Aenderungen (Zaehler am
         Knopf "Rekordbox abgleichen")."""
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                count = (db_mod.rekordbox_pending_count(conn)
-                         + db_mod.rekordbox_stem_pending_count(conn))
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            count = (db_mod.rekordbox_pending_count(conn)
+                     + db_mod.rekordbox_stem_pending_count(conn))
+        finally:
+            conn.close()
         self._json({"count": count})
 
     def _get_rekordbox_status(self) -> None:
@@ -1726,25 +1827,23 @@ class _Handler(BaseHTTPRequestHandler):
         Felder (Genre/Interpret/Album) -- Werte- und Gruppenlisten selbst
         kommen aus dem bereits im Client gehaltenen DATA, ein Server-Roundtrip
         dafuer waere unnoetig (siehe app.js groupCounts())."""
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                dismissed = {
-                    field: [{"a": a, "b": b} for a, b in
-                            sorted(db_mod.merge_dismissed_pairs(conn, field))]
-                    for field in ("genre", "artist", "album")
-                }
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            dismissed = {
+                field: [{"a": a, "b": b} for a, b in
+                        sorted(db_mod.merge_dismissed_pairs(conn, field))]
+                for field in ("genre", "artist", "album")
+            }
+        finally:
+            conn.close()
         self._json({"dismissed": dismissed})
 
     def _get_music_added(self) -> None:
-        with self.lock:
-            conn = db_mod.connect(cfgmod.load())
-            try:
-                added = db_mod.music_added_map(conn)
-            finally:
-                conn.close()
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            added = db_mod.music_added_map(conn)
+        finally:
+            conn.close()
         self._json({"added": added})
 
     def _get_rekordbox_extras(self) -> None:
@@ -1753,7 +1852,7 @@ class _Handler(BaseHTTPRequestHandler):
         analysiert. 'Nicht in Rekordbox' ist der erwartete Normalfall und
         deshalb kein Fehlerstatus, sondern {"available": false}.
         """
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -1919,7 +2018,7 @@ class _Handler(BaseHTTPRequestHandler):
         Liefert die Originaldatei aus. Range-Unterstuetzung ist Pflicht:
         ohne sie kann der Browser im Track nicht springen.
         """
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         # Endung zusaetzlich pruefen: die Freigabe haengt an einer Zeile in der
         # Datenbank, und welche Dateien dort landen, bestimmen "extensions"
         # und die gescannten Ordner. Ohne diese zweite Huerde waere jede Datei
@@ -2037,7 +2136,7 @@ class _Handler(BaseHTTPRequestHandler):
         """
         q = self._query()
         try:
-            paths = json.loads(unquote(q.get("paths", "[]")))
+            paths = json.loads(q.get("paths", "[]"))
         except (json.JSONDecodeError, TypeError, ValueError):
             paths = []
         if not isinstance(paths, list):
@@ -2052,7 +2151,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         # Dateiname aus der Query kommt vom Client (t()-generiert) -- gegen
         # Header-Injection und Pfadwechsel absichern, nicht blind uebernehmen.
-        name = unquote(q.get("name", "Tracks.zip"))
+        name = q.get("name", "Tracks.zip")
         name = "".join(c for c in name if c not in ("\r", "\n", '"', "/", "\\"))[:200] or "Tracks.zip"
         if not name.lower().endswith(".zip"):
             name += ".zip"
@@ -2065,7 +2164,7 @@ class _Handler(BaseHTTPRequestHandler):
         rename_pattern: str | None = None
         if q.get("rename") == "1":
             from . import rename as rename_mod
-            rename_pattern = unquote(q.get("pattern", "")) or cfgmod.load()["rename_pattern"]
+            rename_pattern = q.get("pattern", "") or cfgmod.load()["rename_pattern"]
             try:
                 rename_pattern = rename_mod.validate_pattern(rename_pattern)
             except ValueError as exc:
@@ -2120,7 +2219,7 @@ class _Handler(BaseHTTPRequestHandler):
                 pass
 
     def _get_waveform(self) -> None:
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -2146,7 +2245,7 @@ class _Handler(BaseHTTPRequestHandler):
         Rechnet ausserhalb von self.lock: ffmpeg ist externe Arbeit und
         dauert je nach Laenge ein bis mehrere Sekunden.
         """
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -2168,7 +2267,7 @@ class _Handler(BaseHTTPRequestHandler):
         holte damit jedes Bild erneut, und serverseitig hiess das jedes Mal
         die komplette Datei durch mutagen parsen.
         """
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -2209,7 +2308,7 @@ class _Handler(BaseHTTPRequestHandler):
         })
 
     # ── POST ──────────────────────────────────────────────────────────────
-    def do_POST(self):                         # noqa: N802
+    def _dispatch_post(self) -> None:
         if not self._same_origin():
             self._fail("Anfrage von fremder Herkunft abgelehnt", 403)
             return
@@ -2289,6 +2388,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_dj_track()
         elif route == "/api/dj-tempo":
             self._post_dj_tempo()
+        elif route == "/api/dj-ramp-fit":
+            self._post_dj_ramp_fit()
         elif route == "/api/dj-rekordbox":
             self._post_dj_rekordbox()
         elif route == "/api/user-tags":
@@ -2327,6 +2428,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_rekordbox_sync()
         elif route == "/api/rekordbox-pending-apply":
             self._post_rekordbox_pending_apply()
+        elif route == "/api/rekordbox-tags-sync":
+            self._post_rekordbox_tags_sync()
         elif route == "/api/rekordbox-scan":
             self._post_rekordbox_scan()
         elif route == "/api/rekordbox-fix-paths":
@@ -2373,6 +2476,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_merge_dismiss()
         elif route == "/api/cover":
             self._post_cover()
+        elif route == "/api/cover-copy":
+            self._post_cover_copy()
         elif route == "/api/cover-delete":
             self._post_cover_delete()
         elif route == "/api/lookup":
@@ -2481,7 +2586,7 @@ class _Handler(BaseHTTPRequestHandler):
                     db_mod.log_event(
                         conn, "play", path,
                         duration_s=min(duration_s, cap),
-                        in_music=path in db_mod.music_added_map(conn),
+                        in_music=db_mod.is_music_added(conn, path),
                     )
             finally:
                 conn.close()
@@ -3143,7 +3248,7 @@ class _Handler(BaseHTTPRequestHandler):
         q = self._query()
         try:
             path, name = stemjob_mod.JOBS.export(
-                unquote(q.get("job", "")), unquote(q.get("kind", "")), cfgmod.load())
+                q.get("job", ""), q.get("kind", ""), cfgmod.load())
         except (stemjob_mod.JobError, tags_mod.TagError, OSError) as exc:
             self._send(404, str(exc).encode("utf-8"), "text/plain; charset=utf-8")
             return
@@ -3986,6 +4091,43 @@ class _Handler(BaseHTTPRequestHandler):
         self._json({"ok": True, "total": len(paths), "next": offset + len(todo),
                     "imported": imported, "changed": changed})
 
+    def _post_rekordbox_tags_sync(self) -> None:
+        """Abgleich-Schalter "Metadaten nach Rekordbox": TrackTabs Metadaten fuer alle
+        Tracks der Sammlung schreiben, deren Metadaten abweichen (rekordbox.tag_diff_map(),
+        dieselbe Pruefung wie die Spalte Rekordbox). NUR Metadaten -- Beatgrid, Phrasen
+        und Cues bleiben dem Knopf "Rekordbox Update" vorbehalten (Nutzervorgabe).
+        Halbes/doppeltes Tempo schreibt _write_tags() nie, es bleibt als Hinweis stehen.
+        Eine Sicherung fuer den ganzen Lauf (backup_session), _rekordbox_lock je
+        Abschnitt, damit andere Rekordbox-Schreibwege zwischendurch drankommen."""
+        cfg = cfgmod.load()
+        rows = _tag_rows(cfg)
+        todo = [p for p, fields in rekordbox_mod.tag_diff_map(rows).items() if _tag_update_needed(fields)]
+        done, errors, stopped = [], {}, ""
+        session = f"tags-sync-{time.time():.0f}"
+        try:
+            with rekordbox_mod.backup_session(session):
+                for i in range(0, len(todo), 50):
+                    items = [{"path": p, "cues": None, "beats": None, "phrases": None,
+                              "audio_start_ms": 0, "tags": rows[p]} for p in todo[i:i + 50]]
+                    with self._rekordbox_lock:
+                        result = rekordbox_mod.update_tracks(items)
+                    for p, res in result["results"].items():
+                        if res.get("written"):
+                            done.append(p)
+                            audit_log.log("rekordbox-tags-sync", p, ",".join(res["written"]))
+                    errors.update(result["errors"])
+                    if result["stopped"]:
+                        stopped = result["stopped"]
+                        break
+        except rekordbox_mod.RekordboxRunning as exc:
+            self._json({"ok": False, "error": str(exc), "sticky": True}, 409)
+            return
+        except Exception as exc:                      # noqa: BLE001
+            self._fail(str(exc), 500)
+            return
+        self._json({"ok": True, "checked": len(todo), "updated": len(done),
+                    "errors": errors, "stopped": stopped})
+
     def _post_rekordbox_pending_apply(self) -> None:
         """Schreibt alle vorgemerkten Aenderungen in EINEM Durchlauf nach
         master.db: Tag-Aenderungen (siehe _rename_tag_value()) und freigegebene
@@ -4397,12 +4539,9 @@ class _Handler(BaseHTTPRequestHandler):
         with self.lock:
             conn = db_mod.connect(cfg)
             try:
-                conn.execute("DELETE FROM files WHERE path = ?", (path,))
-                conn.execute("DELETE FROM ignored WHERE path = ?", (path,))
-                conn.execute("DELETE FROM corrected WHERE path = ?", (path,))
-                conn.execute("DELETE FROM waveform WHERE path = ?", (path,))
-                conn.execute("DELETE FROM music_added WHERE path = ?", (path,))
-                conn.commit()
+                # Alle Caches und Messungen, nicht nur die Zeile selbst --
+                # siehe db.forget_file().
+                db_mod.forget_file(conn, path)
                 total = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
             finally:
                 conn.close()
@@ -4491,7 +4630,7 @@ class _Handler(BaseHTTPRequestHandler):
                 with self.lock:
                     conn = db_mod.connect(cfg)
                     try:
-                        was_music_added = path in db_mod.music_added_map(conn)
+                        was_music_added = db_mod.is_music_added(conn, path)
                         was_rekordbox = path in db_mod.rekordbox_paths(conn)
                     finally:
                         conn.close()
@@ -4760,6 +4899,8 @@ class _Handler(BaseHTTPRequestHandler):
             except (TypeError, ValueError):
                 self._fail("Ungültiger BPM-Wert")
                 return
+        if "compilation" in payload:
+            fields["compilation"] = 1 if payload["compilation"] else 0
         # Tonart: in die Datei geht sie in der gewaehlten Schreibweise
         # (Einstellung key_notation), in der DB bleibt sie Camelot.
         key_canon = None
@@ -4919,7 +5060,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Wellenform des DJ-Editors nach dj_waveform_source und dj_waveform_style,
         je Spalte vier Bytes (wavedetail.STYLED_RATE). X-Wave-Source sagt, woher sie
         wirklich stammt: rekordbox oder tracktab. X-Wave-Lead = Versatz der Rekordbox-Daten zur eigenen Zeitachse."""
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -4954,7 +5095,7 @@ class _Handler(BaseHTTPRequestHandler):
         Liest nur, uebernimmt nichts aus Rekordbox und misst nichts nach, darf
         also fuer viele Tracks hintereinander laufen. Zeiten in Sekunden auf der
         eigenen Zeitachse, wie die Cues mit cues_own."""
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -4970,7 +5111,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Farbige Gesamtansicht fuer Bearbeiten und Player nach waveform_style, immer
         aus TrackTabs eigener Messung, nie aus Rekordbox. Standard = grau, dann null.
         Rechnet ausserhalb von self.lock, das Ergebnis bleibt in der DB."""
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -5109,6 +5250,7 @@ class _Handler(BaseHTTPRequestHandler):
                             if edits[f] is not None and base["pushed"].get(f) != _dj_hash(edits[f])]
                            + (["tags"] if state["present"] and _tag_update_needed(tag_diff) else []),
                 "notes": ["bpm_half"] if state["present"] and "bpm_half" in tag_diff else [],
+                "tag_fields": [f for f in tag_diff if f != "bpm_half"] if state["present"] else [],
             },
             "palettes": rekordbox_mod.cue_palettes(),
         }
@@ -5116,7 +5258,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _get_dj_track(self) -> None:
         """Beatgrid, Phrasen und Cues eines Tracks fuer den DJ-Editor. Kein
         self.lock: reine Lesezugriffe, die Wellenform rechnet ausserhalb."""
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -5139,11 +5281,15 @@ class _Handler(BaseHTTPRequestHandler):
         rb_diff = {**rb_changed, **{p: d for p, (e, b) in edited.items() if (d := _dj_rb_diff(p, e, b))}}
         # Metadaten (Titel, Interpret, ...): TrackTab gegen Rekordbox, ohne eigene Merkung.
         # bpm_half (halbes/doppeltes Tempo) ist nur ein Hinweis, nichts zu uebertragen.
+        # rb_tag_fields: welche Metadaten im Einzelnen (Tooltip der Spalte Rekordbox).
+        rb_tag_fields = {}
         for p, fields in rekordbox_mod.tag_diff_map(_tag_rows(cfg)).items():
             extra = (["tags"] if _tag_update_needed(fields) else []) + (["bpm_half"] if "bpm_half" in fields else [])
             rb_diff[p] = [*rb_diff.get(p, []), *extra]
+            if _tag_update_needed(fields):
+                rb_tag_fields[p] = [f for f in fields if f != "bpm_half"]
         self._json({"bpms": bpms, "tempo": tempo, "tempo_seq": tempo_seq,
-                    "rb_diff": rb_diff, "hot_cues": sorted(_hot_cue_paths(cfg)),
+                    "rb_diff": rb_diff, "rb_tag_fields": rb_tag_fields, "hot_cues": sorted(_hot_cue_paths(cfg)),
                     "rb_compare": str(cfg.get("beatgrid_source") or "fallback") != "tracktab"})
 
     def _get_dj_pcm(self) -> None:
@@ -5151,7 +5297,7 @@ class _Handler(BaseHTTPRequestHandler):
         DJ-Editor. Nur so laeuft ein Loop lueckenlos (AudioBufferSourceNode, ein
         <audio> muss springen), und der Ton kommt aus derselben ffmpeg-Dekodierung
         wie Wellenform und Analyse: alles liegt auf einer Zeitachse."""
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         if not path or not self._authorize_fast(path):
             self._reject_missing(path)
             return
@@ -5186,6 +5332,38 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
         self._json({"ok": True})
+
+    def _post_dj_ramp_fit(self) -> None:
+        """Schlaege einer Tempo-Rampe (DJ-Editor) an die Anschlaege im Audio legen
+        (beatgrid.fit_ramp()), eigene Anker (`fixed`) bleiben fest. Schreibt nichts, der Client setzt daraus Anker. Zeiten auf
+        TrackTabs Achse wie /api/dj-track. Dekodieren und Suchen ausserhalb von self.lock."""
+        try:
+            payload = json.loads(self._body(10_000).decode("utf-8"))
+            path = str(payload["path"])
+            t0, t1 = _dj_time(payload["t0"]), _dj_time(payload["t1"])
+            bpm0, bpm1, beats = float(payload["bpm0"]), float(payload["bpm1"]), int(payload["beats"])
+            if not (20 <= bpm0 <= 400 and 20 <= bpm1 <= 400 and 2 <= beats <= 4096 and t1 > t0):
+                raise ValueError("Werte außerhalb des Bereichs")
+            # Eigene Anker des Nutzers: bleiben fest, eingepasst wird nur dazwischen.
+            fixed = {}
+            for k, sec in payload.get("fixed") or []:
+                k, sec = int(k), _dj_time(sec)
+                if not (0 < k < beats and t0 < sec < t1):
+                    raise ValueError("Ungültiger Anker")
+                fixed[k] = sec
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        _row, ok, path = self._authorize_or_relocate(path)
+        if not ok:
+            self._reject_missing(path)
+            return
+        try:
+            fitted = beatgrid_mod.fit_ramp(path, t0, t1, bpm0, bpm1, beats, fixed=fixed)
+        except Exception as exc:                       # noqa: BLE001
+            self._fail(f"Rampe einpassen fehlgeschlagen: {exc}", 500)
+            return
+        self._json({"ok": True, "beats": [list(b) for b in fitted]})
 
     def _post_dj_track(self) -> None:
         """Bearbeitungen aus der DJ-Ansicht speichern. Nur die mitgeschickten
@@ -6026,7 +6204,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _post_cover(self) -> None:
         """Ersetzt das eingebettete Cover. Pfad im Query-String (wie /api/audio),
         Bilddaten roh im Body, MIME-Typ im Content-Type-Header."""
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         row, ok, path = self._authorize_or_relocate(path)
         if not path or not ok:
             self._reject_missing(path)
@@ -6055,16 +6233,57 @@ class _Handler(BaseHTTPRequestHandler):
                        "(JPEG, PNG, GIF, WebP, AVIF oder BMP).")
             return
 
+        self._apply_cover(path, row, data, mime)
+
+    def _post_cover_copy(self) -> None:
+        """Uebertraegt das eingebettete Cover einer Datei auf andere ({from, to: [..]}) --
+        Quick Fix der Auffaelligkeit album_cover_mismatch. Je Ziel dieselbe Nachbehandlung
+        wie /api/cover (Music.app, DB, Hash). Antwort: {ok, results: {pfad: Antwort}}."""
+        try:
+            payload = json.loads(self._body(1_000_000).decode("utf-8"))
+            src = str(payload["from"])
+            targets = [str(x) for x in payload["to"]]
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        _, ok, src = self._authorize_or_relocate(src)
+        if not ok:
+            self._reject_missing(src)
+            return
+        cover = tags_mod.read_cover(src)
+        mime = _sniff_image_mime(cover[0]) if cover else ""
+        if not cover or not mime:
+            self._fail("Die Quelldatei hat kein lesbares Cover.")
+            return
+        results: dict = {}
+        for path in targets:
+            row, ok, path2 = self._authorize_or_relocate(path)
+            if not ok:
+                results[path] = {"ok": False, "error": "Datei nicht gefunden"}
+                continue
+            results[path] = self._apply_cover(path2, row, cover[0], mime, respond=False)
+        self._json({"ok": True, "results": results})
+
+    def _apply_cover(self, path: str, row, data: bytes, mime: str, respond: bool = True):
+        """Schreibt ein Cover in die Datei und zieht DB, Music.app und Report nach.
+        respond=False liefert die Antwort als dict zurueck statt sie zu senden."""
+        out = self._apply_cover_inner(path, row, data, mime)
+        if respond:
+            if out.get("ok"):
+                self._json(out)
+            else:
+                self._fail(out.get("error", "Fehler"), 500)
+        return out
+
+    def _apply_cover_inner(self, path: str, row, data: bytes, mime: str) -> dict:
         try:
             tags_mod.write_cover(path, data, mime)
         except tags_mod.TagError as exc:
-            self._fail(str(exc), 500)
-            return
+            return {"ok": False, "error": str(exc)}
         audit_log.log("cover", path)
 
         if row is None:
-            self._json({"ok": True, "row": None})
-            return
+            return {"ok": True, "row": None}
 
         cfg = cfgmod.load()
         with self.lock:
@@ -6074,7 +6293,7 @@ class _Handler(BaseHTTPRequestHandler):
                 # auch fuer einen Pfad, der noch aus aelterer Zeit in
                 # 'music_added' steht (siehe _require_music()).
                 in_library = bool(cfg.get("external_music")) and \
-                    path in db_mod.music_added_map(conn)
+                    db_mod.is_music_added(conn, path)
             finally:
                 conn.close()
 
@@ -6117,13 +6336,13 @@ class _Handler(BaseHTTPRequestHandler):
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
             dup_dismissed, genremood)[0]
-        self._json({"ok": True, "row": compact,
-                     "music_cover_synced": music_cover_synced,
-                     "music_cover_error": music_cover_error})
+        return {"ok": True, "row": compact,
+                "music_cover_synced": music_cover_synced,
+                "music_cover_error": music_cover_error}
 
     def _post_cover_delete(self) -> None:
         """Entfernt das eingebettete Cover. Pfad im Query-String (wie /api/cover)."""
-        path = unquote(self._query().get("path", ""))
+        path = self._query().get("path", "")
         row, ok, path = self._authorize_or_relocate(path)
         if not path or not ok:
             self._reject_missing(path)
@@ -6148,7 +6367,7 @@ class _Handler(BaseHTTPRequestHandler):
                 # auch fuer einen Pfad, der noch aus aelterer Zeit in
                 # 'music_added' steht (siehe _require_music()).
                 in_library = bool(cfg.get("external_music")) and \
-                    path in db_mod.music_added_map(conn)
+                    db_mod.is_music_added(conn, path)
             finally:
                 conn.close()
 
@@ -6255,7 +6474,7 @@ class _Handler(BaseHTTPRequestHandler):
                 # auch fuer einen Pfad, der noch aus aelterer Zeit in
                 # 'music_added' steht (siehe _require_music()).
                 in_library = bool(cfg.get("external_music")) and \
-                    path in db_mod.music_added_map(conn)
+                    db_mod.is_music_added(conn, path)
             finally:
                 conn.close()
 
@@ -6674,7 +6893,7 @@ class _Handler(BaseHTTPRequestHandler):
         """Auto-Cue-Modell als ZIP in die Modellbibliothek laden (autocue/package.py).
         Koerper = die ZIP-Datei, Name optional per ?name=. Gilt erst nach Auswahl
         (ausser es ist das erste Modell)."""
-        name = unquote(self._query().get("name", ""))
+        name = self._query().get("name", "")
         try:
             data = self._body(160 * 1024 * 1024)
             model_id, manifest = autocue_package.install(data, name)
@@ -6774,7 +6993,7 @@ class _Handler(BaseHTTPRequestHandler):
     def _get_autocue_model_export(self) -> None:
         """Ein Modell als ZIP herunterladen (zum Weitergeben, Import auf einem anderen Rechner)."""
         from .autocue import library as autocue_library
-        model_id = unquote(self._query().get("id", ""))
+        model_id = self._query().get("id", "")
         entry = next((e for e in autocue_library.entries() if e["id"] == model_id), None)
         if entry is None:
             self._send(404, "Modell nicht gefunden".encode("utf-8"), "text/plain; charset=utf-8")
@@ -7226,14 +7445,21 @@ class _Handler(BaseHTTPRequestHandler):
         Zustaende, die auseinanderlaufen koennen."""
         try:
             payload = json.loads(self._body(200_000).decode("utf-8"))
+            if isinstance(payload.get("view"), dict):
+                # Einzelne Ansicht (Spalten-Menue): ersetzt nur diese, eine
+                # geloeschte kommt dadurch nicht zurueck (save_column_view()).
+                with self.lock:
+                    saved = settings_mod.save_column_view(payload["view"], bool(payload.get("create")))
+                self._json({"ok": True, **saved})
+                return
             with self.lock:
                 saved = settings_mod.save_column_views(
                     payload.get("column_views") or [],
                     # Nicht mitgeschickt = unveraendert lassen (Spalten-Menue),
                     # mitgeschickt = setzen (Einstellungs-Dialog).
-                    payload.get("default") if "default" in payload else None,
-                    payload.get("music_default") if "music_default" in payload else None,
-                    payload.get("drop_view") if "drop_view" in payload else None)
+                    payload.get("drop_view") if "drop_view" in payload else None,
+                    payload.get("edit_view") if "edit_view" in payload else None,
+                    payload.get("player_view") if "player_view" in payload else None)
         except ValueError as exc:
             self._fail(str(exc))
             return
@@ -7409,7 +7635,7 @@ class _Handler(BaseHTTPRequestHandler):
         """
         from .analyzer import analyse_file
 
-        name = unquote(self._query().get("name", "unbekannt"))
+        name = self._query().get("name", "unbekannt")
         suffix = Path(name).suffix.lower()
         if suffix not in _AUDIO_TYPES:
             self._fail(f"Kein unterstütztes Audioformat: {suffix or 'ohne Endung'}")

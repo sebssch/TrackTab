@@ -318,11 +318,20 @@ function genKeyOk(a, b, mode) {
   return d === 0 || (mode === "loose" && d === 1);
 }
 
+// Uebergang a -> b: Endtempo von a gegen Anfangstempo von b (tempoEnds() in app.js). Ein
+// Transition-Track 100 -> 128 passt so hinter einen 100er und vor einen 128er, statt am
+// BPM-Tag (meist nur eines der beiden Tempi) am Gate zu scheitern.
 function genBpmDiff(a, b, half) {
-  if (!(a.bp > 0) || !(b.bp > 0)) return Infinity;
-  let d = Math.abs(a.bp - b.bp);
-  if (half) d = Math.min(d, Math.abs(a.bp * 2 - b.bp), Math.abs(a.bp / 2 - b.bp));
+  const x = tempoEnds(a).end, y = tempoEnds(b).start;
+  if (!(x > 0) || !(y > 0)) return Infinity;
+  let d = Math.abs(x - y);
+  if (half) d = Math.min(d, Math.abs(x * 2 - y), Math.abs(x / 2 - y));
   return d;
+}
+// Tempo fuer die Anzeige: "100→128" bei Tempowechsel, sonst die gerundete Zahl.
+function genTempoText(r) {
+  const e = tempoEnds(r), a = Math.round(e.start || 0), b = Math.round(e.end || 0);
+  return a && b && a !== b ? `${a}→${b}` : (r.bp ? String(Math.round(r.bp)) : "–");
 }
 
 function genBpmOk(a, b, gates) {
@@ -335,7 +344,7 @@ function genBpmOk(a, b, gates) {
 function genConflict(a, b, gates) {
   const out = [];
   if (!genBpmOk(a, b, gates)) {
-    const d = Math.round((b.bp || 0) - (a.bp || 0));
+    const d = Math.round((tempoEnds(b).start || 0) - (tempoEnds(a).end || 0));
     out.push(t("gen.conflict_bpm", {delta: (d > 0 ? "+" : d < 0 ? "−" : "±") + Math.abs(d)}));
   }
   if (!genKeyOk(a, b, gates.key)) out.push(t("gen.conflict_key"));
@@ -782,7 +791,7 @@ function genSlotsHtml() {
       ${energyCell(r.eg)}${target}
       <span class="genacts">${roll}${pick}${remove}${del}</span>${lockBtn}
       <span class="genkey">${keyBubble(r.ky, r.kr)}</span>
-      <span class="genbpm">${r.bp ? Math.round(r.bp) : "–"}<small>BPM</small></span>
+      <span class="genbpm${genTempoText(r).includes("→") ? " tempochg" : ""}">${genTempoText(r)}<small>BPM</small></span>
     </div>`);
   });
   return out.join("");
@@ -980,7 +989,7 @@ function genOpenAlternatives(i, btn) {
   const cands = genCandidates(g, i, pool, ranks, used).slice(0, 8);
   if (!cands.length) { note(t("gen.pool_empty"), "soft"); return; }
   openContextMenu(cands.map(({r}) => ({
-    label: `${r.a ? r.a + " – " : ""}${r.t || baseName(r.p)} · ${Math.round(r.eg)} · ${keyLabel(r.ky) || "–"} · ${r.bp ? Math.round(r.bp) : "–"}`,
+    label: `${r.a ? r.a + " – " : ""}${r.t || baseName(r.p)} · ${Math.round(r.eg)} · ${keyLabel(r.ky) || "–"} · ${genTempoText(r)}`,
     action: () => { g.tracks[i] = r; genScheduleSave(); genRenderBody(); },
   })), btn);
 }

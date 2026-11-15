@@ -4,6 +4,15 @@ Rekordbox: Beatgrid aus beatgrid.py, Bandlautstaerke je Schlag und ein kleines
 Modell in vendor/models/phrases/phrases.onnx (onnxruntime). Liest nur, schreibt
 weder in die Datei noch nach Rekordbox.
 
+Herkunft: Modell und Rechenweg stammen aus GlideMix 1.3.0 (glidemix.com,
+Quellcode github.com/cristitm76/glidemix-releases, GPL). Das Modell ist
+unveraendert src/mixhouse/models/glidemix_phrases.onnx; dieses Modul ist ein
+Python-Nachbau von mixhousephrasemodel.cpp (Eingangswerte, Auswertung) und
+mixhousephrasedetector.cpp (detect_blocks()). Copyright der GlideMix-Autoren;
+veraenderte Fassung (2026, Sebastian Gabler: Uebertragung nach Python, eigenes
+Beatgrid, Rechnung je Schlag bei Tempowechseln), weitergegeben unter
+GPL-3.0-oder-spaeter (LICENSE, NOTICE.md, THIRD_PARTY_LICENSES.md).
+
 Das Modell bekommt je Takt 23 Werte: Lautstaerke dreier Baender (< 150 Hz,
 150-2000 Hz, > 2 kHz) auf vier Schlaegen (12), deren Mittel (3), die Rolle aus
 dem Lautheits-Detektor detect_blocks() (5), Position im Track (2), Tempo (1).
@@ -30,7 +39,7 @@ from . import config as cfgmod
 from . import media
 
 # Stand der gespeicherten Analyse (Spalte phrases.version).
-ANALYSIS_VERSION = "phrases-2"
+ANALYSIS_VERSION = "phrases-3"   # 3: Transition-Tracks mit Rampe (beatgrid._segment_transition())
 
 _ROLES = ("intro", "up", "down", "chorus", "outro")
 _HIGH = ("intro", "up", "down", "chorus", "outro")

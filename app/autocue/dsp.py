@@ -12,7 +12,8 @@ melspectrogram, chroma_stft inkl. estimate_tuning/piptrack).
 Gegen librosa pruefen, nie gegen eine eigene Vorstellung davon:
 tools/autocue_parity.py (laeuft im .venv des Autocue-Projekts).
 
-librosa steht unter der ISC-Lizenz (siehe THIRD_PARTY_LICENSES.md).
+librosa: Copyright (c) 2013--2023, librosa development team, ISC-Lizenz (Text in
+licenses/ui/librosa-LICENSE.md, siehe THIRD_PARTY_LICENSES.md).
 
 Gerechnet wird in Bloecken ueber die Frames, damit ein 10-Minuten-Track nicht
 mehrere hundert MB Zwischenspeicher in float64 belegt; das Spektrogramm selbst

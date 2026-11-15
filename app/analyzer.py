@@ -8,6 +8,7 @@ import hashlib
 
 from . import classify as classify_mod
 from . import loudness as loudness_mod
+from . import media
 from . import probe as probe_mod
 from . import spectral as spectral_mod
 from . import taganomaly as taganomaly_mod
@@ -41,10 +42,14 @@ def _hash_file(path: str) -> str:
 SPECTRAL_SKIPPED_REASON = "Cutoff-Scan übersprungen"
 
 
-def analyse_file(job: tuple) -> dict:
-    path, size, mtime, cfg = job
+def blank_row(path: str, size: int, mtime: float) -> dict:
+    """Grundzeile mit status 'error' und allen Spalten auf ihrer Vorgabe.
 
-    row = {
+    Eigene Funktion, damit auch der Scan (jobs.run_scan) eine vollstaendige
+    Fehlerzeile bauen kann, wenn ein Worker gar kein Ergebnis liefert --
+    eine Zeile mit lauter None-Spalten wuerde Report und Oberflaeche stoeren.
+    """
+    return {
         "path": path, "size": size, "mtime": mtime,
         "status": "error", "error": "", "duration_s": 0.0,
         "declared_kbps": 0, "bitrate_mode": "", "sample_rate": 0, "channels": 0,
@@ -54,6 +59,7 @@ def analyse_file(job: tuple) -> dict:
         "genre": "", "bpm": 0.0, "has_cover": 0,
         "album_artist": "", "composer": "", "year": 0, "comment": "",
         "track_no": 0, "track_total": 0, "key": "", "key_raw": "",
+        "cover_hash": "", "compilation": 0,
         "cutoff_hz": 0.0, "raw_cutoff_hz": 0.0, "steepness_db": 0.0,
         "plateau_db": 0.0, "edge_segments": [],
         "is_brickwall": 0, "at_nyquist": 0,
@@ -62,8 +68,13 @@ def analyse_file(job: tuple) -> dict:
         "verdict": classify_mod.VERDICT_UNKNOWN, "confidence": 0.0,
         "reasons": [], "spectrum": [], "tag_issues": [],
         "integrated_lufs": 0.0, "true_peak_dbtp": 0.0, "lra_lu": 0.0,
-        "file_hash": "",
+        "file_hash": "", "audio_hash": "",
     }
+
+
+def analyse_file(job: tuple) -> dict:
+    path, size, mtime, cfg = job
+    row = blank_row(path, size, mtime)
 
     try:
         pr = probe_mod.probe(path)
@@ -95,6 +106,9 @@ def analyse_file(job: tuple) -> dict:
         return row
 
     row["file_hash"] = _hash_file(path)
+    # Kennung des Audioinhalts ohne Tags: daran erkennt db.save(), dass unter
+    # demselben Pfad eine andere Aufnahme liegt (siehe dort).
+    row["audio_hash"] = media.audio_fingerprint(path)
 
     if pr.duration_s < float(cfg["min_duration_s"]):
         row["status"] = "ok"

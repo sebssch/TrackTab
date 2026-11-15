@@ -89,19 +89,30 @@ def snap_phrases(phrases: list, beats: list, bars_only: bool) -> list:
     return phrases_from_first_beat(out, beats)
 
 
+# Ein auf ms gerundeter Schlag darf bis zu einer halben ms vor dem Beginn seines Abschnitts
+# liegen (Abschnitte stehen auf 0,1 ms genau), er gehoert trotzdem schon dazu.
+_SEGMENT_EDGE_S = 0.0015
+
+
+def segment_index(segments: list, sec: float) -> int:
+    idx = 0
+    for i, seg in enumerate(segments):
+        if seg["t"] <= sec + _SEGMENT_EDGE_S:
+            idx = i
+    return idx
+
+
 def segment_tempo(segments: list, sec: float) -> float:
-    tempo = segments[0]["bpm"]
-    for seg in segments:
-        if seg["t"] <= sec + 1e-6:
-            tempo = seg["bpm"]
-    return tempo
+    return segments[segment_index(segments, sec)]["bpm"]
 
 
 def beats_with_tempo(beats: list, segments: list, lead: float, bpm: float = 0) -> list:
     """[[ms, Nummer]] auf eigener Achse -> [[ms, Nummer, BPM]] auf Rekordbox' Achse.
     Ohne Abschnitte (reine Analyse) kommt das Tempo aus dem Abstand ueber je 8 Schlaege;
     bei gleichmaessigem Raster ein festes Tempo, die Rundung auf ms schwankte sonst je
-    Schlag. bpm: gemessenes Tempo, gilt, wenn es zum Abstand passt."""
+    Schlag. bpm: gemessenes Tempo, gilt, wenn es zum Abstand passt.
+    In einer Rampe (Abschnitt mit "ramp", dj.js) hat jeder Schlag sein eigenes Tempo,
+    der Client rechnet es aus den ungerundeten Zeiten (ramp.tempos, k-ter Schlag der Rampe)."""
     out = []
     n = len(beats)
     if not segments and n > 1:
@@ -110,9 +121,14 @@ def beats_with_tempo(beats: list, segments: list, lead: float, bpm: float = 0) -
             step = (beats[-1][0] - beats[0][0]) / (n - 1)
             fixed = bpm if bpm and step > 0 and abs(60000 / step - bpm) < 0.5 else (round(60000 / step, 2) if step > 0 else 120.0)
             return [[int(round(ms + lead * 1000)), num, fixed] for ms, num in beats]
+    ramp_seg, ramp_k = -1, 0
     for i, (ms, num) in enumerate(beats):
         if segments:
-            bpm = segment_tempo(segments, ms / 1000)
+            si = segment_index(segments, ms / 1000)
+            tempos = (segments[si].get("ramp") or {}).get("tempos") or []
+            ramp_k = ramp_k + 1 if si == ramp_seg else 0
+            ramp_seg = si
+            bpm = tempos[ramp_k] if ramp_k < len(tempos) else segments[si]["bpm"]
         else:
             a, b = max(0, i - 4), min(n - 1, i + 4)
             span = beats[b][0] - beats[a][0]

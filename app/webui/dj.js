@@ -30,6 +30,15 @@ var DJ;
 // Vorlieben {q, span, mode, side}, je Browser (localStorage).
 var DJ_PREFS;
 var DJ_AUDIO_CTX;
+var DJ_METRO_SOUND;       // Einstellung dj_metronome_sound, gesetzt von app.js
+var DJ_METRO_NOISE;       // Rauschpuffer je Kontext fuer die Metronom-Klaenge
+var DJ_METRO_PREVIEW;     // eigener Kontext fuers Vorhoeren in den Einstellungen
+// Verwaltung des Kontexts (siehe djCtx()): Leerlauf-Timer, Zeitpunkt des letzten
+// Ersatzes, Uhr-Beobachtung {ctx, time, at}, ob 'devicechange' schon verdrahtet ist.
+var DJ_CTX_IDLE;
+var DJ_CTX_RENEWED;
+var DJ_CTX_WATCH;
+var DJ_CTX_DEVICE_HOOK;
 var DJ_NEXT_ID;
 var DJ_BARS_FMT;
 
@@ -119,9 +128,92 @@ function djNewId() { DJ_NEXT_ID = (DJ_NEXT_ID || 0) + 1; return DJ_NEXT_ID; }
 
 // ── Wiedergabe ──────────────────────────────────────────
 
+// Safari verliert die Ausgabe eines AudioContext, wenn ein anderes Programm das
+// Ausgabegeraet umstellt (Abtastrate, Geraetewechsel): das Deck laeuft weiter, zu
+// hoeren ist nichts mehr, bis die Seite neu laedt. Ein NEUER Kontext bekommt die
+// Ausgabe zurueck (<audio> ist nicht betroffen). Deshalb:
+// - der Kontext lebt nur, solange das Deck spielt: nach 1,5 s Pause schliesst
+//   djCtxIdle() ihn, das naechste Play baut einen frischen (in der Nutzergeste);
+// - waehrend des Spielens ersetzt djCtxRenew() ihn an derselben Stelle, wenn sich
+//   die Geraete aendern, die Audio-Uhr steht (djCtxWatch()) oder Safari ihn von
+//   aussen anhaelt (djCtxStateChanged()).
+// Die AudioBuffer der Decks haengen an keinem Kontext (new AudioBuffer()), nur der
+// Lautstaerke-Knoten wird je Kontext neu angelegt (startSource()).
 function djCtx() {
-  if (!DJ_AUDIO_CTX) DJ_AUDIO_CTX = new (window.AudioContext || window.webkitAudioContext)();
+  if (!DJ_AUDIO_CTX) {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    ctx.onstatechange = () => djCtxStateChanged(ctx);
+    DJ_AUDIO_CTX = ctx;
+    DJ_CTX_WATCH = null;
+    if (!DJ_CTX_DEVICE_HOOK && navigator.mediaDevices && navigator.mediaDevices.addEventListener) {
+      DJ_CTX_DEVICE_HOOK = true;
+      navigator.mediaDevices.addEventListener("devicechange", () => {
+        if (djDeckPlaying()) djCtxRenew();
+        else djCtxDrop();
+      });
+    }
+  }
   return DJ_AUDIO_CTX;
+}
+// Spielt das Deck des offenen Editors ueber Web Audio (nicht der <audio>-Rueckfall)?
+function djDeckPlaying() {
+  return !!(DJ && DJ.audio && !DJ.audio.html && !DJ.audio.paused);
+}
+function djCtxDrop() {
+  const ctx = DJ_AUDIO_CTX;
+  clearTimeout(DJ_CTX_IDLE);
+  DJ_AUDIO_CTX = null;
+  DJ_CTX_WATCH = null;
+  if (!ctx) return;
+  ctx.onstatechange = null;
+  if (ctx.state !== "closed") ctx.close().catch(() => {});
+}
+// Nach jedem Anhalten: kurz offen lassen (CUE antippen, Pause/Play), dann schliessen.
+function djCtxIdle() {
+  clearTimeout(DJ_CTX_IDLE);
+  DJ_CTX_IDLE = setTimeout(() => { if (!djDeckPlaying()) djCtxDrop(); }, 1500);
+}
+// Ersetzt den Kontext waehrend der Wiedergabe, das Deck spielt an derselben Stelle weiter.
+function djCtxRenew() {
+  const now = performance.now();
+  // Hoechstens alle 3 s, sonst dreht sich ein Fehler im Kreis.
+  if (DJ_CTX_RENEWED && now - DJ_CTX_RENEWED < 3000) return;
+  DJ_CTX_RENEWED = now;
+  const ed = djDeckPlaying() ? DJ : null;
+  const at = ed ? ed.audio.rawTime() : 0;
+  if (ed) ed.audio.stopSource();
+  djCtxDrop();
+  if (!ed) return;
+  const ctx = djCtx();
+  if (ctx.state !== "running") ctx.resume().catch(() => {});
+  ed.audio.startSource(at);
+  ed.metroNext = 0;
+  // Ohne Nutzergeste darf Safari den neuen Kontext stumm lassen. Dann sichtbar
+  // anhalten statt still weiterlaufen -- das naechste Play (eine Geste) startet ihn.
+  setTimeout(() => {
+    if (DJ_AUDIO_CTX === ctx && ctx.state !== "running" && DJ === ed && djDeckPlaying()) ed.audio.pause();
+  }, 400);
+}
+// Von aussen angehalten ("interrupted" in Safari, "suspended"): erst fortsetzen, sonst ersetzen.
+function djCtxStateChanged(ctx) {
+  if (ctx !== DJ_AUDIO_CTX || !djDeckPlaying()) return;
+  if (ctx.state === "running" || ctx.state === "closed") return;
+  ctx.resume().catch(() => {});
+  setTimeout(() => {
+    if (ctx === DJ_AUDIO_CTX && ctx.state !== "running" && djDeckPlaying()) djCtxRenew();
+  }, 300);
+}
+// Laeuft je Bild (deck.tick()): steht die Audio-Uhr trotz "running" laenger still,
+// liefert der Kontext nichts mehr an das Geraet.
+function djCtxWatch() {
+  const ctx = DJ_AUDIO_CTX;
+  if (!ctx || ctx.state !== "running" || !djDeckPlaying()) { DJ_CTX_WATCH = null; return; }
+  const now = performance.now(), w = DJ_CTX_WATCH;
+  if (!w || w.ctx !== ctx || ctx.currentTime !== w.time) {
+    DJ_CTX_WATCH = {ctx, time: ctx.currentTime, at: now};
+    return;
+  }
+  if (now - w.at > 800) djCtxRenew();
 }
 
 // Web-Audio-Spieler mit der Oberflaeche eines <audio>. Bei sehr langen Dateien
@@ -160,7 +252,12 @@ function djCreateDeck(path, duration) {
     },
     startSource(from) {
       const ctx = djCtx();
-      if (!deck.gain) { deck.gain = ctx.createGain(); deck.gain.connect(ctx.destination); }
+      // Der Kontext kann seit dem letzten Start ersetzt worden sein (djCtxRenew()/djCtxIdle()).
+      if (!deck.gain || deck.gain.context !== ctx) {
+        deck.gain = ctx.createGain();
+        deck.gain.connect(ctx.destination);
+        deck.tick();
+      }
       const now = ctx.currentTime, src = ctx.createBufferSource(), fade = ctx.createGain();
       src.buffer = deck.buffer;
       if (deck.range) { src.loop = true; src.loopStart = deck.range.start; src.loopEnd = deck.range.end; }
@@ -170,6 +267,7 @@ function djCreateDeck(path, duration) {
       src.onended = () => {
         if (deck.src !== src) return;
         deck.src = null; deck.paused = true; deck.ended = true; deck.offset = deck.buffer.duration;
+        djCtxIdle();
         if (deck.onended) deck.onended();
       };
       src.start(now, from);
@@ -189,7 +287,12 @@ function djCreateDeck(path, duration) {
       if (deck.html) return deck.html.play();
       if (!deck.buffer) { deck.wantPlay = true; return Promise.resolve(); }
       if (!deck.paused) return Promise.resolve();
-      djCtx().resume();
+      clearTimeout(DJ_CTX_IDLE);
+      // Ein noch offener, aber nicht laufender Kontext (von aussen angehalten) wird
+      // hier in der Nutzergeste ersetzt statt nur fortgesetzt.
+      if (DJ_AUDIO_CTX && DJ_AUDIO_CTX.state !== "running") djCtxDrop();
+      const ctx = djCtx();
+      if (ctx.state !== "running") ctx.resume().catch(() => {});
       deck.paused = false; deck.ended = false;
       if (deck.offset >= deck.buffer.duration - 0.01) deck.offset = 0;
       deck.startSource(deck.offset);
@@ -203,6 +306,7 @@ function djCreateDeck(path, duration) {
       deck.offset = deck.currentTime;
       deck.paused = true;
       deck.stopSource();
+      djCtxIdle();
       if (deck.onpause) deck.onpause();
     },
     // {start, end} oder null. Laufend umstellbar: die Quelle spielt einfach weiter,
@@ -225,6 +329,7 @@ function djCreateDeck(path, duration) {
         return;
       }
       if (deck.gain) deck.gain.gain.value = queueAudio.muted ? 0 : queueAudio.volume * deck.duck;
+      if (!deck.paused) djCtxWatch();
     },
     close() {
       deck.abort.abort();
@@ -232,6 +337,7 @@ function djCreateDeck(path, duration) {
       deck.stopSource();
       if (deck.gain) deck.gain.disconnect();
       deck.buffer = null; deck.paused = true;
+      djCtxIdle();
     },
   };
 
@@ -257,7 +363,10 @@ function djCreateDeck(path, duration) {
       const rate = Number(res.headers.get("X-Pcm-Rate")) || 44100;
       const pcm = new Int16Array(await res.arrayBuffer());
       const frames = pcm.length >> 1;
-      const buffer = djCtx().createBuffer(2, Math.max(1, frames), rate);
+      // Ohne Kontext anlegen: der Puffer ueberlebt so jeden Ersatz des Kontexts (siehe djCtx()).
+      let buffer;
+      try { buffer = new AudioBuffer({numberOfChannels: 2, length: Math.max(1, frames), sampleRate: rate}); }
+      catch { buffer = djCtx().createBuffer(2, Math.max(1, frames), rate); }
       const left = buffer.getChannelData(0), right = buffer.getChannelData(1);
       for (let i = 0; i < frames; i++) { left[i] = pcm[i * 2] / 32768; right[i] = pcm[i * 2 + 1] / 32768; }
       deck.buffer = buffer; deck.ready = true; deck.loading = false;
@@ -294,11 +403,12 @@ function djDetailHTML(r) {
       <div class="dj-pads"></div>
       <div class="dj-toolbar">
         <span class="dj-modes">
-          <button class="dj-mode" data-dj="mode" data-mode="cue">${esc(t("dj.mode_cue"))}</button>
-          <button class="dj-mode" data-dj="mode" data-mode="grid">${esc(t("dj.mode_grid"))}</button>
-          <button class="dj-mode" data-dj="mode" data-mode="phrase">${esc(t("dj.mode_phrase"))}</button>
-          <button class="dj-mode" data-dj="mode" data-mode="jump">${esc(t("dj.mode_jump"))}</button>
+          <button class="dj-mode" data-dj="mode" data-mode="grid" data-text="${esc(t("dj.mode_grid"))}">${esc(t("dj.mode_grid"))}</button>
+          <button class="dj-mode" data-dj="mode" data-mode="phrase" data-text="${esc(t("dj.mode_phrase"))}">${esc(t("dj.mode_phrase"))}</button>
+          <button class="dj-mode" data-dj="mode" data-mode="cue" data-text="${esc(t("dj.mode_cue"))}">${esc(t("dj.mode_cue"))}</button>
         </span>
+        <span class="dj-sep"></span>
+        <span class="dj-cuebar dj-group"></span>
         <span class="dj-spacer"></span>
         <button class="dj-btn dj-lockbtn" data-dj="analysislock" data-field="grid"></button>
         <button class="dj-btn dj-lockbtn" data-dj="analysislock" data-field="phrases"></button>
@@ -344,8 +454,9 @@ function djMount(det, r) {
   const ed = {
     r, path: r.p, root, det, audio,
     dur: r.du || 0, pos: 0, dragPos: null, span: prefs.span,
-    mode: prefs.mode, side: prefs.side,
-    segs: [], phrases: [], cues: [], locked: false,
+    // Beatjumps stehen seit dem Zusammenlegen im Reiter Cue/Loop.
+    mode: prefs.mode === "jump" ? "cue" : prefs.mode, side: prefs.side,
+    segs: [], phrases: [], cues: [],
     bt: new Float64Array(0), bn: new Uint8Array(0), bb: new Int32Array(0),
     src: {grid: null, phrases: null, cues: null},
     edited: {grid: false, phrases: false, cues: false},
@@ -385,6 +496,12 @@ function djMount(det, r) {
   audio.onended = () => { djSyncPlayIcon(ed); requestWavePaint(); };
 
   root.addEventListener("click", ev => djOnClick(ed, ev));
+  root.addEventListener("pointerdown", () => {
+    ed.pointerDown = true;
+    const up = () => { ed.pointerDown = false; window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); };
+    window.addEventListener("pointerup", up, true);
+    window.addEventListener("pointercancel", up, true);
+  }, true);
   root.addEventListener("change", ev => djOnChange(ed, ev));
   root.addEventListener("keydown", ev => { if (ev.key === "Enter" && ev.target.matches("input")) ev.target.blur(); });
   // Rechtsklick auf ein belegtes Feld: Farbe waehlen.
@@ -466,7 +583,7 @@ function djRestoreRowCells(ed) {
   ed.r.djBp = ed.edited.grid ? djEditedBpm(djMainBpm(ed), ed.r.bp) : 0;
   djStoreTempo(ed);
   const bpmCell = djRowCell(ed, "bpmCell", ".bpmcell");
-  if (bpmCell) bpmCell.innerHTML = bpmCellHtml(ed.r.bp, ed.r.djBp, ed.r.gridTempo, djGridSourceKey(ed));
+  if (bpmCell) bpmCell.innerHTML = bpmCellHtml(ed.r.bp, ed.r.gridTempo, djGridSourceKey(ed), ed.r.gridSeq);
 }
 // Tempo-Spanne merken, damit die Liste auch ohne offenen Editor weiss, ob die Datei
 // zum Beatgrid passt. Nur, wenn sich etwas geaendert hat.
@@ -483,7 +600,7 @@ function djMainBpm(ed) {
   let best = 0, bpm = 0;
   ed.segs.forEach((s, i) => {
     const len = (i + 1 < ed.segs.length ? ed.segs[i + 1].t : ed.dur) - s.t;
-    if (len > best) { best = len; bpm = s.bpm; }
+    if (len > best && !djIsRamp(ed, i)) { best = len; bpm = s.bpm; }
   });
   return bpm;
 }
@@ -540,9 +657,10 @@ function djAdopt(ed, data) {
   ed.uncertain = !!data.phrases.uncertain;
   ed.rb = data.rekordbox || null;
   ed.palettes = data.palettes || ed.palettes;
-  ed.locked = !!data.grid.locked;
   ed.locks = {grid: !!(data.locks && data.locks.grid), phrases: !!(data.locks && data.locks.phrases)};
   ed.segs = data.grid.segments || djSegmentsFromBeats(data.grid.beats || []);
+  // Das Tempo je Rampen-Schlag rechnet djPayload() beim Speichern jedes Mal neu.
+  for (const s of ed.segs) if (s.ramp) s.ramp = {beats: s.ramp.beats, anchors: s.ramp.anchors || []};
   ed.phrases = (data.phrases.items || []).map(p => ({start: p.start, end: p.end, kind: p.kind, num: p.num || 0}));
   djRenumberPhrases(ed);
   ed.cues = (data.cues.items || []).map(djCueFromServer);
@@ -599,11 +717,14 @@ function djPayload(ed, fields) {
   for (const f of fields) {
     if (f === "grid") {
       body.grid = {
-        segments: ed.segs.map(seg => {
+        segments: ed.segs.map((seg, i) => {
+          // Rampe: das Tempo je Schlag rechnet nur der Client genau (aus den ungerundeten
+          // Zeiten), Rekordbox bekommt es so (gridstore.beats_with_tempo()).
+          if (djIsRamp(ed, i)) return {...seg, ramp: {...seg.ramp, tempos: djRampTempos(ed, i)}};
           const k = seg.t < 0 ? Math.ceil(-seg.t * seg.bpm / 60) : 0;
           return {...seg, t: seg.t + k * 60 / seg.bpm, n: ((seg.n - 1 + k) % 4) + 1};
         }),
-        locked: ed.locked,
+        locked: false,
         beats: Array.from(ed.bt, (sec, i) => [Math.round(sec * 1000), ed.bn[i]]),
       };
     } else if (f === "phrases") {
@@ -666,7 +787,36 @@ function djSegmentsFromBeats(beats) {
     }
   }
   close(a, beats.length - 1);
-  return segs;
+  return djCollapseRamps(segs, beats);
+}
+
+// Eine gemessene Rampe (beatgrid._segment_transition(), dynamisches Grid aus Rekordbox)
+// kommt als Folge kurzer Abschnitte an (je Schlag ein Tempo, wo es kurz gleich bleibt auch
+// ein paar Schlaege). Liegen zwischen zwei langen Abschnitten (ab djRampLongBeats()) mindestens
+// zwei kurze mit zusammen drei Schlaegen, wird daraus eine Rampe, jeder Schlag ein Anker --
+// die Schlaege bleiben genau, wo sie waren, lassen sich aber wie eine Rampe bearbeiten. Ein
+// einzelner kurzer Abschnitt (etwa Rekordbox' Rest an einem harten Wechsel) bleibt.
+function djRampLongBeats() { return 8; }
+function djCollapseRamps(segs, beats) {
+  const ends = segs.map((s, i) => (i + 1 < segs.length ? segs[i + 1].t : Infinity));
+  const long = i => (ends[i] - segs[i].t) * segs[i].bpm / 60 >= djRampLongBeats();
+  const out = [];
+  for (let i = 0; i < segs.length; i++) {
+    let j = i;
+    while (j < segs.length && !long(j)) j++;
+    if (j - i >= 2 && i > 0 && j < segs.length) {
+      const t0 = segs[i].t, t1 = segs[j].t;
+      const times = beats.map(b => b[0] / 1000).filter(t => t >= t0 - 0.0005 && t < t1 - 0.0005);
+      if (times.length >= 3) {
+        out.push({t: t0, bpm: out[out.length - 1].bpm, n: segs[i].n,
+                  ramp: {beats: times.length, anchors: times.slice(1).map((t, k) => [k + 1, t])}});
+        i = j - 1;
+        continue;
+      }
+    }
+    out.push(segs[i]);
+  }
+  return out;
 }
 
 // Phrasen haengen am Beatgrid: aendert es sich, wandern ihre Grenzen mit. Gerechnet in
@@ -674,11 +824,13 @@ function djSegmentsFromBeats(beats) {
 // Liegt eine Grenze auf einem Schlag, rastet sie dort ein. Das Trackende bleibt fest.
 function djCarryPhrases(ed) {
   const from = ed.gridRef, to = ed.segs;
-  ed.gridRef = to.map(s => ({t: s.t, bpm: s.bpm}));
+  ed.gridRef = to.map(s => ({t: s.t, bpm: s.bpm, ramp: s.ramp ? JSON.stringify(s.ramp) : ""}));
   if (!from || !ed.phrases.length) return;
   // Abschnitt dazu oder weg: nichts mitzurechnen, einrasten reicht (djSnapPhrases()).
   if (from.length !== to.length) { ed.phrasesCarried = true; return; }
-  if (from.every((s, i) => s.t === to[i].t && s.bpm === to[i].bpm)) return;
+  if (from.every((s, i) => s.t === to[i].t && s.bpm === to[i].bpm && s.ramp === ed.gridRef[i].ramp)) return;
+  // In einer Rampe sind die Schlaege nicht gleich weit, mitrechnen geht nicht, einrasten schon.
+  if (from.some(s => s.ramp) || to.some(s => s.ramp)) { ed.phrasesCarried = true; return; }
   const move = sec => {
     if (sec >= ed.dur - 0.01) return sec;
     let i = 0;
@@ -721,39 +873,429 @@ function djSnapPhrases(ed, beats) {
 // Frueheste Stelle fuer eine Phrasengrenze: der erste Schlag, ohne Grid der Trackanfang.
 function djPhraseFloor(ed) { return ed.bt && ed.bt.length ? ed.bt[0] : 0; }
 
+// ── Rampen ──────────────────────────────────────────────
+// Eine Rampe ist ein Tempoabschnitt zwischen zwei festen Tempi, dessen Schlaege nicht im
+// gleichen Abstand liegen: seg.ramp = {beats, anchors: [[k, sec], ...]}. Schlag 0 liegt auf
+// seg.t, Schlag `beats` auf dem Beginn des naechsten Abschnitts. Anker heften einzelne
+// Schlaege fest, dazwischen verteilt djRampTimes() die Schlaege weich. Ein dritter Wert 1
+// ([k, sec, 1]) heisst "von Hand gesetzt" (Ziehen, "Schlag hierher", eingefuegter Schlag):
+// solche Anker bleiben bei "An Audio anpassen" und geaenderter Schlagzahl fest stehen und
+// verschwinden nur von Hand (Anker loesen, Schlag entfernen). Ohne ihn stammt er aus dem
+// Einpassen bzw. der Analyse und darf ersetzt werden. seg.bpm bleibt das
+// Tempo davor (Server-Pruefung, Anzeige), fuer die Schlaege zaehlt es nicht.
+// Eine Rampe braucht einen Abschnitt davor und danach und mindestens einen Schlag, sonst
+// gilt sie nicht. "Rampe Start" ohne Ende legt sie offen an (beats 0, djRampOpen()): bis
+// "Rampe Ende" laeuft der Abschnitt im festen Tempo weiter.
+function djIsRamp(ed, i) {
+  const s = ed.segs[i];
+  return !!(s && s.ramp && s.ramp.beats >= 1 && i > 0 && i + 1 < ed.segs.length);
+}
+function djRampEligible(ed, i) { return i > 0 && i + 1 < ed.segs.length; }
+function djRampOpen(ed, i) { return !!(i > 0 && ed.segs[i] && ed.segs[i].ramp && !djIsRamp(ed, i)); }
+
+// Tempowechsel-Marken, wie sie in den Wellenformen stehen: anderes Tempo, Rampenbeginn
+// oder -ende. Ein nachjustiertes Raster mit gleichem Tempo zaehlt nicht.
+function djIsTempoMark(ed, i) {
+  if (i <= 0 || i >= ed.segs.length) return false;
+  const s = ed.segs[i], p = ed.segs[i - 1];
+  // Verglichen wird, was angezeigt wird: 127,996 und 128,00 sind kein Tempowechsel.
+  return !!(s.ramp || p.ramp || djFmtBpm(s.bpm) !== djFmtBpm(p.bpm));
+}
+
+// Index der Tempowechsel-Marke an der Abspielposition (naechster Schlag bzw. 30 ms), sonst -1.
+function djTempoMarkAt(ed) {
+  if (!ed.segs.length || !ed.bt.length) return -1;
+  const pos = djPos(ed), at = ed.bt[djNearestBeat(ed, pos)];
+  return ed.segs.findIndex((s, i) => i > 0 && (Math.abs(s.t - at) < 0.002 || Math.abs(s.t - pos) <= djRampEndSnap()));
+}
+
+// Angezeigtes Tempo: im festen Abschnitt sein Tempo, in einer Rampe das des Schlags an der
+// Position (Abstand zum naechsten), damit das Tempofeld dort nicht leer bleibt.
+function djShownBpm(ed, pos) {
+  if (!ed.segs.length) return 0;
+  const i = djSegIndexAt(ed, pos);
+  if (!djIsRamp(ed, i)) return ed.segs[i].bpm;
+  const b = Math.max(0, djLowerBeat(ed, pos + 1e-6) - 1);
+  return b + 1 < ed.bt.length ? 60 / (ed.bt[b + 1] - ed.bt[b]) : ed.segs[i].bpm;
+}
+
+// Erster Schlag des Grids. Dort beginnt immer ein Tempo, auch wenn der erste Abschnitt erst
+// spaeter verankert ist -- das Grid laeuft bis zum Trackanfang zurueck (djRebuildBeats()).
+function djGridStart(ed) { return ed.bt.length ? ed.bt[0] : (ed.segs.length ? ed.segs[0].t : 0); }
+
+// Ziele der Tempowechsel-Pfeile: der Gridanfang (Nutzervorgabe: dort beginnt ein Tempo, man
+// soll immer dorthin zurueck koennen) und alle Marken, gesetzte wie aus der Analyse erkannte.
+function djTempoMarkTimes(ed) {
+  if (!ed.segs.length) return [];
+  const start = djGridStart(ed);
+  const marks = ed.segs.map((s, i) => (djIsTempoMark(ed, i) ? s.t : null)).filter(x => x != null && x > start + 0.01);
+  return [start, ...marks];
+}
+
+// Zur vorigen (dir -1) bzw. naechsten (dir 1) Tempowechsel-Marke springen.
+function djGoTempoMark(ed, dir) {
+  const pos = djPos(ed), marks = djTempoMarkTimes(ed);
+  const to = dir > 0 ? marks.find(x => x > pos + 0.01) : marks.filter(x => x < pos - 0.01).at(-1);
+  if (to == null) { note(t(dir > 0 ? "dj.tempo_mark_none_next" : "dj.tempo_mark_none_prev"), "soft"); return; }
+  djSeek(ed, to);
+}
+
+// Gueltige Anker in Reihenfolge: innerhalb der Rampe, Zeit und Nummer streng steigend.
+// Eigene Anker werden zuerst geprueft, damit ein eingepasster sie nie verdraengt.
+function djRampAnchors(seg, next) {
+  const n = seg.ramp.beats, out = [];
+  const valid = (k, sec, lo, hi) => k > lo[0] && k < hi[0] && sec > lo[1] + 0.02 * (k - lo[0]) && sec < hi[1] - 0.02 * (hi[0] - k);
+  const sorted = [...(seg.ramp.anchors || [])].sort((a, b) => a[0] - b[0]);
+  const keep = [];
+  for (const pass of [true, false]) {
+    for (const a of sorted) {
+      if (djAnchorManual(a) !== pass) continue;
+      const [k, sec] = a;
+      const lo = [[0, seg.t], ...keep].filter(([ak]) => ak < k).at(-1);
+      const hi = [...keep, [n, next.t]].find(([ak]) => ak > k);
+      if (!keep.some(([ak]) => ak === k) && valid(k, sec, lo, hi)) {
+        keep.push(pass ? [k, sec, 1] : [k, sec]);
+        keep.sort((x, y) => x[0] - y[0]);
+      }
+    }
+  }
+  return keep;
+}
+function djAnchorManual(a) { return !!(a && a[2]); }
+function djManualAnchors(seg) { return (seg.ramp.anchors || []).filter(djAnchorManual); }
+
+// Zeiten aller Schlaege 0..beats. Stueckweise kubische Hermite-Kurve ueber der Schlagnummer
+// durch Anfang, Anker und Ende: an den Raendern mit dem Abstand der Nachbar-Tempi (das
+// Tempo geht stetig ueber), an den Ankern mit dem Mittel der beiden Nachbarstrecken.
+// Begrenzt nach Fritsch-Carlson, damit kein Schlag hinter seinen Vorgaenger rutscht.
+function djRampTimes(ed, i) {
+  const seg = ed.segs[i], prev = ed.segs[i - 1], next = ed.segs[i + 1], n = seg.ramp.beats;
+  const pins = [[0, seg.t], ...djRampAnchors(seg, next), [n, next.t]];
+  const m = pins.length, d = [], slope = new Array(m);
+  for (let j = 0; j + 1 < m; j++) d.push((pins[j + 1][1] - pins[j][1]) / (pins[j + 1][0] - pins[j][0]));
+  slope[0] = 60 / prev.bpm;
+  slope[m - 1] = 60 / next.bpm;
+  for (let j = 1; j + 1 < m; j++) slope[j] = (d[j - 1] + d[j]) / 2;
+  for (let j = 0; j + 1 < m; j++) {
+    const a = slope[j] / d[j], b = slope[j + 1] / d[j], s = a * a + b * b;
+    if (s > 9) { const tau = 3 / Math.sqrt(s); slope[j] = tau * a * d[j]; slope[j + 1] = tau * b * d[j]; }
+  }
+  const out = new Float64Array(n + 1);
+  for (let j = 0; j + 1 < m; j++) {
+    const [ka, ta] = pins[j], [kb, tb] = pins[j + 1], h = kb - ka;
+    for (let k = ka; k <= kb; k++) {
+      const s = (k - ka) / h, s2 = s * s, s3 = s2 * s;
+      out[k] = (2 * s3 - 3 * s2 + 1) * ta + (s3 - 2 * s2 + s) * h * slope[j]
+             + (-2 * s3 + 3 * s2) * tb + (s3 - s2) * h * slope[j + 1];
+    }
+  }
+  return out;
+}
+
+// Tempo je Rampen-Schlag aus dem Abstand zum naechsten Schlag, wie Rekordbox' PQTZ es fuehrt.
+function djRampTempos(ed, i) {
+  const times = djRampTimes(ed, i), out = [];
+  for (let k = 0; k + 1 < times.length; k++) {
+    out.push(Math.round(Math.min(400, Math.max(20, 60 / (times[k + 1] - times[k]))) * 1000) / 1000);
+  }
+  return out;
+}
+
+// Vorschlag fuer die Schlagzahl: die Laenge geteilt durch den mittleren Abstand der beiden Tempi.
+// Vorschlag: die Zahl, die der Schaetzung am naechsten liegt und mit der die durchgehende
+// Zaehlung vom Rampenbeginn (seg.n) am Ende auf Takt 1 trifft (Uebergaenge sind praktisch
+// immer ganze Takte). Mit +-1 laesst sie sich danach frei aendern.
+function djRampDefaultBeats(ed, i) {
+  const span = ed.segs[i + 1].t - ed.segs[i].t;
+  const avg = (60 / ed.segs[i - 1].bpm + 60 / ed.segs[i + 1].bpm) / 2;
+  const est = span / avg, rest = djRampBeatRest(ed, i), [lo, hi] = djRampBeatLimits(ed, i);
+  let best = 0;
+  for (let n = rest || 4; n <= Math.max(hi, rest || 4); n += 4) {
+    if (n >= lo && (!best || Math.abs(n - est) < Math.abs(best - est))) best = n;
+  }
+  return best || Math.max(1, Math.round(est));
+}
+// Rest der Schlagzahl modulo 4, mit dem das Ende auf Takt 1 faellt.
+// Schlag im Takt, auf dem das Ende der Rampe i liegt.
+function djRampEndBeat(ed, i) { return ((ed.segs[i].n - 1 + ed.segs[i].ramp.beats) % 4) + 1; }
+function djRampBeatRest(ed, i) { return ((5 - ed.segs[i].n) % 4 + 4) % 4; }
+
+// Kleinste und groesste Schlagzahl, bei der der mittlere Abstand noch ein Tempo von 20 bis 400 BPM ergibt.
+function djRampBeatLimits(ed, i) {
+  const span = ed.segs[i + 1].t - ed.segs[i].t;
+  return [Math.max(1, Math.ceil(span * 20 / 60)), Math.max(1, Math.floor(span * 400 / 60))];
+}
+
+// Nummer des Rampen-Schlags an einem Index von ed.bt (0 = Rampenbeginn), sonst -1.
+function djRampBeatIndex(ed, b) {
+  return ed.bk && b >= 0 && b < ed.bk.length ? ed.bk[b] : -1;
+}
+
+function djRampSeg(ed) {
+  const i = ed.segs.length ? djSegIndexAt(ed, djPos(ed)) : -1;
+  return djIsRamp(ed, i) ? i : -1;
+}
+
+// Rampe Start: Tempowechsel am naechsten Schlag (dort stimmt das alte Grid noch) bzw. die
+// Marke, die dort schon steht. Die Rampe bleibt offen (beats 0), bis "Rampe Ende" sie
+// schliesst -- auch wenn schon eine Marke folgt, die gehoert oft gar nicht dazu.
+function djRampStart(ed) {
+  if (!ed.segs.length) return;
+  const b = djNearestBeat(ed, djPos(ed)), at = ed.bt[b];
+  let i = djSegIndexAt(ed, at);
+  const exists = Math.abs(ed.segs[i].t - at) < 0.002;
+  if (exists && i === 0) { note(t("dj.ramp_start_first"), "soft"); return; }
+  if (exists && djIsRamp(ed, i)) { note(t("dj.ramp_exists"), "soft"); return; }
+  if (!exists && djIsRamp(ed, i)) { note(t("dj.ramp_no_segment"), "soft"); return; }
+  djPush(ed);
+  if (!exists) { ed.segs.splice(i + 1, 0, {t: at, bpm: ed.segs[i].bpm, n: ed.bn[b]}); i++; }
+  ed.segs[i].ramp = {beats: 0, anchors: []};
+  djTouched(ed, "grid");
+}
+
+// Unterschied in BPM, unter dem zwei Abschnitte als dasselbe Tempo gelten (alte Marken nach dem Rampenende).
+function djSameTempo() { return 0.5; }
+
+// Abstand, ab dem "Rampe Ende" eine vorhandene Marke uebernimmt statt eine neue zu setzen.
+function djRampEndSnap() { return 0.03; }
+
+// Rampe Ende: erster Schlag im neuen Tempo, genau an der Abspielposition (das alte Grid
+// stimmt dort nicht mehr). Steht dort schon eine Marke (Sprung per Marken-Navigation), wird
+// sie das Ende. Die Rampe beginnt an der letzten offenen Rampe davor; Marken dazwischen
+// fallen weg. Steht die Position in einer fertigen Rampe, endet diese hier frueher. Das neue
+// Tempo kommt vom naechsten Abschnitt danach, ohne einen vom Abschnitt an der Position --
+// danach im Tempofeld pruefen.
+function djRampEnd(ed) {
+  if (!ed.segs.length) return;
+  const pos = djClampOver(ed, djPos(ed)), snap = djRampEndSnap();
+  let start = -1;
+  ed.segs.forEach((s, j) => { if (s.t < pos - snap && djRampOpen(ed, j)) start = j; });
+  const inside = djSegIndexAt(ed, pos - snap);
+  if (djIsRamp(ed, inside) && inside > start) start = inside;
+  if (start < 1) { note(t("dj.ramp_end_no_start"), "soft"); return; }
+  const marker = ed.segs.findIndex((s, j) => j > start && Math.abs(s.t - pos) <= snap);
+  const endAt = marker >= 0 ? ed.segs[marker].t : pos;
+  if ((endAt - ed.segs[start].t) * ed.segs[start - 1].bpm / 60 < 1.5) { note(t("dj.ramp_too_short"), "soft"); return; }
+  djPush(ed);
+  const after = ed.segs.find(s => s.t > endAt + snap);
+  const here = ed.segs[djSegIndexAt(ed, endAt)];
+  const end = marker >= 0 ? ed.segs[marker]
+    : {t: Math.round(pos * 10000) / 10000, bpm: (after || here).bpm, n: 1};
+  // Alles zwischen Start und Ende liegt jetzt in der Rampe. Das Ende legt das neue Tempo
+  // fest: folgende Abschnitte mit (fast) demselben Tempo sind alte Messungen desselben
+  // Tempos, die meist spaeter beginnen -- sie fallen weg, bis ein anderes Tempo kommt.
+  const rest = ed.segs.filter(s => s.t > endAt + snap);
+  while (rest.length && !rest[0].ramp && Math.abs(rest[0].bpm - end.bpm) < djSameTempo()) rest.shift();
+  ed.segs = [...ed.segs.slice(0, start + 1), end, ...rest];
+  const seg = ed.segs[start];
+  seg.bpm = ed.segs[start - 1].bpm;
+  seg.ramp = {beats: 1, anchors: ((seg.ramp && seg.ramp.anchors) || []).filter(([, at]) => at < endAt)};
+  seg.ramp.beats = djRampDefaultBeats(ed, start);
+  seg.ramp.anchors = seg.ramp.anchors.filter(([k]) => k < seg.ramp.beats);
+  djRenumberFrom(ed, start);
+  djTouched(ed, "grid");
+  djRampFit(ed, start, true);
+}
+
+function djDissolveRamp(ed) {
+  const i = djRampSeg(ed);
+  if (i < 0) return;
+  djPush(ed);
+  delete ed.segs[i].ramp;
+  djRenumberFrom(ed, i);
+  djTouched(ed, "grid");
+}
+
+// Schlagzahl aendern: der Rampenbeginn bleibt, die Zaehlung danach rueckt mit (wer nach der
+// Rampe einen Schlag zu frueh oder zu spaet bei Takt 1 landet, korrigiert das hier).
+// Eigene Anker bleiben mit Nummer und Zeit stehen, eingepasste fallen weg und werden neu
+// eingepasst. Liegt auf dem wegfallenden Schlag ein eigener Anker, erst diesen loesen.
+function djRampCount(ed, delta) {
+  const i = djRampSeg(ed);
+  if (i < 0) return;
+  const ramp = ed.segs[i].ramp, [lo, hi] = djRampBeatLimits(ed, i);
+  const beats = ramp.beats + delta;
+  if (beats < Math.max(1, lo) || beats > hi) return;
+  const manual = djManualAnchors(ed.segs[i]);
+  if (manual.some(([k]) => k >= beats)) { note(t("dj.ramp_count_pinned"), "soft"); return; }
+  djPush(ed);
+  ed.segs[i].ramp = {beats, anchors: manual};
+  djRenumberFrom(ed, i);
+  djTouched(ed, "grid");
+  djRampFit(ed, i, true);
+}
+
+// Alle Schlaege der Rampe dort festhalten, wo sie gerade liegen (fehlende Anker als
+// eingepasste), damit Einfuegen/Entfernen eines Schlags die uebrigen nicht verschiebt.
+function djRampPinAll(ed, i) {
+  const seg = ed.segs[i], rt = djRampTimes(ed, i), own = new Map();
+  for (const a of djRampAnchors(seg, ed.segs[i + 1])) own.set(a[0], a);
+  const out = [];
+  for (let k = 1; k < seg.ramp.beats; k++) out.push(own.get(k) || [k, Math.round(rt[k] * 10000) / 10000]);
+  return out;
+}
+
+// Mindestabstand eines eingefuegten Schlags zu seinen Nachbarn (s).
+function djRampInsertGap() { return 0.03; }
+
+// Schlag hier einfuegen: ein neuer, eigener Anker genau an der Abspielposition, zwischen
+// den beiden Rampen-Schlaegen um sie herum. Alle anderen Schlaege bleiben, wo sie sind,
+// die folgenden zaehlen eine Nummer weiter -- wie bei "+", rueckt die Zaehlung nach der
+// Rampe mit (Anzeige "Ende auf ...").
+function djRampInsertBeat(ed) {
+  const i = djRampSeg(ed);
+  if (i < 0) return;
+  const seg = ed.segs[i], [, hi] = djRampBeatLimits(ed, i);
+  if (seg.ramp.beats + 1 > hi) { note(t("dj.ramp_insert_full"), "soft"); return; }
+  const pos = djPos(ed), rt = djRampTimes(ed, i);
+  let kb = 0;
+  while (kb + 1 < seg.ramp.beats && rt[kb + 1] <= pos) kb++;
+  if (pos - rt[kb] < djRampInsertGap() || rt[kb + 1] - pos < djRampInsertGap()) { note(t("dj.ramp_insert_close"), "soft"); return; }
+  djPush(ed);
+  const anchors = djRampPinAll(ed, i).map(a => (a[0] > kb ? [a[0] + 1, ...a.slice(1)] : a));
+  anchors.push([kb + 1, Math.round(pos * 10000) / 10000, 1]);
+  seg.ramp = {beats: seg.ramp.beats + 1, anchors: anchors.sort((a, b) => a[0] - b[0])};
+  djRenumberFrom(ed, i);
+  djTouched(ed, "grid");
+}
+
+// Schlag hier entfernen: der Rampen-Schlag naechst der Abspielposition faellt weg, auch
+// ein eigener Anker darauf. Die uebrigen bleiben, wo sie sind, die Zaehlung danach rueckt mit.
+function djRampRemoveBeat(ed) {
+  const i = djRampSeg(ed);
+  if (i < 0) return;
+  const seg = ed.segs[i], [lo] = djRampBeatLimits(ed, i);
+  const k = djRampBeatIndex(ed, djNearestBeat(ed, djPos(ed)));
+  if (k <= 0 || k >= seg.ramp.beats) { note(t("dj.ramp_remove_edge"), "soft"); return; }
+  if (seg.ramp.beats - 1 < Math.max(1, lo)) { note(t("dj.ramp_remove_min"), "soft"); return; }
+  djPush(ed);
+  const anchors = djRampPinAll(ed, i).filter(a => a[0] !== k).map(a => (a[0] > k ? [a[0] - 1, ...a.slice(1)] : a));
+  seg.ramp = {beats: seg.ramp.beats - 1, anchors};
+  djRenumberFrom(ed, i);
+  djTouched(ed, "grid");
+}
+
+// Schlaege der Rampe an die Anschlaege im Audio legen (/api/dj-ramp-fit, beatgrid.fit_ramp()):
+// jeder gefundene Schlag wird ein Anker. auto: nach "Rampe Ende" bzw. geaenderter Schlagzahl
+// -- dann gehoert das Einpassen zum selben Rueckgaengig-Schritt und Fehler bleiben still.
+async function djRampFit(ed, i = djRampSeg(ed), auto = false) {
+  if (!djIsRamp(ed, i) || ed.rampFitBusy) return;
+  const seg = ed.segs[i], prev = ed.segs[i - 1], next = ed.segs[i + 1], beats = seg.ramp.beats;
+  // Eigene Anker bleiben fest, eingepasst wird nur dazwischen (beatgrid.fit_ramp(fixed)).
+  const manual = djRampAnchors(seg, next).filter(djAnchorManual), sig = JSON.stringify(manual);
+  const same = () => ed.segs[i] && ed.segs[i].t === seg.t && djIsRamp(ed, i)
+    && ed.segs[i].ramp.beats === beats && ed.segs[i + 1].t === next.t
+    && JSON.stringify(djRampAnchors(ed.segs[i], ed.segs[i + 1]).filter(djAnchorManual)) === sig;
+  ed.rampFitBusy = true;
+  djRenderTools(ed);
+  try {
+    const res = await fetch("/api/dj-ramp-fit", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({path: ed.path, t0: seg.t, t1: next.t, bpm0: prev.bpm, bpm1: next.bpm, beats,
+                            fixed: manual.map(([k, sec]) => [k, sec])})});
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || String(res.status));
+    // Inzwischen geaendert (weiter bearbeitet, Rueckgaengig): das Ergebnis passt nicht mehr.
+    if (ed.closed || !same()) return;
+    const fixedK = new Set(manual.map(([k]) => k));
+    const hits = data.beats.filter(([k, , h]) => h > 0 && !fixedK.has(k));
+    const free = data.beats.length - fixedK.size;
+    if (!hits.length) { if (!auto) note(t("dj.ramp_fit_none"), "soft"); return; }
+    if (!auto) djPush(ed);
+    ed.segs[i].ramp = {beats, anchors: [...manual, ...hits.map(([k, sec]) => [k, Math.round(sec * 10000) / 10000])]
+      .sort((a, b) => a[0] - b[0])};
+    djTouched(ed, "grid");
+    if (!auto) note(t(manual.length ? "dj.ramp_fit_done_fixed" : "dj.ramp_fit_done", {n: hits.length, total: free, fixed: manual.length}));
+  } catch (err) {
+    if (!auto) note(t("dj.ramp_fit_failed", {error: err.message}), true);
+  } finally {
+    ed.rampFitBusy = false;
+    if (!ed.closed) djRenderTools(ed);
+  }
+}
+
+// Einen eigenen Anker setzen: Schlag k der Rampe liegt bei sec. Anker, die damit die
+// Reihenfolge verletzen, fallen weg (beim Ziehen haelt der Aufrufer ihn zwischen den Nachbarn).
+function djSetRampAnchor(ed, i, k, sec) {
+  const ramp = ed.segs[i].ramp;
+  const kept = (ramp.anchors || []).filter(([ak, at]) => ak !== k && (ak < k ? at < sec : at > sec));
+  ed.segs[i].ramp = {...ramp, anchors: [...kept, [k, Math.round(sec * 10000) / 10000, 1]].sort((a, b) => a[0] - b[0])};
+}
+
+// Den Rampen-Schlag naechst der Abspielposition genau dorthin legen.
+function djRampAnchorHere(ed) {
+  const i = djRampSeg(ed);
+  if (i < 0) return;
+  const pos = djPos(ed), k = djRampBeatIndex(ed, djNearestBeat(ed, pos));
+  if (k <= 0 || k >= ed.segs[i].ramp.beats) { note(t("dj.ramp_anchor_edge"), "soft"); return; }
+  djPush(ed);
+  djSetRampAnchor(ed, i, k, pos);
+  djTouched(ed, "grid");
+}
+
+// Den Anker naechst der Abspielposition loesen.
+function djRampDropAnchor(ed) {
+  const i = djRampSeg(ed);
+  if (i < 0) return;
+  const anchors = ed.segs[i].ramp.anchors || [];
+  if (!anchors.length) return;
+  const pos = djPos(ed);
+  const near = anchors.reduce((a, b) => (Math.abs(b[1] - pos) < Math.abs(a[1] - pos) ? b : a));
+  djPush(ed);
+  ed.segs[i].ramp = {...ed.segs[i].ramp, anchors: anchors.filter(a => a !== near)};
+  djTouched(ed, "grid");
+}
+
 function djRebuildBeats(ed) {
+  // Am Trackanfang gibt es kein Tempo davor: dort ist eine Rampe ein normaler Abschnitt.
+  // Am Ende bleibt sie als offene Rampe stehen (djRampOpen()), bis "Rampe Ende" kommt.
+  if (ed.segs[0] && ed.segs[0].ramp) delete ed.segs[0].ramp;
   djCarryPhrases(ed);
-  const times = [], nums = [], bars = [];
+  const times = [], nums = [], bars = [], rampK = [];
   const dur = ed.dur || 0, near = djGridStartTolerance();
   let bar = 0;
   ed.segs.forEach((seg, i) => {
+    if (djIsRamp(ed, i)) {
+      const rt = djRampTimes(ed, i);
+      for (let k = 0; k < seg.ramp.beats; k++) {
+        const num = ((seg.n - 1 + k) % 4) + 1;
+        if (num === 1) bar++;
+        times.push(rt[k]); nums.push(num); bars.push(bar); rampK.push(k);
+      }
+      return;
+    }
     const gap = 60 / seg.bpm;
     const end = i + 1 < ed.segs.length ? ed.segs[i + 1].t : dur;
     // Vor dem ersten Abschnitt laeuft das Grid bis zum Trackanfang zurueck.
     const first = i === 0 ? -Math.floor((seg.t + near) / gap + 1e-9) : 0;
+    // Ein Schlag knapp vor dem naechsten Abschnitt waere ein doppelter (wie beatgrid.beats_of()).
+    const last = i + 1 < ed.segs.length ? end - 0.5 * gap : end - 1e-6;
     for (let k = first; ; k++) {
       const sec = seg.t + k * gap;
-      if (sec >= end - 1e-6) break;
+      if (sec >= last) break;
       if (sec < -near) continue;
       const num = (((seg.n - 1 + k) % 4) + 4) % 4 + 1;
       if (num === 1) bar++;
-      times.push(Math.max(0, sec)); nums.push(num); bars.push(bar);
+      times.push(Math.max(0, sec)); nums.push(num); bars.push(bar); rampK.push(-1);
     }
   });
   if (ed.phrasesCarried) djSnapPhrases(ed, times);
   // Tempowechsel in Reihenfolge, fuer den Titel. Kleine Schwankungen fallen heraus, ebenso
-  // Abschnitte unter einem Takt: das ist ein nachjustiertes Raster, kein Tempo.
+  // Abschnitte unter einem Takt: das ist ein nachjustiertes Raster, kein Tempo. Eine Rampe
+  // ist der Weg zwischen zwei Tempi, kein eigenes.
   ed.tempoSeq = [];
+  const steady = ed.segs.filter((s, i) => !djIsRamp(ed, i));
   ed.segs.forEach((seg, i) => {
+    if (djIsRamp(ed, i)) return;
     const len = (i + 1 < ed.segs.length ? ed.segs[i + 1].t : dur) - seg.t;
     if (len * seg.bpm / 60 < 4) return;
     if (!ed.tempoSeq.length || Math.abs(seg.bpm - ed.tempoSeq.at(-1)) >= 1) ed.tempoSeq.push(seg.bpm);
   });
-  ed.tempoSpan = ed.segs.length
-    ? [Math.min(...ed.segs.map(s => s.bpm)), Math.max(...ed.segs.map(s => s.bpm))] : null;
+  ed.tempoSpan = steady.length
+    ? [Math.min(...steady.map(s => s.bpm)), Math.max(...steady.map(s => s.bpm))] : null;
   ed.bt = Float64Array.from(times);
   ed.bn = Uint8Array.from(nums);
   ed.bb = Int32Array.from(bars);
+  ed.bk = Int32Array.from(rampK);
 }
 
 // Index des ersten Schlags >= sec.
@@ -792,19 +1334,33 @@ function djSegIndexAt(ed, sec) {
   for (let i = 0; i < ed.segs.length; i++) if (ed.segs[i].t <= sec + 1e-6) idx = i;
   return idx;
 }
-// Nummern der Folgeabschnitte, damit der Takt ueber einen Tempowechsel weiterzaehlt.
+// Der Takt zaehlt ueber Tempowechsel und Rampen durchgehend weiter, wie Rekordbox' eigene
+// Grids (an 129 Tracks mit Tempowechsel nie ein Taktsprung): ein angebrochener Takt koennte
+// beim Sync, der auch die Stelle im Takt angleicht, das andere Deck springen lassen, und
+// Auto Cue lehnt Grids mit Taktsprung ab. Liegt die 1 nach einem Wechsel daneben, stimmt
+// die 1 davor oder die Schlagzahl der Rampe nicht.
+function djSegBeats(ed, j) {
+  return djIsRamp(ed, j) ? ed.segs[j].ramp.beats : Math.round((ed.segs[j + 1].t - ed.segs[j].t) * ed.segs[j].bpm / 60);
+}
+// Nummern der Abschnitte nach i aus der Zaehlung von i.
 function djRenumberFrom(ed, i) {
   for (let j = i + 1; j < ed.segs.length; j++) {
-    const prev = ed.segs[j - 1];
-    const k = Math.round((ed.segs[j].t - prev.t) * prev.bpm / 60);
-    ed.segs[j].n = (((prev.n - 1 + k) % 4) + 4) % 4 + 1;
+    const k = djSegBeats(ed, j - 1);
+    ed.segs[j].n = (((ed.segs[j - 1].n - 1 + k) % 4) + 4) % 4 + 1;
+  }
+}
+// Nummern der Abschnitte vor i aus der Zaehlung von i (1.1 gilt fuer das ganze Grid).
+function djRenumberBack(ed, i) {
+  for (let j = i - 1; j >= 0; j--) {
+    const k = djSegBeats(ed, j);
+    ed.segs[j].n = (((ed.segs[j + 1].n - 1 - k) % 4) + 4) % 4 + 1;
   }
 }
 
 // ── Aenderungen, Rueckgaengig ───────────────────────────
 
 function djState(ed) {
-  return {segs: JSON.stringify(ed.segs), locked: ed.locked,
+  return {segs: JSON.stringify(ed.segs),
           phrases: JSON.stringify(ed.phrases), cues: JSON.stringify(ed.cues)};
 }
 function djPush(ed) {
@@ -833,8 +1389,8 @@ function djRestore(ed, snap) {
   const now = djState(ed), fields = [];
   // Der Schnappschuss enthaelt die Phrasen schon passend zum Grid.
   ed.gridRef = null;
-  if (snap.segs !== now.segs || snap.locked !== now.locked) {
-    ed.segs = JSON.parse(snap.segs); ed.locked = snap.locked; fields.push("grid");
+  if (snap.segs !== now.segs) {
+    ed.segs = JSON.parse(snap.segs); fields.push("grid");
   }
   if (snap.phrases !== now.phrases) { ed.phrases = JSON.parse(snap.phrases); fields.push("phrases"); }
   if (snap.cues !== now.cues) { ed.cues = JSON.parse(snap.cues); fields.push("cues"); }
@@ -938,6 +1494,14 @@ function djPrevCue(ed) {
   const pos = djPos(ed) - 0.05, stops = djCueStops(ed).filter(x => x < pos);
   djSeek(ed, stops.length ? stops[stops.length - 1] : 0);
 }
+// Nur Memory Cues: Pfeile neben "Memory Cue setzen".
+function djGoMemory(ed, dir) {
+  const stops = ed.cues.filter(c => c.kind === "memory").map(c => c.position_s).sort((x, y) => x - y);
+  const pos = djPos(ed);
+  const to = dir > 0 ? stops.find(x => x > pos + 0.05) : stops.filter(x => x < pos - 0.05).at(-1);
+  if (to == null) { note(t(dir > 0 ? "dj.memory_none_next" : "dj.memory_none_prev"), "soft"); return; }
+  djSeek(ed, to);
+}
 function djNextCue(ed) {
   const pos = djPos(ed) + 0.05, stop = djCueStops(ed).find(x => x > pos);
   if (stop != null) djSeek(ed, stop);
@@ -974,17 +1538,99 @@ function djMetronome(ed) {
   let i = djLowerBeat(ed, Math.max(pos, ed.metroNext));
   for (; i < ed.bt.length && ed.bt[i] < horizon && ed.bt[i] < stop; i++) {
     const at = DJ_AUDIO_CTX.currentTime + Math.max(0, ed.bt[i] - pos);
-    // Rechteck weit ueber den Mitten und laenger ausklingend: ein leiser Sinus bei
-    // 1 kHz (wie zuvor) geht in einem gemasterten Track unter, obwohl er spielt.
-    const osc = DJ_AUDIO_CTX.createOscillator(), gain = DJ_AUDIO_CTX.createGain();
-    osc.type = "square";
-    osc.frequency.value = ed.bn[i] === 1 ? 3200 : 2400;
-    gain.gain.setValueAtTime(0.45, at);
-    gain.gain.exponentialRampToValueAtTime(0.001, at + 0.07);
-    osc.connect(gain).connect(DJ_AUDIO_CTX.destination);
-    osc.start(at); osc.stop(at + 0.08);
+    djMetroVoice(DJ_AUDIO_CTX, at, ed.bn[i] === 1, DJ_METRO_SOUND);
     ed.metroNext = ed.bt[i] + 0.001;
   }
+}
+
+// Ein Metronom-Klang zur Zeit "at", ohne Audiodateien aus Oszillatoren und Rauschen gebaut.
+// accent = die 1 im Takt (hoeher bzw. heller). Alle Klaenge liegen weit ueber den Mitten
+// oder haben einen harten Anschlag: ein leiser Sinus bei 1 kHz (die allererste Fassung)
+// ging in einem gemasterten Track unter, obwohl er spielte.
+function djMetroNoise(ctx) {
+  if (DJ_METRO_NOISE && DJ_METRO_NOISE.ctx === ctx) return DJ_METRO_NOISE.buf;
+  const buf = ctx.createBuffer(1, Math.round(ctx.sampleRate * 0.25), ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  // Fester Startwert statt Math.random(): sonst klingt (und pegelt) jeder neue Kontext
+  // etwas anders -- gemessen schwankte die Spitze des Klicks zwischen 0,55 und 1,03.
+  let x = 0x5eed;
+  for (let i = 0; i < d.length; i++) {
+    x = (Math.imul(x, 1664525) + 1013904223) >>> 0;
+    d[i] = x / 2147483648 - 1;
+  }
+  DJ_METRO_NOISE = {ctx, buf};
+  return buf;
+}
+// Verstaerkung je Klang, so eingestellt, dass jeder Klang allein knapp unter Vollaussteuerung
+// liegt (Spitze ~0,95, offline gemessen) -- lauter ginge nur mit Uebersteuern.
+const DJ_METRO_LEVEL = {beep: 2.2, click: 1.43, wood: 1.28, rim: 1.54, cowbell: 1.5, hihat: 1.29};
+function djMetroVoice(ctx, at, accent, kind) {
+  const out = ctx.createGain();
+  out.gain.value = DJ_METRO_LEVEL[kind] || DJ_METRO_LEVEL.beep;
+  out.connect(ctx.destination);
+  const env = (node, peak, decay) => {
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(peak, at);
+    g.gain.exponentialRampToValueAtTime(0.001, at + decay);
+    node.connect(g).connect(out);
+    return g;
+  };
+  const tone = (type, freq, peak, decay, drop) => {
+    const o = ctx.createOscillator();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, at);
+    if (drop) o.frequency.exponentialRampToValueAtTime(freq * drop, at + decay);
+    env(o, peak, decay);
+    o.start(at); o.stop(at + decay + 0.01);
+  };
+  const noise = (filter, freq, q, peak, decay) => {
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter();
+    src.buffer = djMetroNoise(ctx);
+    f.type = filter; f.frequency.value = freq; f.Q.value = q;
+    src.connect(f);
+    env(f, peak, decay);
+    src.start(at); src.stop(at + decay + 0.01);
+  };
+  switch (kind) {
+    case "click":    // kurzer, trockener Tick wie in einer DAW
+      noise("bandpass", accent ? 6000 : 4200, 1.2, 1.3, 0.025);
+      break;
+    case "wood":     // Woodblock: kurzer Ton mit fallender Hoehe und hartem Anschlag
+      tone("triangle", accent ? 1700 : 1250, 0.7, 0.06, 0.8);
+      noise("bandpass", accent ? 2600 : 2000, 4, 0.5, 0.012);
+      break;
+    case "rim":      // Rimshot/Stick: hoher Ton plus Rauschspitze
+      tone("triangle", accent ? 2100 : 1700, 0.35, 0.035);
+      noise("highpass", 3000, 0.7, 0.45, accent ? 0.045 : 0.03);
+      break;
+    case "cowbell":  // zwei verstimmte Rechtecke durch einen Bandpass, wie die 808-Cowbell
+      for (const f of accent ? [700, 1040] : [540, 800]) tone("square", f, 0.22, 0.18);
+      out.disconnect();
+      { const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = accent ? 3000 : 2600; bp.Q.value = 1;
+        out.connect(bp).connect(ctx.destination); out.gain.value *= 1.6; }
+      break;
+    case "hihat":    // geschlossene Hi-Hat, die 1 klingt etwas offener
+      noise("highpass", 7000, 0.7, 0.55, accent ? 0.09 : 0.04);
+      break;
+    default:         // "beep": Rechteck, wie bisher
+      tone("square", accent ? 3200 : 2400, 0.45, 0.07);
+  }
+}
+
+// Vorhoeren in den Einstellungen: ein Takt (1 + drei Schlaege) bei 120 BPM ueber einen
+// eigenen Kontext -- DJ_AUDIO_CTX lebt nur, solange das Deck spielt (siehe djCtx()).
+function djMetroPreview(kind) {
+  try {
+    if (!DJ_METRO_PREVIEW || DJ_METRO_PREVIEW.state === "closed") {
+      DJ_METRO_PREVIEW = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const ctx = DJ_METRO_PREVIEW;
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
+    const t0 = ctx.currentTime + 0.05;
+    for (let k = 0; k < 4; k++) djMetroVoice(ctx, t0 + k * 0.5, k === 0, kind);
+    clearTimeout(ctx._closeTimer);
+    ctx._closeTimer = setTimeout(() => { if (ctx === DJ_METRO_PREVIEW) { ctx.close().catch(() => {}); DJ_METRO_PREVIEW = null; } }, 3000);
+  } catch (err) { /* ohne Web Audio kein Vorhoeren */ }
 }
 
 function djSyncLabels(ed) {
@@ -1000,20 +1646,36 @@ function djSyncLabels(ed) {
   }
   const seg = ed.segs.length ? djSegIndexAt(ed, pos) : -1;
   const bpm = seg >= 0 ? ed.segs[seg].bpm : 0;
-  // Die Liste aendert sich nur, wenn das Beatgrid bearbeitet wurde und wirklich abweicht.
-  const shown = ed.edited.grid ? djEditedBpm(bpm, ed.r.bp) : 0;
-  const cellKey = `${shown}|${ed.tempoSpan}`;
+  // BPM-Zelle: immer der Wert aus der Datei, rot bei Abweichung vom Beatgrid (Nutzervorgabe),
+  // Tempo und Tempowechsel des Grids im Tooltip.
+  const cellKey = `${ed.tempoSpan}|${ed.tempoSeq}`;
   const bpmCell = djRowCell(ed, "bpmCell", ".bpmcell");
   if (cellKey !== ed._bpmCell && bpmCell) {
     ed._bpmCell = cellKey;
-    bpmCell.innerHTML = bpmCellHtml(ed.r.bp, shown, ed.tempoSpan, djGridSourceKey(ed));
+    bpmCell.innerHTML = bpmCellHtml(ed.r.bp, ed.tempoSpan, djGridSourceKey(ed), ed.tempoSeq);
   }
-  if (seg !== ed._segShown || bpm !== ed._bpmShown) {
-    ed._segShown = seg; ed._bpmShown = bpm;
+  // Rampen haben eigene Werkzeuge: wechselt die Position hinein oder heraus, neu aufbauen.
+  const rampKey = seg >= 0 ? `${djIsRamp(ed, seg)}|${ed.segs.some((s, j) => djRampOpen(ed, j) && s.t <= pos + 1e-6)}|${djTempoMarkAt(ed) > 0}|${djTempoMarkTimes(ed).map(x => (x < pos - 0.01 ? "<" : x > pos + 0.01 ? ">" : "=")).join("")}` : "";
+  if (ed.mode === "grid" && rampKey !== ed._rampKey) { ed._rampKey = rampKey; djRenderTools(ed); }
+  // Nachholen, was waehrend einer Eingabe im Tempofeld liegen blieb -- nicht, solange die Maus
+  // auf einem Knopf der Leiste gedrueckt ist (ein Neuaufbau zwischen mousedown und mouseup
+  // verschluckte den Klick).
+  else if (ed._toolsStale) {
+    const host = ed.root.querySelector(".dj-tools");
+    if (host && !host.querySelector(":active")) djRenderTools(ed);
+  }
+  djFollowPhrase(ed, pos);
+  // Memory-Pfeile: gesperrt, sobald in der Richtung kein Memory Cue mehr liegt.
+  const nav = djMemoryNav(ed), navKey = `${nav.prev}|${nav.next}`;
+  if (navKey !== ed._memNav) { ed._memNav = navKey; djSyncCueBar(ed); }
+  // Im Tempofeld in einer Rampe das Tempo des Schlags an der Position (aendert sich je Schlag).
+  const fieldBpm = seg >= 0 ? Math.round(djShownBpm(ed, pos) * 100) / 100 : 0;
+  if (seg !== ed._segShown || fieldBpm !== ed._bpmShown) {
+    ed._segShown = seg; ed._bpmShown = fieldBpm;
     const input = ed.root.querySelector(".dj-bpminput");
-    if (input && document.activeElement !== input) input.value = seg >= 0 ? djFmtBpm(bpm) : "";
+    if (input && document.activeElement !== input) input.value = seg >= 0 ? djFmtBpm(fieldBpm) : "";
     const part = ed.root.querySelector(".dj-seginfo");
-    if (part) part.textContent = ed.segs.length > 1 ? t("dj.segment_of", {i: seg + 1, n: ed.segs.length}) : "";
+    if (part) part.textContent = seg >= 0 ? djSegInfo(ed, seg) : "";
   }
 }
 
@@ -1156,13 +1818,9 @@ function djLoopExit(ed) { ed.loop = null; djApplyLoop(ed); djRenderTools(ed); re
 
 // ── Beatgrid bearbeiten ─────────────────────────────────
 
-function djGridGuard(ed) {
-  if (ed.locked) { note(t("dj.grid_locked"), "soft"); return false; }
-  return true;
-}
 function djSetBpm(ed, bpm) {
   if (!(bpm >= 20 && bpm <= 400)) { note(t("dj.bpm_invalid"), "soft"); djRenderTools(ed); return; }
-  if (!djGridGuard(ed)) return;
+  if (djRampSeg(ed) >= 0) { note(t("dj.ramp_bpm"), "soft"); djRenderTools(ed); return; }
   djPush(ed);
   if (!ed.segs.length) ed.segs = [{t: djPos(ed), bpm, n: 1}];
   else {
@@ -1182,14 +1840,15 @@ function djScaleBpm(ed, factor) {
 function djGridFrom(ed) {
   if (!djPrefs().gridHere) return 0;
   const b = djNearestBeat(ed, djPos(ed)), at = ed.bt[b], i = djSegIndexAt(ed, at);
-  if (Math.abs(ed.segs[i].t - at) < 0.002) return i;
+  // Eine Rampe laesst sich nicht teilen, "ab hier" beginnt dort an ihrem Anfang.
+  if (Math.abs(ed.segs[i].t - at) < 0.002 || djIsRamp(ed, i)) return i;
   ed.segs.splice(i + 1, 0, {t: at, bpm: ed.segs[i].bpm, n: ed.bn[b]});
   // Das Raster bleibt dabei gleich. Die Phrasen muessen den neuen Abschnitt kennen.
   djRebuildBeats(ed);
   return i + 1;
 }
 function djShiftGrid(ed, sec) {
-  if (!ed.segs.length || !djGridGuard(ed)) return;
+  if (!ed.segs.length) return;
   djPush(ed);
   djShiftSegs(ed, ed.segs, sec, djGridFrom(ed));
   djTouched(ed, "grid");
@@ -1198,18 +1857,24 @@ function djShiftGrid(ed, sec) {
 // Schlaege davor weg und djCarryPhrases() rechnet von seinem Beginn aus. Gespeichert
 // wird er ab dem ersten Schlag im Track (djPayload()).
 function djShiftSegs(ed, base, sec, from) {
-  ed.segs = base.map((s, j) => (j < from ? {...s} : {...s, t: s.t + sec}));
+  ed.segs = base.map((s, j) => {
+    if (j < from) return {...s};
+    const moved = {...s, t: s.t + sec};
+    if (s.ramp) moved.ramp = {...s.ramp, anchors: (s.ramp.anchors || []).map(a => [a[0], a[1] + sec, ...a.slice(2)])};
+    return moved;
+  });
 }
 function djGridToPlayhead(ed) {
-  if (!ed.bt.length || !djGridGuard(ed)) return;
+  if (!ed.bt.length) return;
   djShiftGrid(ed, djPos(ed) - ed.bt[djNearestBeat(ed, djPos(ed))]);
 }
 // Beat-Intervalle weiter oder enger, der erste Schlag jedes Abschnitts bleibt stehen.
 function djStretchIntervals(ed, delta) {
-  if (!ed.segs.length || !djGridGuard(ed)) return;
+  if (!ed.segs.length) return;
   djPush(ed);
   const from = djGridFrom(ed);
   for (let j = from; j < ed.segs.length; j++) {
+    if (djIsRamp(ed, j)) continue;
     ed.segs[j].bpm = Math.min(400, Math.max(20, Math.round((ed.segs[j].bpm + delta) * 1000) / 1000));
   }
   djRenumberFrom(ed, from);
@@ -1218,37 +1883,52 @@ function djStretchIntervals(ed, delta) {
 // Der Schlag naechst der Position wandert genau auf die Position und wird Takt 1.
 // Gilt wie die Knoepfe daneben fuer das ganze Grid oder ab hier.
 function djSetDownbeat(ed) {
-  if (!ed.segs.length || !djGridGuard(ed)) return;
+  if (!ed.segs.length) return;
   djPush(ed);
   const pos = djPos(ed), offset = pos - ed.bt[djNearestBeat(ed, pos)];
   djShiftSegs(ed, ed.segs, offset, djGridFrom(ed));
   djRebuildBeats(ed);
   const beat = ed.bt[djNearestBeat(ed, pos)];
   const i = djSegIndexAt(ed, beat), seg = ed.segs[i];
-  const k = Math.round((beat - seg.t) * seg.bpm / 60);
+  const ramp = djRampBeatIndex(ed, djNearestBeat(ed, pos));
+  const k = ramp >= 0 ? ramp : Math.round((beat - seg.t) * seg.bpm / 60);
   seg.n = (((-k) % 4) + 4) % 4 + 1;
+  // Die Zaehlung bleibt durchgehend: davor und danach rueckt sie mit.
   djRenumberFrom(ed, i);
+  djRenumberBack(ed, i);
   djTouched(ed, "grid");
 }
+// Der Knopf schaltet: steht die Abspielposition auf einer Marke, entfernt er sie wieder.
 function djAddSegment(ed) {
-  if (!ed.segs.length || !djGridGuard(ed)) return;
+  if (!ed.segs.length) return;
+  const mark = djTempoMarkAt(ed);
+  if (mark > 0) { djPush(ed); djRemoveSegmentAt(ed, mark); djTouched(ed, "grid"); return; }
   const b = djNearestBeat(ed, djPos(ed)), at = ed.bt[b];
+  // Vor dem ersten Abschnitt (Grid zum Trackanfang zurueckgerechnet) gibt es kein Tempo davor:
+  // ein Abschnitt dort laege vor segs[0] und braeche die Reihenfolge.
+  if (b === 0 || at <= ed.segs[0].t + 0.002) { note(t(Math.abs(ed.segs[0].t - at) < 0.002 ? "dj.segment_exists" : "dj.segment_at_start"), "soft"); return; }
   const i = djSegIndexAt(ed, at);
   if (Math.abs(ed.segs[i].t - at) < 0.002) { note(t("dj.segment_exists"), "soft"); return; }
+  if (djIsRamp(ed, i)) { note(t("dj.ramp_no_segment"), "soft"); return; }
   djPush(ed);
+  // Die Zaehlung laeuft weiter (djRenumberFrom()).
   ed.segs.splice(i + 1, 0, {t: at, bpm: ed.segs[i].bpm, n: ed.bn[b]});
   djTouched(ed, "grid");
 }
 function djRemoveSegment(ed) {
-  if (ed.segs.length < 2 || !djGridGuard(ed)) return;
-  const i = djSegIndexAt(ed, djPos(ed));
+  if (ed.segs.length < 2) return;
   djPush(ed);
-  ed.segs.splice(i, 1);
-  djRenumberFrom(ed, Math.max(0, i - 1));
+  djRemoveSegmentAt(ed, djSegIndexAt(ed, djPos(ed)));
   djTouched(ed, "grid");
 }
+function djRemoveSegmentAt(ed, i) {
+  // Ohne ihr Ende waere die Rampe vor dem entfernten Abschnitt ploetzlich viel laenger.
+  if (i > 0 && ed.segs[i - 1].ramp) delete ed.segs[i - 1].ramp;
+  ed.segs.splice(i, 1);
+  djRenumberFrom(ed, Math.max(0, i - 1));
+}
 function djTap(ed) {
-  if (ed.audio.paused || !djGridGuard(ed)) return;
+  if (ed.audio.paused || djRampSeg(ed) >= 0) return;
   const now = performance.now();
   if (ed.taps.length && now - ed.taps[ed.taps.length - 1] > 2500) { ed.taps = []; ed.tapPushed = false; }
   ed.taps.push(now);
@@ -1267,16 +1947,14 @@ function djTap(ed) {
 function djToggleMetro(ed) {
   ed.metro = !ed.metro;
   // Der Track weicht dem Metronom etwas, sonst bleibt es neben einem lauten Master schwach.
-  ed.audio.duck = ed.metro ? 0.6 : 1;
+  ed.audio.duck = ed.metro ? 0.5 : 1;
   ed.audio.tick();
   // Eigener Takt statt der Bildschleife: die steht, sobald die Wellenform aus dem Bild
   // gescrollt ist, und dann bliebe das Metronom stumm.
   clearInterval(ed.metroTimer);
   if (ed.metro) ed.metroTimer = setInterval(() => { if (!ed.audio.paused) { ed.audio.tick(); djMetronome(ed); } }, 40);
-  if (ed.metro && !DJ_AUDIO_CTX) {
-    DJ_AUDIO_CTX = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (ed.metro && DJ_AUDIO_CTX.state === "suspended") DJ_AUDIO_CTX.resume();
+  // Klicks gibt es nur beim Spielen, dann steht der Kontext des Decks (djCtx()).
+  if (ed.metro && DJ_AUDIO_CTX && DJ_AUDIO_CTX.state === "suspended") DJ_AUDIO_CTX.resume().catch(() => {});
   ed.metroNext = 0;
   djRenderTools(ed);
 }
@@ -1360,6 +2038,7 @@ function djRenderAll(ed) {
 
 function djRenderChrome(ed) {
   const prefs = djPrefs();
+  djSyncCueBar(ed);
   ed.root.querySelectorAll(".dj-mode").forEach(b => b.classList.toggle("on", b.dataset.mode === ed.mode));
   ed.root.querySelectorAll(".dj-sidetab").forEach(b => b.classList.toggle("on", b.dataset.side === ed.side));
   ed.root.querySelector(".dj-q").classList.toggle("on", prefs.q);
@@ -1394,91 +2073,259 @@ function djToolBtn(action, content, title, extra = "") {
 
 function djRenderTools(ed) {
   const host = ed.root.querySelector(".dj-tools");
-  if (host.contains(document.activeElement) && document.activeElement.matches("input, select")) return;
+  // Waehrend im Tempofeld getippt wird, nicht neu aufbauen (die Eingabe ginge verloren), aber
+  // vormerken: djSyncLabels() holt es nach, sobald das Feld den Fokus abgibt. Vorher blieb die
+  // Leiste dann stehen -- etwa "Hier wechseln" nicht als Marke markiert, nachdem man mit
+  // Fokus im Tempofeld auf einen Tempowechsel gesprungen war.
+  if (host.contains(document.activeElement) && document.activeElement.matches("input, select")) { ed._toolsStale = true; return; }
+  ed._toolsStale = false;
   djRenderChrome(ed);
+  host.dataset.mode = ed.mode;
   if (ed.mode === "grid") host.innerHTML = djGridTools(ed);
   else if (ed.mode === "phrase") host.innerHTML = djPhraseTools(ed);
-  else if (ed.mode === "jump") host.innerHTML = djJumpTools();
   else host.innerHTML = djCueTools(ed);
   ed._segShown = undefined;
+  djFitTools(ed);
+}
+
+// Die Werkzeugleiste ist immer so hoch wie die hoechste der drei Ansichten (meist Beatgrid
+// mit drei Zeilen): ein Wechsel des Reiters oder in eine Rampe laesst den Editor nicht
+// springen. Gemessen in einem unsichtbaren Abbild gleicher Breite im Editor (gleiche Styles).
+function djFitTools(ed) {
+  const host = ed.root && ed.root.querySelector(".dj-tools");
+  if (!host || !host.clientWidth) return;
+  let probe = ed.toolsProbe;
+  if (!probe || !probe.isConnected) {
+    probe = ed.toolsProbe = document.createElement("div");
+    probe.className = "dj-tools";
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none;left:0;top:0;";
+    ed.root.appendChild(probe);
+  }
+  probe.style.width = host.clientWidth + "px";
+  let max = 0;
+  for (const [mode, html] of [["grid", djGridTools(ed)], ["phrase", djPhraseTools(ed)], ["cue", djCueTools(ed)]]) {
+    probe.dataset.mode = mode;
+    probe.innerHTML = html;
+    max = Math.max(max, probe.offsetHeight);
+  }
+  probe.innerHTML = "";
+  // Nur wachsen lassen, solange die Breite gleich bleibt: andere Zustaende (in einer Rampe,
+  // Anpassen laeuft) koennen eine Zeile mehr umbrechen als der gerade gemessene.
+  if (!ed.toolsMax || ed.toolsMax.w !== host.clientWidth) ed.toolsMax = {w: host.clientWidth, h: 0};
+  ed.toolsMax.h = Math.max(ed.toolsMax.h, max);
+  host.style.minHeight = ed.toolsMax.h + "px";
 }
 
 function djCueTools(ed) {
   const loop = ed.loop;
+  let active = 0;
   const lens = djLoopKeys().slice().reverse().map(([key, n]) => {
     const on = loop && loop.on && ed.bt.length
       && (loop.beats === n || Math.abs((loop.end - loop.start) - n * 60 / (ed.segs[djSegIndexAt(ed, loop.start)] || {bpm: 120}).bpm) < 0.005);
-    return djToolBtn("looplen", djLoopLabel(n), t("dj.loop_len_title", {beats: djLoopLabel(n), key: key.toUpperCase()}), {cls: on ? "on" : "", attrs: `data-n="${n}"`});
+    if (on) active = n;
+    return djToolBtn("looplen", djKeyLabel(djLoopLabel(n), key.toUpperCase()), t("dj.loop_len_title", {beats: djLoopLabel(n), key: key.toUpperCase()}), {cls: "kb" + (on ? " on" : ""), attrs: `data-n="${n}"`});
   }).join("");
-  return `${djToolBtn("memory", `${djIcon("bookmark")} ${esc(t("dj.memory_set"))}`, t("dj.memory_title"), {cls: "wide"})}
-    ${AUTOCUE_AVAILABLE ? djToolBtn("autocue", `${djIcon("square-sparkles")} ${esc(t("dj.autocue"))}`, t("dj.autocue_title"),
-      {cls: "wide", attrs: ed.autocueBusy ? "disabled" : ""}) : ""}
-    <span class="dj-sep"></span>
-    <span class="dj-toollabel">${djIcon("repeat")} ${esc(t("dj.loop"))}</span>
-    ${djToolBtn("loopin", esc(t("dj.loop_in")), t("dj.loop_in_title"), {cls: loop ? "on" : ""})}
-    ${djToolBtn("loopout", esc(t("dj.loop_out")), t("dj.loop_out_title"), {cls: loop && loop.end != null ? "on" : ""})}
-    ${lens}
-    ${loop ? djToolBtn("loopexit", djIcon("x"), t("dj.loop_exit")) : ""}`;
+  // Ueberschrift = Zustand der Schleife: nichts, nur Anfang, aktiv (mit Laenge, wenn sie einer Taste entspricht).
+  const cap = !loop ? t("dj.loop_caption") : loop.end == null ? t("dj.loop_caption_in")
+    : active ? t("dj.loop_caption_active", {beats: djLoopLabel(active)}) : t("dj.loop_caption_on");
+  // Reiter Beatjump/Loop: oben die Beatjumps, darunter die Schleifen, je Wert die Taste darunter.
+  // Auto Cue und Memory Cue stehen in der Zeile der Reiter (djCueBarHTML()), in jedem Reiter erreichbar.
+  return `<div class="dj-trow">${djJumpTools()}</div>
+    <div class="dj-trow">${djToolGroup(esc(cap),
+      `${djToolBtn("loopin", esc(t("dj.loop_in")), t("dj.loop_in_title"), {cls: loop ? "on" : ""})}
+      ${djToolBtn("loopout", esc(t("dj.loop_out")), t("dj.loop_out_title"), {cls: loop && loop.end != null ? "on" : ""})}
+      ${djSegRow(lens)}
+      ${djToolBtn("loopexit", djIcon("x"), t("dj.loop_exit"), {attrs: loop ? "" : "disabled"})}`)}</div>`;
 }
 
-// Tippen ergibt nur zum laufenden Track Sinn.
-function djTapBtn(ed) {
-  return djToolBtn("tap", "TAP", t("dj.tap_title"), {attrs: ed.audio.paused ? "disabled" : ""});
+// Beschriftete Gruppe der Werkzeugleiste: kleine Ueberschrift ueber den Knoepfen.
+// `caption` ist bereits HTML (darf Spans enthalten, z. B. die live nachgefuehrte Abschnittsangabe).
+function djToolGroup(caption, body, cls = "") {
+  return `<span class="dj-tgroup${cls ? " " + cls : ""}"><span class="dj-tcap">${caption}</span><span class="dj-tbtns">${body}</span></span>`;
+}
+// Knopfreihe ohne Abstand fuer Werte einer Groesse (-10/-1/+1/+10 ms, Loop-Laengen, ...).
+function djSegRow(body) { return `<span class="dj-segrow">${body}</span>`; }
+// Wert mit zugehoeriger Taste darunter (Beatjump, Loop-Laengen).
+function djKeyLabel(label, key) { return `<span class="dj-kl">${esc(label)}<kbd>${esc(key)}</kbd></span>`; }
+// Dezimalzahl in der Schreibweise der Oberflaeche (0,1 statt 0.1).
+function djFmtDec(x) { return String(x).replace(".", t("dj.decimal_sep")); }
+// Zusatz zur Ueberschrift "Tempowechsel": welcher Abschnitt (nur bei mehreren).
+function djSegInfo(ed, seg) { return ed.segs.length > 1 ? " · " + t("dj.segment_of", {i: seg + 1, n: ed.segs.length}) : ""; }
+
+// Memory Cue setzen mit Pfeilen zum vorigen/naechsten und Auto Cue: in der Zeile der Reiter.
+// Die Pfeile sind gesperrt, wenn in der Richtung kein Memory Cue liegt (ohne Memory Cue beide).
+function djCueBarHTML(ed) {
+  const nav = djMemoryNav(ed);
+  return `${AUTOCUE_AVAILABLE ? djToolBtn("autocue", `${djIcon("square-sparkles")} ${esc(t("dj.autocue"))}`, t("dj.autocue_title"),
+      {cls: "wide", attrs: ed.autocueBusy ? "disabled" : ""}) + '<span class="dj-sep"></span>' : ""}
+    ${djToolBtn("memorynav", djIcon("chevron-left"), t("dj.memory_prev"), {attrs: `data-dir="-1" ${nav.prev ? "" : "disabled"}`})}
+    ${djToolBtn("memory", `${djIcon("bookmark")} ${esc(t("dj.memory_set"))}`, t("dj.memory_title"), {cls: "wide"})}
+    ${djToolBtn("memorynav", djIcon("chevron-right"), t("dj.memory_next"), {attrs: `data-dir="1" ${nav.next ? "" : "disabled"}`})}`;
+}
+
+// Gibt es vor/hinter der Position einen Memory Cue? Gleiche Grenzen wie djGoMemory().
+function djMemoryNav(ed) {
+  const pos = djPos(ed);
+  const stops = ed.cues.filter(c => c.kind === "memory").map(c => c.position_s);
+  return {prev: stops.some(x => x < pos - 0.05), next: stops.some(x => x > pos + 0.05)};
+}
+
+function djSyncCueBar(ed) {
+  const cuebar = ed.root.querySelector(".dj-cuebar"), cueHtml = djCueBarHTML(ed);
+  if (cuebar && cueHtml !== ed._cueBar) { cuebar.innerHTML = cueHtml; ed._cueBar = cueHtml; }
+}
+
+// Tippen ergibt nur zum laufenden Track Sinn, in einer Rampe gar nicht.
+function djTapBtn(ed, ramp) {
+  return djToolBtn("tap", 'TAP <kbd class="dj-kbd">B</kbd>', t("dj.tap_title"), {attrs: ed.audio.paused || ramp ? "disabled" : ""});
 }
 
 function djGridTools(ed) {
   if (!ed.segs.length) {
-    return `<span class="dj-hint">${esc(t("dj.no_grid"))}</span>
+    return `<div class="dj-trow" style="align-items:center"><span class="dj-hint">${esc(t("dj.no_grid"))}</span>
       ${PHRASES_AVAILABLE ? djToolBtn("measure", `${ICONS.analysePhrases} ${esc(t("dj.measure"))}`, t("dj.measure_title"), {cls: "wide"}) : ""}
       ${djToolBtn("newgrid", esc(t("dj.new_grid")), t("dj.new_grid_title"), {cls: "wide"})}
-      ${djTapBtn(ed)}`;
+      ${djTapBtn(ed)}</div>`;
   }
-  const shift = (ms, icon) => djToolBtn("shift", djIcon(icon), t(ms < 0 ? "dj.shift_left" : "dj.shift_right", {ms: Math.abs(ms)}), {attrs: `data-ms="${ms}"`});
-  const interval = (d, icon) => djToolBtn("interval", djIcon(icon), t(d < 0 ? "dj.interval_expand" : "dj.interval_shrink", {bpm: Math.abs(d)}), {attrs: `data-d="${d}"`});
-  const scope = (here, icon, title) => djToolBtn("gridscope", djIcon(icon), t(title), {cls: !!djPrefs().gridHere === here ? "on" : "", attrs: `data-here="${here ? 1 : 0}"`});
-  const seg = djSegIndexAt(ed, djPos(ed));
-  return `<input class="dj-bpminput" type="number" step="0.01" min="20" max="400" value="${djFmtBpm(ed.segs[seg].bpm)}" title="${esc(t("dj.bpm_input_title"))}" ${ed.locked ? "disabled" : ""}>
-    ${djTapBtn(ed)}
-    ${djToolBtn("half", "×½", t("dj.half_title"))}
-    ${djToolBtn("double", "×2", t("dj.double_title"))}
-    <span class="dj-sep"></span>
-    ${scope(false, "move-horizontal", "dj.scope_whole")}${scope(true, "arrow-right-from-line", "dj.scope_here")}
-    <span class="dj-sep"></span>
-    ${shift(-10, "chevrons-left")}${shift(-1, "chevron-left")}${shift(1, "chevron-right")}${shift(10, "chevrons-right")}
-    <span class="dj-sep"></span>
-    ${interval(0.1, "chevrons-right-left")}${interval(0.01, "fold-horizontal")}${interval(-0.01, "unfold-horizontal")}${interval(-0.1, "chevrons-left-right")}
-    <span class="dj-sep"></span>
-    ${djToolBtn("gridhere", djIcon("locate-fixed"), t("dj.grid_to_playhead"))}
-    ${djToolBtn("downbeat", `${djIcon("flag-triangle-right")} ${esc(t("dj.downbeat"))}`, t("dj.downbeat_title"), {cls: "wide"})}
-    ${djToolBtn("addseg", `${djIcon("timer")} ${esc(t("dj.add_segment"))}`, t("dj.add_segment_title"), {cls: "wide"})}
-    ${ed.segs.length > 1 ? djToolBtn("delseg", djIcon("x"), t("dj.remove_segment")) : ""}
-    <span class="dj-seginfo dj-toollabel">${ed.segs.length > 1 ? esc(t("dj.segment_of", {i: seg + 1, n: ed.segs.length})) : ""}</span>
-    <span class="dj-sep"></span>
-    ${djToolBtn("metro", djIcon("metronome"), t("dj.metronome_title"), {cls: ed.metro ? "on" : ""})}
-    ${djToolBtn("lock", djIcon(ed.locked ? "lock" : "lock-open"), t("dj.lock_title"), {cls: ed.locked ? "on" : ""})}`;
+  const seg = djSegIndexAt(ed, djPos(ed)), ramp = djIsRamp(ed, seg);
+  // In einer Rampe ergibt sich das Tempo aus den Schlaegen: Tempofeld, TAP, Halbieren und
+  // Intervalle bleiben sichtbar (die Leiste springt sonst), sind aber gesperrt.
+  const tempoOff = ramp ? "disabled" : "";
+  const shift = ms => djToolBtn("shift", (ms < 0 ? "−" : "+") + Math.abs(ms), t(ms < 0 ? "dj.shift_left" : "dj.shift_right", {ms: Math.abs(ms)}), {attrs: `data-ms="${ms}"`});
+  // d < 0 = Intervalle erweitern = langsamer, deshalb "−".
+  const interval = d => djToolBtn("interval", (d < 0 ? "−" : "+") + djFmtDec(Math.abs(d)), t(d < 0 ? "dj.interval_expand" : "dj.interval_shrink", {bpm: Math.abs(d)}), {attrs: `data-d="${d}" ${tempoOff}`});
+  const scope = (here, icon, label, title) => djToolBtn("gridscope", `${djIcon(icon)} ${esc(t(label))}`, t(title), {cls: !!djPrefs().gridHere === here ? "on" : "", attrs: `data-here="${here ? 1 : 0}"`});
+  const mark = djTempoMarkAt(ed), marks = djTempoMarkTimes(ed), pos = djPos(ed);
+  const hasPrev = marks.some(x => x < pos - 0.01), hasNext = marks.some(x => x > pos + 0.01);
+  // Eine umbrechende Zeile: Tempo, Grid (Gilt fuer, Ausrichten, Verschieben, Intervall) und als
+  // letzte Gruppe Tempowechsel -- so steht sie immer direkt ueber der Rampe (Nutzervorgabe) und
+  // die Leiste bleibt bei ueblicher Breite zweizeilig, statt eine eigene Zeile zu belegen.
+  const tempo = djToolGroup(esc(t("dj.grp_tempo")),
+    `<input class="dj-bpminput" type="number" step="0.01" min="20" max="400" value="${djFmtBpm(djShownBpm(ed, pos))}" title="${esc(t(ramp ? "dj.bpm_input_ramp_title" : "dj.bpm_input_title"))}" ${tempoOff}>
+    ${djTapBtn(ed, ramp)}
+    ${djToolBtn("half", "×½", t("dj.half_title"), {attrs: tempoOff})}
+    ${djToolBtn("double", "×2", t("dj.double_title"), {attrs: tempoOff})}
+    ${djToolBtn("metro", djIcon("metronome"), t("dj.metronome_title"), {cls: ed.metro ? "on" : ""})}`);
+  const change = djToolGroup(`${esc(t("dj.grp_tempo_change"))}<span class="dj-seginfo">${esc(djSegInfo(ed, seg))}</span>`,
+    `${djToolBtn("tempomark", djIcon("chevron-left"), t("dj.tempo_mark_prev"), {attrs: `data-dir="-1" ${hasPrev ? "" : "disabled"}`})}
+    ${djToolBtn("addseg", `${djIcon("timer")} ${esc(t("dj.add_segment_short"))}`, t(mark > 0 ? "dj.remove_segment_here" : "dj.add_segment_title"), {cls: "wide" + (mark > 0 ? " on" : "")})}
+    ${djToolBtn("tempomark", djIcon("chevron-right"), t("dj.tempo_mark_next"), {attrs: `data-dir="1" ${hasNext ? "" : "disabled"}`})}
+    ${djToolBtn("delseg", djIcon("x"), t("dj.remove_segment"), {attrs: ed.segs.length > 1 ? "" : "disabled"})}`);
+  return `<div class="dj-trow">${tempo}
+      ${djToolGroup(esc(t("dj.grp_scope")), djSegRow(scope(false, "move-horizontal", "dj.scope_whole_short", "dj.scope_whole") + scope(true, "arrow-right-from-line", "dj.scope_here_short", "dj.scope_here")))}
+      ${djToolGroup(esc(t("dj.grp_align")),
+        `${djToolBtn("downbeat", `${djIcon("flag-triangle-right")} ${esc(t("dj.downbeat_short"))}`, t("dj.downbeat_title"), {cls: "wide"})}
+        ${djToolBtn("gridhere", `${djIcon("locate-fixed")} ${esc(t("dj.grid_here_short"))}`, t("dj.grid_to_playhead"), {cls: "wide"})}`)}
+      ${djToolGroup(esc(t("dj.grp_shift")), djSegRow([-10, -1, 1, 10].map(shift).join("")))}
+      ${djToolGroup(esc(t("dj.grp_interval")), djSegRow([-0.1, -0.01, 0.01, 0.1].map(interval).join("")))}
+      ${change}
+    </div>
+    ${djRampTools(ed, seg)}`;
+}
+
+// Dritte Zeile: die Rampe als eigener Kasten. Ausserhalb einer Rampe gestrichelt mit Start/Ende
+// und einem Hinweis, bei offener Rampe (Start ohne Ende) umrandet, in einer Rampe hinterlegt
+// mit den Rampen-Werkzeugen statt Start/Ende (dort ohne Nutzen, die Zeile passt sonst nicht
+// in eine Reihe). Die Hoehe bleibt gleich (djFitTools()), die Leiste springt nicht.
+function djRampTools(ed, i) {
+  const ramp = djIsRamp(ed, i);
+  const open = ed.segs.some((s, j) => djRampOpen(ed, j) && s.t <= djPos(ed) + 1e-6);
+  const startEnd = `${djToolBtn("rampstart", esc(t("dj.ramp_start_short")), t("dj.ramp_start_title"))}
+    ${djToolBtn("rampend", esc(t("dj.ramp_end_short")), t(open ? "dj.ramp_end_open_title" : "dj.ramp_end_title"), {cls: open ? "on" : ""})}`;
+  const icon = djIcon("chart-no-axes-column-increasing");
+  if (!ramp) {
+    return `<div class="dj-ramp${open ? " open" : ""}"><span class="dj-ramplabel">${icon} ${esc(t("dj.ramp"))}</span>
+      ${startEnd}${open ? `<span class="dj-ramphint">${esc(t("dj.ramp_hint_open"))}</span>` : ""}</div>`;
+  }
+  const [lo, hi] = djRampBeatLimits(ed, i);
+  const beats = ed.segs[i].ramp.beats;
+  const anchors = djRampAnchors(ed.segs[i], ed.segs[i + 1]).length;
+  const own = djRampAnchors(ed.segs[i], ed.segs[i + 1]).filter(djAnchorManual).length;
+  const endBeat = djRampEndBeat(ed, i);
+  const from = djFmtBpm(ed.segs[i - 1].bpm), to = djFmtBpm(ed.segs[i + 1].bpm);
+  const short = bpm => djFmtDec(Math.round(bpm * 100) / 100);
+  return `<div class="dj-ramp on">
+    <span class="dj-ramplabel" title="${esc(t("dj.ramp_label_title", {from, to}))}">${icon} ${esc(t("dj.ramp_from_to", {from: short(ed.segs[i - 1].bpm), to: short(ed.segs[i + 1].bpm)}))}</span>
+    ${djSegRow(`${djToolBtn("rampinsert", djIcon("diamond-plus"), t("dj.ramp_insert_title"), {attrs: beats + 1 > hi ? "disabled" : ""})}
+      ${djToolBtn("rampremove", djIcon("diamond-minus"), t("dj.ramp_remove_title"), {attrs: beats - 1 < Math.max(1, lo) ? "disabled" : ""})}`)}
+    ${djSegRow(`${djToolBtn("rampcount", djIcon("minus"), t("dj.ramp_fewer"), {attrs: `data-d="-1" ${beats - 1 < Math.max(1, lo) ? "disabled" : ""}`})}
+      <span class="dj-segval" title="${esc(t("dj.ramp_beats_title"))}">${esc(t("dj.ramp_beats", {beats}))}</span>
+      ${djToolBtn("rampcount", djIcon("plus"), t("dj.ramp_more"), {attrs: `data-d="1" ${beats + 1 > hi ? "disabled" : ""}`})}`)}
+    <b class="dj-rampend${endBeat === 1 ? "" : " warn"}" title="${esc(t("dj.ramp_beats_title"))}">${esc(endBeat === 1 ? t("dj.ramp_end_on_one") : t("dj.ramp_end_on", {n: endBeat}))}</b>
+    <span class="dj-spacer"></span>
+    ${djToolBtn("rampfit", `${djIcon("magnet")} ${esc(t(ed.rampFitBusy ? "dj.ramp_fit_busy" : "dj.ramp_fit"))}`, t("dj.ramp_fit_title"), {cls: "wide", attrs: ed.rampFitBusy ? "disabled" : ""})}
+    ${djToolBtn("rampanchor", `${djIcon("map-pin")} ${esc(t("dj.ramp_anchor_short"))}`, t("dj.ramp_anchor_title"), {cls: "wide"})}
+    ${djToolBtn("rampunpin", `${djIcon("map-pin-off")} ${esc(t("dj.ramp_unpin_short"))}`, t("dj.ramp_unpin", {n: anchors, own}), {cls: "wide", attrs: anchors ? "" : "disabled"})}
+    ${djToolBtn("rampoff", djIcon("trash"), t("dj.ramp_dissolve"), {cls: "danger"})}
+  </div>`;
 }
 
 function djJumpTools() {
   const keys = Object.fromEntries(djJumpKeys().map(([k, n]) => [n, k.toUpperCase()]));
-  const jump = n => djToolBtn("jump", (n < 0 ? "−" : "+") + Math.abs(n),
-    t("dj.jump_title", {beats: Math.abs(n), key: keys[Math.abs(n)], arrow: n < 0 ? "←" : "→"}), {attrs: `data-n="${n}"`});
-  return `${djToolBtn("prevcue", djIcon("skip-back"), t("dj.prev_cue"))}
-    ${[-64, -32, -16, -8, -4].map(jump).join("")}
-    <span class="dj-sep"></span>
-    ${[4, 8, 16, 32, 64].map(jump).join("")}
-    ${djToolBtn("nextcue", djIcon("skip-forward"), t("dj.next_cue"))}`;
+  const jump = n => djToolBtn("jump", djKeyLabel((n < 0 ? "−" : "+") + Math.abs(n), keys[Math.abs(n)]),
+    t("dj.jump_title", {beats: Math.abs(n), key: keys[Math.abs(n)], arrow: n < 0 ? "←" : "→"}), {cls: "kb", attrs: `data-n="${n}"`});
+  return djToolGroup(esc(t("dj.beatjump_caption")),
+    `${djToolBtn("prevcue", djIcon("chevron-left"), t("dj.prev_cue"))}
+    ${djSegRow([-64, -32, -16, -8, -4].map(jump).join(""))}
+    <span class="dj-jumpmid">${djIcon("arrow-left-right")}</span>
+    ${djSegRow([4, 8, 16, 32, 64].map(jump).join(""))}
+    ${djToolBtn("nextcue", djIcon("chevron-right"), t("dj.next_cue"))}`);
 }
 
+// Reiter Phrasen: oben die ausgewaehlte Phrase (mit Blaettern und den Aktionen dazu), darunter
+// ihre Art, unten die Ziehen-Hilfe.
 function djPhraseTools(ed) {
-  const p = ed.phrases[ed.selPhrase];
+  const n = ed.phrases.length, i = ed.selPhrase, p = ed.phrases[i];
+  const step = dir => djToolBtn("phrasestep", djIcon(dir < 0 ? "chevron-left" : "chevron-right"), t(dir < 0 ? "dj.phrase_prev" : "dj.phrase_next"),
+    {attrs: `data-dir="${dir}" ${!n || (p && (i + dir < 0 || i + dir >= n)) ? "disabled" : ""}`});
+  let head;
+  if (p) {
+    const beats = djLowerBeat(ed, p.end) - djLowerBeat(ed, p.start);
+    const bars = beats ? " · " + t("dj.bars", {bars: djFmtDec(Math.round(beats / 4 * 10) / 10)}) : "";
+    head = `<span class="dj-pdot" style="background:var(--phrase-${phraseToken(p.kind, p.num)})"></span><b>${esc(djPhraseLabel(p))}</b><span class="dj-dim">· ${esc(djFmt(p.start))}${esc(bars)}</span>`;
+  } else {
+    head = `<span class="dj-dim">${esc(t(n ? "dj.phrase_none_selected" : "dj.phrase_none"))}</span>`;
+  }
   const kinds = djPhraseKinds().map(k =>
     `<button class="dj-kind${p && p.kind === k ? " on" : ""}" data-dj="kind" data-kind="${k}" style="--c:var(--phrase-${k});color:${theme().phrase[k + "Label"]}">${esc(t("phrase." + k))}</button>`).join("");
-  return `${djToolBtn("cut", `${djIcon("scissors")} ${esc(t("dj.cut"))}`, t("dj.cut_title"), {cls: "wide"})}
-    <span class="dj-sep"></span>
-    ${kinds}
-    <span class="dj-sep"></span>
-    ${djToolBtn("delphrase", `${djIcon("delete")} ${esc(t("dj.delete_phrase"))}`, t("dj.delete_phrase_title"), {cls: "wide"})}
-    ${djToolBtn("clearphrases", `${djIcon("trash")} ${esc(t("dj.clear_phrases"))}`, t("dj.clear_phrases_title"), {cls: "wide"})}`;
+  // Feste Breite (halbe Leiste): beim Durchschalten springen die Knoepfe nicht mit dem Namen.
+  return `<div class="dj-trow" style="align-items:center">
+      <span class="dj-pnav">${step(-1)}<span class="dj-ptitle">${head}</span>${step(1)}</span>
+      <span class="dj-spacer"></span>
+      ${djToolBtn("cut", `${djIcon("scissors")} ${esc(t("dj.cut"))} <kbd class="dj-kbd">X</kbd>`, t("dj.cut_title"), {cls: "wide"})}
+      ${djToolBtn("delphrase", `${djIcon("delete")} ${esc(t("dj.delete_phrase"))}`, t("dj.delete_phrase_title"), {cls: "wide"})}
+      ${djToolBtn("clearphrases", `${djIcon("trash")} ${esc(t("dj.clear_phrases"))}`, t("dj.clear_phrases_title"), {cls: "wide danger"})}
+    </div>
+    <div class="dj-trow">${djToolGroup(esc(t("dj.grp_phrase_kind")), kinds)}</div>
+    <div class="dj-trow"><span class="dj-thint">${esc(t("dj.phrase_drag_hint"))}</span></div>`;
+}
+
+// Die Auswahl folgt der Abspielposition (Nutzervorgabe): wechselt die Position in eine andere
+// Phrase, wird diese ausgewaehlt; vor der ersten die erste, hinter der letzten die letzte. Nur
+// beim Wechsel, eine von Hand gewaehlte Phrase bleibt also stehen, bis die Position weiterzieht.
+// Nicht waehrend die Maus gedrueckt ist (Ziehen im Phrasenband setzt die Auswahl selbst).
+function djFollowPhrase(ed, pos) {
+  const n = ed.phrases.length;
+  const at = n ? djPhraseAt(ed, pos) : -1;
+  const key = n ? `${at}|${at >= 0 ? ed.phrases[at].start : pos < ed.phrases[0].start}` : "";
+  if (key === ed._phraseKey || ed.pointerDown) return;
+  ed._phraseKey = key;
+  const want = !n ? -1 : at >= 0 ? at : pos < ed.phrases[0].start ? 0 : n - 1;
+  if (want === ed.selPhrase) return;
+  ed.selPhrase = want;
+  ed.phrasePicked = false;
+  djRenderSide(ed);
+  if (ed.mode === "phrase") djRenderTools(ed);
+  requestWavePaint();
+}
+
+// Phrasen der Reihe nach auswaehlen (und hinspringen). Ohne Auswahl die Phrase an der Abspielposition.
+function djStepPhrase(ed, dir) {
+  const n = ed.phrases.length;
+  if (!n) return;
+  const base = ed.selPhrase >= 0 ? ed.selPhrase + dir : Math.max(0, djPhraseAt(ed, djPos(ed)));
+  djSelectPhrase(ed, Math.min(n - 1, Math.max(0, base)), true);
 }
 
 // Leere Phrasenliste: Hinweis plus Einstieg zum Anlegen und Messen. Gemessen wird auf dem
@@ -1555,18 +2402,21 @@ function djRenderSide(ed) {
   }
   host.innerHTML = html;
   // Die Memory-Liste bestimmt die Hoehe der Leiste, die anderen Reiter scrollen darin.
+  // Die Hoehe waechst nur: sonst wird der ganze Editor beim Reiterwechsel kleiner.
+  // Gemessen ohne Flex-Wachstum: gestreckt auf eine hoehere linke Spalte (Hinweisbanner,
+  // schmaleres Fenster) hielte die Leiste sonst deren Hoehe fest, auch wenn sie wieder schrumpft.
   host.classList.add("fit");
   host.style.height = "";
-  if (ed.side === "memory") ed.sideMinH = host.offsetHeight;
-  else {
-    if (!ed.sideMinH) {
-      host.innerHTML = djMemoryHTML(ed);
-      ed.sideMinH = host.offsetHeight;
-      host.innerHTML = html;
-    }
-    host.classList.remove("fit");
-    host.style.height = ed.sideMinH + "px";
+  host.style.flex = "none";
+  if (ed.side === "memory") ed.sideMinH = Math.max(ed.sideMinH || 0, host.offsetHeight);
+  else if (!ed.sideMinH) {
+    host.innerHTML = djMemoryHTML(ed);
+    ed.sideMinH = host.offsetHeight;
+    host.innerHTML = html;
   }
+  host.style.flex = "";
+  if (ed.side !== "memory") host.classList.remove("fit");
+  host.style.height = ed.sideMinH + "px";
   djRenderRekordbox(ed);
 }
 
@@ -1577,6 +2427,7 @@ function djRenderRekordbox(ed) {
   if (!rb || !rb.available) { box.hidden = true; banner.hidden = true; return; }
   ed.r.rb = rb.present ? 1 : 0;
   ed.r.rbDiff = [...new Set([...rb.pending, ...rb.changed, ...(rb.notes || [])])];
+  ed.r.rbTagFields = rb.tag_fields && rb.tag_fields.length ? rb.tag_fields : null;
   const rbCell = djRowCell(ed, "rbCell", ".rbcell");
   if (rbCell) rbCell.innerHTML = rbSyncMark(ed.r);
   const names = list => list.map(f => t("dj.field_" + f)).join(", ");
@@ -1795,9 +2646,19 @@ function djOnClick(ed, ev) {
     case "analysislock": djSetAnalysisLock(ed, d.field, !ed.locks[d.field]); break;
     case "downbeat": djSetDownbeat(ed); break;
     case "addseg": djAddSegment(ed); break;
+    case "rampstart": djRampStart(ed); break;
+    case "rampend": djRampEnd(ed); break;
+    case "tempomark": djGoTempoMark(ed, Number(d.dir)); break;
+    case "memorynav": djGoMemory(ed, Number(d.dir)); break;
+    case "rampoff": djDissolveRamp(ed); break;
+    case "rampcount": djRampCount(ed, Number(d.d)); break;
+    case "rampanchor": djRampAnchorHere(ed); break;
+    case "rampfit": djRampFit(ed); break;
+    case "rampunpin": djRampDropAnchor(ed); break;
+    case "rampinsert": djRampInsertBeat(ed); break;
+    case "rampremove": djRampRemoveBeat(ed); break;
     case "delseg": djRemoveSegment(ed); break;
     case "metro": djToggleMetro(ed); break;
-    case "lock": djPush(ed); ed.locked = !ed.locked; djTouched(ed, "grid"); break;
     case "newgrid":
       djPush(ed);
       ed.segs = [{t: djPos(ed), bpm: ed.r.bp >= 20 && ed.r.bp <= 400 ? ed.r.bp : 120, n: 1}];
@@ -1811,6 +2672,7 @@ function djOnClick(ed, ev) {
     case "delphrase": djDeletePhrase(ed); break;
     case "clearphrases": djClearPhrases(ed); break;
     case "phraserow": djSelectPhrase(ed, Number(d.i), true); break;
+    case "phrasestep": djStepPhrase(ed, Number(d.dir)); break;
     case "reset": djReset(ed, d.field); break;
   }
 }
@@ -1818,6 +2680,9 @@ function djOnClick(ed, ev) {
 function djOnChange(ed, ev) {
   const el = ev.target;
   if (el.matches(".dj-bpminput")) {
+    // Nach dem Uebernehmen den Fokus abgeben: sonst baut sich die Leiste nicht neu auf
+    // (djRenderTools() wartet auf das Feld) und die Pfeiltasten bleiben im Feld.
+    el.blur();
     djSetBpm(ed, parseFloat(String(el.value).replace(",", ".")));
   } else if (el.dataset.cuename) {
     const cue = djCueById(ed, Number(el.dataset.cuename));
@@ -1833,6 +2698,10 @@ function djOnChange(ed, ev) {
 
 function djSelectPhrase(ed, i, jump) {
   ed.selPhrase = i;
+  // Bewusst gewaehlt (Maus, Liste, Pfeile): Entf/Backspace loescht sie in jeder Ansicht.
+  // Die mitlaufende Auswahl (djFollowPhrase()) setzt das zurueck -- sonst loeschte die Taste
+  // im Beatgrid die Phrase unter der Abspielposition, die niemand ausgewaehlt hat.
+  ed.phrasePicked = i >= 0;
   ed.selCue = null;              // siehe djSelectCue()
   if (jump && ed.phrases[i]) djSeek(ed, ed.phrases[i].start);
   djRenderPads(ed); djRenderSide(ed); djRenderTools(ed); requestWavePaint();
@@ -2152,6 +3021,7 @@ document.addEventListener("keydown", ev => {
   else if (hotSlot) { if (!ev.repeat) djHotDown(ed, hotSlot, ev); }
   else if (ev.altKey && key.length === 1) done = false;
   else if (key === " ") { if (document.activeElement && document.activeElement.blur) document.activeElement.blur(); djToggle(ed); }
+  else if (ev.altKey && (key === "ArrowLeft" || key === "ArrowRight")) djGoTempoMark(ed, key === "ArrowLeft" ? -1 : 1);
   else if (key === "ArrowLeft" || key === "ArrowRight") {
     const dir = key === "ArrowLeft" ? -1 : 1;
     djJump(ed, dir * (ed.jumpHeld ? ed.jumpHeld[1] : ev.shiftKey ? 4 : 1));
@@ -2167,11 +3037,13 @@ document.addEventListener("keydown", ev => {
   else if (key === "-") djZoom(ed, -1);
   else if (key === "Delete" || key === "Backspace") {
     if (ed.selCue != null) djDeleteCue(ed, ed.selCue);
-    else if (ed.selPhrase >= 0) djDeletePhrase(ed);
+    else if (ed.selPhrase >= 0 && (ed.mode === "phrase" || ed.phrasePicked)) djDeletePhrase(ed);
     else done = false;
   } else done = false;
   if (done) { ev.preventDefault(); ev.stopImmediatePropagation(); }
 }, true);
+
+window.addEventListener("resize", () => { if (DJ && !DJ.closed) djFitTools(DJ); });
 
 document.addEventListener("keyup", ev => {
   if (!DJ) return;
@@ -2228,9 +3100,14 @@ function djWireZoom(ed) {
     } else {
       const cue = y < lay.top + 6 ? djCueAtX(ed, x, start, ed.span, w) : null;
       if (cue) Object.assign(drag, {kind: "cue", cue});
-      else if (ed.mode === "grid" && !ed.locked && ed.bt.length) {
+      else if (ed.mode === "grid" && ed.bt.length) {
         const b = djNearestBeat(ed, secAt(x));
-        if (Math.abs(((ed.bt[b] - start) / ed.span) * w - x) <= 5) {
+        const rk = djRampBeatIndex(ed, b);
+        if (Math.abs(((ed.bt[b] - start) / ed.span) * w - x) <= 5 && rk > 0) {
+          // Ein Schlag in der Rampe wird beim Ziehen zum Anker, der Rest verteilt sich neu.
+          const segIndex = djSegIndexAt(ed, ed.bt[b]);
+          Object.assign(drag, {kind: "anchor", seg: segIndex, k: rk, grab: ed.bt[b] - secAt(x)});
+        } else if (Math.abs(((ed.bt[b] - start) / ed.span) * w - x) <= 5) {
           const segIndex = djSegIndexAt(ed, ed.bt[b]);
           // Mit Shift dehnen: der erste Schlag bleibt, der angefasste folgt der Maus.
           const beatsIn = Math.round((ed.bt[b] - ed.segs[segIndex].t) * ed.segs[segIndex].bpm / 60);
@@ -2247,7 +3124,7 @@ function djWireZoom(ed) {
       if (!drag.moved) {
         drag.moved = true;
         if (drag.kind === "scrub" && drag.wasPlaying) ed.audio.pause();
-        if (["cue", "edge", "grid", "stretch"].includes(drag.kind)) djPush(ed);
+        if (["cue", "edge", "grid", "stretch", "anchor"].includes(drag.kind)) djPush(ed);
         if (drag.kind === "phrase" && drag.base) { djPush(ed); djSelectPhrase(ed, drag.index, false); }
       }
       const dt = (px - x) / w * ed.span;
@@ -2256,6 +3133,17 @@ function djWireZoom(ed) {
       else if (drag.kind === "edge") djDragEdge(ed, drag, secAt(px) + drag.grab, e);
       else if (drag.kind === "phrase" && drag.base) djDragPhrase(ed, drag, dt, e);
       else if (drag.kind === "grid") { djShiftSegs(ed, drag.base, dt, djPrefs().gridHere ? drag.seg : 0); djRebuildBeats(ed); }
+      else if (drag.kind === "anchor") {
+        // Zwischen den Nachbar-Ankern (bzw. Rampenrand) halten, sonst fielen sie weg.
+        const seg = ed.segs[drag.seg], next = ed.segs[drag.seg + 1];
+        const pins = [[0, seg.t], ...djRampAnchors(seg, next).filter(([k]) => k !== drag.k), [seg.ramp.beats, next.t]];
+        const before = pins.filter(([k]) => k < drag.k).at(-1), after = pins.find(([k]) => k > drag.k);
+        const lo = before[1] + 0.03 * (drag.k - before[0]), hi = after[1] - 0.03 * (after[0] - drag.k);
+        if (hi > lo) {
+          djSetRampAnchor(ed, drag.seg, drag.k, Math.min(hi, Math.max(lo, secAt(px) + drag.grab)));
+          djRebuildBeats(ed);
+        }
+      }
       else if (drag.kind === "stretch") {
         const span = secAt(px) - drag.base[drag.seg].t;
         if (span > 0.05) {
@@ -2284,7 +3172,7 @@ function djWireZoom(ed) {
         if (drag.wasPlaying) djPlay(ed);
       } else if (drag.kind === "cue") djTouched(ed, "cues");
       else if (drag.kind === "edge" || (drag.kind === "phrase" && drag.base)) djTouched(ed, "phrases");
-      else if (drag.kind === "grid" || drag.kind === "stretch") djTouched(ed, "grid");
+      else if (drag.kind === "grid" || drag.kind === "stretch" || drag.kind === "anchor") djTouched(ed, "grid");
     };
     canvas.addEventListener("pointermove", onMove);
     canvas.addEventListener("pointerup", onUp);
@@ -2302,7 +3190,7 @@ function djWireZoom(ed) {
       if (edge) hover = edge.at;
       cursor = edge ? "col-resize" : "move";
     } else if (y < lay.top + 6 && djCueAtX(ed, x, start, ed.span, rect.width)) cursor = "pointer";
-    else if (ed.mode === "grid" && !ed.locked && ed.bt.length) {
+    else if (ed.mode === "grid" && ed.bt.length) {
       const b = djNearestBeat(ed, start + (x / rect.width) * ed.span);
       if (Math.abs(((ed.bt[b] - start) / ed.span) * rect.width - x) <= 5) cursor = "ew-resize";
     }
@@ -2785,24 +3673,23 @@ function djDrawBeats(ctx, ed, start, span, w, top, bottom) {
 // Tags (.moodtag). Liegen sie zu dicht, stapeln sie sich; ist auch das voll, bleibt
 // nur die Linie (Flex-Grids haben sehr viele Abschnitte).
 function djDrawTempoBadges(ctx, ed, start, span, w, top, bottom, small) {
-  if (ed.segs.length < 2) return;
+  const marks = ed.segs.map((s, i) => djIsTempoMark(ed, i));
+  if (!marks.some(Boolean)) return;
   const th = theme().dj, pad = small ? 3 : 6, height = small ? 12 : 16;
   const free = small ? [-Infinity, -Infinity] : [-Infinity, -Infinity, -Infinity];
   ctx.save();
   ctx.font = `600 ${small ? 9 : 11}px -apple-system, sans-serif`;
   ctx.textAlign = "left";
   ctx.textBaseline = "middle";
-  ed.segs.forEach((s, i) => {
-    // Gleiches Tempo: nur ein nachjustiertes Raster ab hier, kein Tempowechsel.
-    if (!i || Math.abs(s.bpm - ed.segs[i - 1].bpm) < 0.005) return;
-    const x = ((s.t - start) / span) * w;
+  // Hat der Track einen Tempowechsel, steht das Anfangstempo am ersten Schlag des Grids (nicht
+  // dort, wo der erste Abschnitt verankert ist -- das Grid reicht bis zum Trackanfang zurueck).
+  // An jeder Marke das Tempo ab dort; am Rampenbeginn das Tempo davor mit der Richtung, am Ende das neue.
+  const badge = (x, label, line) => {
     if (x < -90 || x > w) return;
-    ctx.fillStyle = th.tempo;
-    ctx.fillRect(x, top, 1.5, bottom - top);
+    if (line) { ctx.fillStyle = th.tempo; ctx.fillRect(x, top, 1.5, bottom - top); }
     const row = free.findIndex(limit => x >= limit);
     if (row < 0) return;
-    const label = djFmtBpm(s.bpm), bw = ctx.measureText(label).width + pad * 2;
-    const y = top + 2 + row * (height + 2);
+    const bw = ctx.measureText(label).width + pad * 2, y = top + 2 + row * (height + 2);
     ctx.fillStyle = th.tempoBg;
     ctx.beginPath();
     ctx.roundRect(x + 3, y, bw, height, small ? 3 : 4);
@@ -2810,8 +3697,49 @@ function djDrawTempoBadges(ctx, ed, start, span, w, top, bottom, small) {
     ctx.fillStyle = th.tempoFg;
     ctx.fillText(label, x + 3 + pad, y + height / 2 + 0.5);
     free[row] = x + 3 + bw + 3;
+  };
+  badge(((djGridStart(ed) - start) / span) * w, djFmtBpm(ed.segs[0].bpm), false);
+  ed.segs.forEach((s, i) => {
+    if (!marks[i]) return;
+    const x = ((s.t - start) / span) * w;
+    let label = djFmtBpm(s.bpm);
+    if (djIsRamp(ed, i)) label += ed.segs[i + 1].bpm >= s.bpm ? " ↗" : " ↘";
+    else if (djRampOpen(ed, i)) label = t("dj.ramp_open_badge", {bpm: djFmtBpm(s.bpm)});
+    badge(x, label, true);
   });
   ctx.restore();
+}
+
+// Rampen. layer "under": leicht getoenter Bereich unter der Wellenform. layer "over": ein
+// schmaler Streifen in der Tempofarbe oben (die Toenung verschwindet unter dichter
+// Wellenform), mit anchors zusaetzlich die angehefteten Schlaege als Raute.
+function djDrawRamps(ctx, ed, start, span, w, top, bottom, layer, anchors) {
+  const th = theme().dj;
+  ed.segs.forEach((s, i) => {
+    if (!djIsRamp(ed, i)) return;
+    const x0 = ((s.t - start) / span) * w, x1 = ((ed.segs[i + 1].t - start) / span) * w;
+    if (x1 < 0 || x0 > w) return;
+    if (layer === "under") {
+      ctx.fillStyle = th.ramp;
+      ctx.fillRect(x0, top, x1 - x0, bottom - top);
+      return;
+    }
+    ctx.fillStyle = th.tempo;
+    ctx.fillRect(x0, top, x1 - x0, 2);
+    if (!anchors) return;
+    // Eigene Anker gefuellt, eingepasste nur umrandet (die darf "An Audio anpassen" ersetzen).
+    ctx.fillStyle = th.anchor;
+    ctx.strokeStyle = th.anchor;
+    ctx.lineWidth = 1.5;
+    for (const a of djRampAnchors(s, ed.segs[i + 1])) {
+      const x = ((a[1] - start) / span) * w;
+      if (x < -6 || x > w + 6) continue;
+      ctx.beginPath();
+      ctx.moveTo(x, top + 0.75); ctx.lineTo(x + 4.5, top + 5); ctx.lineTo(x, top + 9.25); ctx.lineTo(x - 4.5, top + 5);
+      ctx.closePath();
+      if (djAnchorManual(a)) ctx.fill(); else ctx.stroke();
+    }
+  });
 }
 
 // Cue "am Abspielkopf": von einem Schlag davor bis einen Takt danach. Steht der Kopf
@@ -2865,8 +3793,10 @@ function djPaintZoom(ctx, w, h, entry) {
   if (!ed.detail) { drawLoadingWave(ctx, w, h, entry); return; }
   entry.loadingAnim = false;
   if (ed.loop) djDrawLoop(ctx, ed, start, span, w, h - lay.lane, ed.loop);
+  djDrawRamps(ctx, ed, start, span, w, waveTop, waveTop + waveH, "under");
   djDrawWave(ctx, ed, w, waveTop, waveH, start, span);
   djDrawBeats(ctx, ed, start, span, w, waveTop, waveTop + waveH);
+  djDrawRamps(ctx, ed, start, span, w, waveTop, waveTop + waveH, "over", true);
   djDrawPhrases(ctx, ed, start, span, w, h - lay.lane, lay.lane, true);
   djDrawEdgeGrip(ctx, ed, start, span, w, waveTop, h - lay.lane, h, true);
   djDrawCues(ctx, ed, start, span, w, h - lay.lane, lay.top, true);
@@ -2917,6 +3847,8 @@ function djPaintOver(ctx, w, h, entry, dpr) {
   const waveH = h - lay.top - lay.lane - 2;
   ctx.drawImage(djOverLayer(ed, entry, w, h, dpr, waveH, lay.top), 0, 0, w, h);
   const {start, span} = djOverRange(ed), xAt = sec => ((sec - start) / span) * w;
+  djDrawRamps(ctx, ed, start, span, w, lay.top, lay.top + waveH, "under");
+  djDrawRamps(ctx, ed, start, span, w, lay.top, lay.top + waveH, "over", false);
   const x = xAt(pos), x0 = xAt(0);
   // Gespielter Teil abgedunkelt.
   ctx.fillStyle = th.shade;

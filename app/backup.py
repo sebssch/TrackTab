@@ -61,12 +61,41 @@ def create_backup(cfg: dict | None = None, dest: str | Path | None = None) -> Pa
     return dest
 
 
+def _to_keep(backups: list[Path], keep: int, keep_days: int) -> set[Path]:
+    """Welche Backups bleiben (backups: aelteste zuerst).
+
+    Zwei Stufen:
+    - die juengsten 'keep', egal von welchem Tag;
+    - dazu je das letzte Backup der juengsten 'keep_days' Tage, an denen es
+      ueberhaupt eines gibt.
+
+    Die zweite Stufe gibt es, weil bei JEDEM Beenden ein Backup entsteht:
+    nach zehn Sitzungen (an einem regen Tag schnell erreicht) waeren sonst
+    alle zehn Plaetze mit dem Stand von heute belegt. Faellt ein Schaden erst
+    spaeter auf (versehentlich aufgeraeumt, falsches Backup eingespielt), gab
+    es keinen aelteren Stand mehr. Gezaehlt werden Tage MIT Backup, nicht
+    Kalendertage -- wer die App einen Monat nicht oeffnet, verliert dadurch
+    nichts.
+    """
+    kept = set(backups[-keep:]) if keep > 0 else set()
+    if keep_days > 0:
+        last_of_day: dict[str, Path] = {}
+        for p in backups:                       # aufsteigend: der letzte gewinnt
+            last_of_day[p.name[len(_NAME_PREFIX):_DAY_LEN]] = p
+        for day in sorted(last_of_day)[-keep_days:]:
+            kept.add(last_of_day[day])
+    return kept
+
+
 def prune_backups(cfg: dict | None = None) -> int:
-    """Behaelt nur die juengsten backup_keep automatischen Backups."""
+    """Raeumt die automatischen Backups auf: es bleiben die juengsten
+    backup_keep und je eines pro Tag fuer backup_keep_days Tage (siehe
+    _to_keep())."""
     cfg = cfg or cfgmod.load()
-    keep = int(cfg.get("backup_keep", 10))
     backups = list_backups(cfg)
-    excess = backups[:-keep] if keep > 0 else backups
+    kept = _to_keep(backups, int(cfg.get("backup_keep", 10)),
+                    int(cfg.get("backup_keep_days", 7)))
+    excess = [p for p in backups if p not in kept]
     for p in excess:
         p.unlink(missing_ok=True)
     return len(excess)

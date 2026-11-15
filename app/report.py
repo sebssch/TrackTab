@@ -17,6 +17,7 @@ from . import __version__
 from . import classify as classify_mod
 from . import config as cfgmod
 from . import genremood as genremood_mod
+from . import taganomaly as taganomaly_mod
 from . import tags as tags_mod
 
 _FLAGGED = (classify_mod.VERDICT_FAKE, classify_mod.VERDICT_SUSPECT)
@@ -78,6 +79,7 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
             tag_issues = json.loads(r["tag_issues"] or "[]")
         except (TypeError, ValueError):
             tag_issues = []
+        tag_issues = taganomaly_mod.enabled_issues(tag_issues, cfg)
         if flagged:
             try:
                 reasons = json.loads(r["reasons"] or "[]")
@@ -105,6 +107,8 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
             "tn": int(r["track_no"] or 0),
             "tt": int(r["track_total"] or 0),
             "cv": int(r["has_cover"] or 0),
+            "ch": (r["cover_hash"] or "")[:12],
+            "cl": int(r["compilation"] or 0),
             "v": r["verdict"] or classify_mod.VERDICT_UNKNOWN,
             "fam": r["codec_family"] or "lossy_mp3",
             "cd": r["codec"] or "",
@@ -133,6 +137,7 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
             "rb": 1 if r["path"] in rekordbox else 0,
             "im": 1 if r["path"] in music_added else 0,
             "da": int(music_added.get(r["path"]) or 0),
+            "mt": int(r["mtime"] or 0),
             # Genre-Vorschlaege [[Stil, Prozent], ...] (hoechstens 5),
             # Energie 1..10 (0 = nicht analysiert), Stimmungen {Name: 0..1}.
             "gs": [[g, round(p * 100)] for g, p in (gm.get("g") or [])[:5]
@@ -149,7 +154,7 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
 def build_csv(rows, cfg: dict, hidden: set[str] | None = None) -> Path:
     path = cfgmod.resolve(cfg["csv_path"])
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8-sig") as fh:
+    with cfgmod.atomic_open(path, encoding="utf-8-sig", newline="", fsync=False) as fh:
         w = csv.writer(fh)
         w.writerow([
             "Verdikt", "Konfidenz", "Codec", "Codec-Familie",
@@ -191,7 +196,7 @@ def build_m3u(rows, cfg: dict, hidden: set[str] | None = None) -> Path:
     flagged = [r for r in rows
                if r["verdict"] in _FLAGGED and r["path"] not in hidden]
     flagged.sort(key=lambda r: (r["cutoff_hz"] or 0))
-    with open(path, "w", encoding="utf-8") as fh:
+    with cfgmod.atomic_open(path, fsync=False) as fh:
         fh.write("#EXTM3U\n")
         fh.write("# Auffällige Dateien aus TrackTab — "
                  "zum Gegenhoeren, nicht zum blinden Loeschen.\n")
@@ -199,6 +204,12 @@ def build_m3u(rows, cfg: dict, hidden: set[str] | None = None) -> Path:
             label = " — ".join(x for x in (r["artist"], r["title"]) if x) or Path(r["path"]).stem
             fh.write(f"#EXTINF:{int(r['duration_s'] or 0)},{label}\n{r['path']}\n")
     return path
+
+
+def library_roots(cfg: dict) -> list[str]:
+    """Bibliotheksordner als absolute Pfade, wie sie in der DB stehen (nur ~
+    expandiert, keine Symlinks aufgeloest -- der Scan speichert sie genauso)."""
+    return [os.path.normpath(str(cfgmod.resolve(p))) for p in cfg.get("library_paths") or [] if str(p).strip()]
 
 
 def build_html(rows, cfg: dict, ignored: set[str] | None = None,
@@ -245,6 +256,9 @@ def build_html(rows, cfg: dict, ignored: set[str] | None = None,
         "keyTable": {k: list(v) for k, v in tags_mod.KEY_TABLE.items()},
         "keyAliases": tags_mod.key_aliases(),
         "keyNotation": cfg.get("key_notation", "camelot"),
+        # Bibliotheksordner als absolute Pfade (~ aufgeloest) -- die Pfadanzeige
+        # kuerzt alles davor auf ".../" (shortPath() in app.js).
+        "libraryRoots": library_roots(cfg),
         # Stilnamen der Genre-Analyse fuer die Genre-Auswahl im Tags-Dialog
         # (hinter den Bibliotheks-Genres), leer ohne Modelle.
         "genreStyles": genremood_mod.style_names(),
@@ -255,11 +269,32 @@ def build_html(rows, cfg: dict, ignored: set[str] | None = None,
         .replace("/*__META__*/null", _json_for_script(meta))
         .replace("/*__DATA__*/null", _json_for_script(payload))
     )
-    path.write_text(html, encoding="utf-8")
+    # Atomar: der Server liefert genau diese Datei aus. Ein direkt
+    # geschriebener, halb fertiger Stand (Abbruch mitten im Schreiben, oder
+    # ein zweiter Prozess liest gerade) waere eine kaputte Oberflaeche.
+    cfgmod.atomic_write_text(path, html, fsync=False)
     return path
 
 
-def build_all(conn, cfg: dict) -> dict:
+def build_exports(conn, cfg: dict, rows=None) -> dict:
+    """Nur CSV und M3U der ganzen Bibliothek (data/tracktab.csv,
+    data/verdaechtig.m3u8). Entstehen ausschliesslich auf ausdrueckliche
+    Anforderung -- './run.command report' -- und nie nebenbei beim Bedienen,
+    Laden oder Beenden der Oberflaeche: die liest beide Dateien nicht, ihre
+    eigenen Export-Knoepfe (CSV Export, Playlist Export) erzeugen den Download
+    der Auswahl direkt im Browser."""
+    from . import db as db_mod
+    if rows is None:
+        rows = db_mod.fetch(conn)
+    # Ausgeblendete und manuell korrigierte Faelle sind abgehakt und tauchen
+    # deshalb in CSV und Playlist nicht mehr auf, siehe build_all().
+    hidden = db_mod.ignored_paths(conn) | db_mod.corrected_paths(conn)
+    return {"CSV": build_csv(rows, cfg, hidden), "M3U": build_m3u(rows, cfg, hidden)}
+
+
+def build_all(conn, cfg: dict, exports: bool = False) -> dict:
+    """HTML-Report; mit exports=True zusaetzlich CSV und M3U (nur der
+    Befehl 'report', siehe build_exports())."""
     from . import db as db_mod
     rows = db_mod.fetch(conn)
     ignored = db_mod.ignored_paths(conn)
@@ -279,13 +314,15 @@ def build_all(conn, cfg: dict) -> dict:
     # Nicht-Duplikat-Zeile ist kein abgehakter Befund, sie soll in CSV/M3U
     # normal weiter auftauchen.
     hidden = ignored | corrected
-    return {
+    out = {
         "HTML": build_html(rows, cfg, ignored, corrected, rekordbox,
                            music_added, playlists, playlist_items, dup_dismissed,
                            genremood, user_tags),
-        "CSV": build_csv(rows, cfg, hidden),
-        "M3U": build_m3u(rows, cfg, hidden),
     }
+    if exports:
+        out["CSV"] = build_csv(rows, cfg, hidden)
+        out["M3U"] = build_m3u(rows, cfg, hidden)
+    return out
 
 
 # Aus diesen Dateien backt _template() den Report zusammen.

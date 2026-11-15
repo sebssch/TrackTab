@@ -374,6 +374,15 @@ def _with_malformed_retry(pyrekordbox_mod, fn):
     return result
 
 
+def _int_or_zero(value) -> int:
+    """Zaehler aus einer Rekordbox-Textspalte (AnalysisUpdated u. a.). Rekordbox legt dort
+    gelegentlich Unsinn ab (an einem Track stand ":"), das darf das Schreiben nicht kippen."""
+    try:
+        return int(str(value).strip())
+    except (TypeError, ValueError):
+        return 0
+
+
 def _live(row) -> bool:
     """Rekordbox loescht nie hart, sondern setzt rb_local_deleted=1 (Cloud-
     Sync-Historie, an echtem Material bestaetigt: auch "Von der Sammlung
@@ -988,7 +997,7 @@ def _write_cues(db, content, cues: list[dict], now) -> None:
             db.add(model(ID=content.UUID, ContentID=content.ID, Cues=text, UUID=str(uuid4()),
                          rb_data_status=0, rb_local_data_status=0, rb_local_deleted=0,
                          rb_local_synced=0))
-    _touch(db, [content], now, CueUpdated=str(int(content.CueUpdated or 0) + 1))
+    _touch(db, [content], now, CueUpdated=str(_int_or_zero(content.CueUpdated) + 1))
 
 
 def _set_pqtz(anlz, beats: list[list]) -> None:
@@ -1229,7 +1238,7 @@ def _update_in(db, path: str, cues, beats, phrases, now, tags=None) -> dict:
         skipped += [f for f, v in (("grid", beats), ("phrases", phrases)) if v is not None]
     elif wants_analysis:
         _write_analysis(db, content, beats, phrases, now)
-        fields: dict = {"AnalysisUpdated": str(int(content.AnalysisUpdated or 0) + 1)}
+        fields: dict = {"AnalysisUpdated": str(_int_or_zero(content.AnalysisUpdated) + 1)}
         if phrases is not None:
             fields["ContentLink"] = int(content.ContentLink or 0) | _CONTENT_LINK_PSSI
         if beats:
@@ -1645,16 +1654,35 @@ def _find_playlist(db, spec: str):
     return node
 
 
+def _live_by_name(db, query, name: str):
+    """Erste LEBENDE Zeile zum Namen. pyrekordbox liefert auch Soft-Deletes
+    (rb_local_deleted=1); verweist ein Track auf so eine tote Zeile, zeigt
+    Rekordbox das Feld leer (Genre "Hard Dance" blieb trotz Update weiter
+    "Metadaten"-Abweichung). Gibt es nur tote Zeilen, wird die erste
+    wiederbelebt (Status wie eine lebende: rb_local_deleted=0,
+    rb_data_status=0, an echtem Material abgelesen) -- eine neue anlegen geht
+    nicht, pyrekordbox' add_album()/add_genre()/add_artist() lehnen jeden
+    vorhandenen Namen ab, auch einen toten. Vorher verwies der Track auf die
+    tote Zeile und das Feld blieb in Rekordbox leer (an 6 Tracks bestaetigt)."""
+    rows = list(query(Name=name))
+    live = next((r for r in rows if _live(r)), None)
+    if live is not None or not rows:
+        return live
+    import datetime
+    _touch(db, [rows[0]], datetime.datetime.now(), rb_local_deleted=0, rb_data_status=0)
+    return rows[0]
+
+
 def _get_or_create_artist(db, name: str):
-    return db.get_artist(Name=name).first() or db.add_artist(name=name)
+    return _live_by_name(db, db.get_artist, name) or db.add_artist(name=name)
 
 
 def _get_or_create_genre(db, name: str):
-    return db.get_genre(Name=name).first() or db.add_genre(name=name)
+    return _live_by_name(db, db.get_genre, name) or db.add_genre(name=name)
 
 
 def _get_or_create_album(db, name: str, artist_id: str | None):
-    album = db.get_album(Name=name).first()
+    album = _live_by_name(db, db.get_album, name)
     if album is not None:
         return album
     # 'artist' hier ist der ALBUM-Interpret (AlbumArtistID) -- bei einem

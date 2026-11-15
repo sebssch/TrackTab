@@ -72,6 +72,32 @@ def ffprobe_path() -> str:
     return tool_path("ffprobe")
 
 
+def audio_fingerprint(path: str) -> str:
+    """Kennung des Audioinhalts einer Datei, unabhaengig von ihren Tags.
+
+    ffmpeg bildet eine Pruefsumme ueber die Audio-Pakete der ersten Tonspur,
+    ohne zu dekodieren ('-c copy -f md5'). Tags, Cover und Kommentare gehen
+    nicht ein -- ein Tag-Edit (auch von aussen, z. B. Mixed In Key) laesst
+    die Kennung gleich, eine andere Kodierung desselben Stuecks aendert sie.
+    Kostet rund 0,1 s je Datei (nur Lesen). Anders als files.file_hash, der
+    die ganze Datei samt Tags erfasst und Duplikate findet.
+
+    Leerer Text, wenn ffmpeg scheitert -- der Aufrufer behandelt das wie
+    "unbekannt" und verwirft dann nichts.
+    """
+    try:
+        proc = subprocess.run(
+            [ffmpeg_path(), "-v", "error", "-i", path, "-map", "0:a:0",
+             "-c", "copy", "-f", "md5", "-"],
+            capture_output=True, timeout=120)
+    except (OSError, subprocess.SubprocessError, MediaToolMissing):
+        return ""
+    out = proc.stdout.decode("ascii", "replace").strip()
+    if proc.returncode != 0 or not out.startswith("MD5="):
+        return ""
+    return out[4:]
+
+
 def lame_path() -> str | None:
     """Pfad zum eigenstaendigen lame-Programm oder None. Optional: fehlt es,
     kodiert der Converter ueber ffmpeg (libmp3lame) weiter -- dann allerdings

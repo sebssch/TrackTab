@@ -33,6 +33,29 @@ external_browser: "/Applications/Safari.app"   # Browser fuer die Web-UI, leer =
 # FLAC/WAV/AIFF/ALAC leer. Nur Dateien ausserhalb der library_paths.
 rename_pattern: "{artist}_{title}_{bpm}_{key}_{bitrate}_{year}"
 
+# --- Titel-Bereinigung (Auffaelligkeiten) ---
+# Was "Auffaelligkeiten" in Titel/Interpret/Album/Kommentar sucht.
+# tagclean_*: sicher, "Auffaelligkeiten beheben" schreibt die Korrektur.
+# tagwatch_*: nur Hinweis, bereinigter Wert als Vorschlag im Tags-Dialog.
+# Nach einer Aenderung "Auffaelligkeiten neu pruefen" (recheck-tags) laufen lassen.
+tagclean_web: true       # Webadressen, "[Promo]", "Downloaded from ..."
+tagclean_video: true     # "(Official Video)", "[HD]", "(Free Download)"
+tagclean_spaces: true    # Unterstriche und Doppelleerzeichen
+tagwatch_trackno: true   # "01 - Titel", "Interpret - Titel" im Titel
+tagwatch_remix: true     # "Titel - X Remix" / "[X Remix]" -> "(X Remix)"
+tagwatch_feat: true      # ft./featuring/feat -> feat.
+tagwatch_case: false     # Titel/Album komplett GROSS oder klein
+tagwatch_quotes: false   # typografische Apostrophe/Anfuehrungszeichen
+# Listen (Gross/Klein egal) und Ziel-Schreibweisen -- Vorgaben stehen in config.py:
+# tagclean_web_words / tagclean_web_tlds       Promo-Woerter in Klammern, Domain-Endungen
+# tagclean_video_remove                        Woerter, die eine Klammer als Video-Zusatz kennzeichnen
+# tagclean_underscore_single: space | hyphen    "_" -> Leerzeichen bzw. "-"
+# tagclean_underscore_double: dash | endash | pipe | space   "__" -> " - ", " – ", " | " oder " "
+# tagwatch_remix_words, tagwatch_remix_style: round | square | dash
+# tagwatch_feat_word: feat | ft | featuring,  tagwatch_feat_bracket: none | round | square
+# tagwatch_case_style: title | sentence | upper | lower
+# tagwatch_quotes_style: straight | typographic
+
 # --- Dekodierung ---
 max_analysis_s: 420            # Nur die ersten N Sekunden analysieren (DJ-Sets kappen)
 skip_head_pct: 0.03            # Anfang aussparen (Intro/Stille)
@@ -170,6 +193,8 @@ dj_waveform_source: "fallback"
 dj_waveform_style: "rgb"
 # Flaeche dort: dark, light oder ui (folgt dem Design).
 dj_waveform_surface: "dark"
+# Klang des Metronoms im DJ-Editor: beep, click, wood, rim, cowbell oder hihat.
+dj_metronome_sound: "beep"
 # Stimmungen + eigene Tags beim Playlist-Push als Rekordbox-"My Tag" setzen.
 # Die Spalte muss in Rekordbox existieren (vier feste Spalten, eine davon
 # umbenennen) -- sie gehoert dann TrackTab: nicht mehr zutreffende Tags darin
@@ -311,8 +336,12 @@ spectrum_points: 160           # Aufloesung der Miniatur-Spektren im HTML-Report
 # jedes CLI-Befehls), die aeltesten fliegen ueber backup_keep hinaus raus.
 # Manuelle Backups (Export/Wiederherstellung ueber die Oberflaeche oder
 # ./run.command backup) zaehlen nicht mit.
+# backup_keep_days: zusaetzlich bleibt je das letzte Backup der juengsten N
+# Tage, an denen es eines gibt (0 = aus). Schuetzt aeltere Staende davor, von
+# vielen Sitzungen am selben Tag verdraengt zu werden.
 backup_path: "backup"
 backup_keep: 10
+backup_keep_days: 7
 
 # --- Performance ---
 workers: 0                     # parallel gemessene Dateien beim Scan; 0 = alle CPU-Kerne minus 1

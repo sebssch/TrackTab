@@ -2,23 +2,24 @@
 
 TrackTab selbst steht unter der **GNU General Public License, Version 3 oder später** ([LICENSE](LICENSE), Hinweise und Geltungsbereich in [NOTICE.md](NOTICE.md)). Diese Datei listet alle Programme, Bibliotheken und Modelle von Dritten, die TrackTab nutzt oder mitliefert, mit ihrer Lizenz und einer Quelle. Die Lizenztexte der Komponenten liegen im Ordner [licenses/](licenses/) (erzeugt mit `collect_licenses.py`); maßgeblich sind jeweils die von den Projekten veröffentlichten Texte.
 
-> Stand: Oktober 2026. Die Lizenzangaben der Python-Pakete stammen aus deren Paket-Metadaten (installierte Versionen unten), die der FFmpeg-Bibliotheken aus dem mitgelieferten Build bzw. den üblichen Projektangaben. Vor jedem Release gegenprüfen.
+> Stand: November 2026. Die Lizenzangaben der Python-Pakete stammen aus deren Paket-Metadaten (installierte Versionen unten), die der FFmpeg-Bibliotheken aus dem mitgelieferten Build bzw. den üblichen Projektangaben. Vor jedem Release gegenprüfen.
 
 **Kurz gefasst**
 - **Nicht-kommerziell:** Die Modelle für Stem-Trennung (Demucs) und für Genre/Stimmung/Energie (Essentia) dürfen nur nicht-kommerziell genutzt werden. TrackTab darf mit ihnen weder verkauft noch kommerziell eingesetzt werden.
-- **GPL:** Der mitgelieferte FFmpeg-Build (GPL-3.0-oder-später, mit x264/x265) und die Python-Bibliothek mutagen (GPL-2.0-oder-später) sind Copyleft. Wer die `.dmg` weitergibt, gibt damit GPL-Software weiter und muss deren Bedingungen erfüllen (Lizenztext, Quellcode am selben Release, siehe unten).
-- Alles übrige steht unter freizügigen Lizenzen (MIT, BSD, Apache-2.0, ISC, LGPL) und ist mit der GPL-3.0 vereinbar.
+- **GPL:** Der mitgelieferte FFmpeg-Build (GPL-3.0-oder-später, mit x264/x265) und die Python-Bibliothek mutagen (GPL-2.0-oder-später) sind Copyleft; ebenso stammen Teile von TrackTabs eigenem Code aus rbxport (GPL-2.0-oder-später) und die Phrasenerkennung samt Modell aus GlideMix (GPL, siehe Abschnitte 1 und 4). Wer die `.dmg` weitergibt, gibt damit GPL-Software weiter und muss deren Bedingungen erfüllen (Lizenztext, Quellcode am selben Release, siehe unten).
+- Alles übrige steht unter freizügigen Lizenzen (MIT, BSD, Apache-2.0, ISC, PSF-2.0, zlib) oder schwachem Copyleft (LGPL, MPL-2.0) und ist mit der GPL-3.0 vereinbar.
 
 ---
 
 ## 1. Modelle (werden nicht im Repository mitgeliefert)
 
-Die Essentia-Gewichte lädt `fetch_models.sh` beim Einrichten nach `vendor/models/` (Ordner ist von Git ausgeschlossen); die `.dmg` kann sie enthalten. Das Demucs-Modell liefert TrackTab nicht mit, der Nutzer lädt es in den Einstellungen.
+Die Essentia-Gewichte lädt `fetch_models.sh` beim Einrichten nach `vendor/models/` (Ordner ist von Git ausgeschlossen); die `.dmg` kann sie enthalten. Das Demucs-Modell liefert TrackTab nicht mit, der Nutzer lädt es in den Einstellungen. Das Phrasenmodell holt `fetch_models.sh` aus dem Quellarchiv von GlideMix (Prüfsumme festgeschrieben) nach `vendor/models/phrases/`; es kommt in die `.dmg`, wenn es dort liegt.
 
 | Modell | Verwendung | Lizenz | Quelle |
 |---|---|---|---|
 | **Demucs v4 (htdemucs)**, Meta / A. Défossez et al. | Stem-Trennung (Acapella/Instrumental) | Code MIT. **Wird nicht mit TrackTab ausgeliefert**, sondern vom Nutzer in den Einstellungen geladen. Gewichte: laut der ONNX-Quelle nicht-kommerziell, **CC BY-NC 4.0** (das Meta-Repository selbst nennt für die Gewichte keine Lizenz; es ist seit Januar 2025 archiviert) | [facebookresearch/demucs](https://github.com/facebookresearch/demucs) · ONNX-Export: [HRSadeghi/demucs-onnx](https://huggingface.co/HRSadeghi/demucs-onnx) · [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/deed.de) |
 | **Essentia-Modelle** (discogs-effnet, mood_*, danceability, mtg_jamendo_moodtheme), Music Technology Group, Universitat Pompeu Fabra | Genre, Stimmung, Energie | **CC BY-NC-SA 4.0** (nicht-kommerziell, Weitergabe unter gleichen Bedingungen) | [essentia.upf.edu/models](https://essentia.upf.edu/models.html) · [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.de) |
+| **Phrasenmodell** (`vendor/models/phrases/phrases.onnx`, in GlideMix `src/mixhouse/models/glidemix_phrases.onnx`), GlideMix-Autoren | Phrasen in der DJ-Ansicht (Testfunktion, `app/phrases.py`) | **GPL** als Teil von GlideMix 1.3.0 (Gesamtwerk GPL-3.0, aufgebaut auf Audacity; für Dateien ohne eigene Angabe nennt dessen `LICENSE.txt` GPL-2.0-oder-später). Unverändert übernommen, SHA-256 `a0c0b5d9…81b89b`. Das Trainingsskript (`tools/trainer/glidemix_trainer.py`) liegt im selben Quellarchiv. Der Name „GlideMix“ und das Logo sind von der GPL ausgenommen; TrackTab nennt GlideMix nur als Quelle. | [glidemix.com](https://glidemix.com) · Quellcode: am Release (siehe Abschnitt 2), Original <https://github.com/cristitm76/glidemix-releases/releases/tag/v1.3.0> |
 
 Namensnennung: *Demucs © Meta Platforms, Inc. and affiliates; ONNX-Export von HRSadeghi. Essentia-Modelle © Music Technology Group, Universitat Pompeu Fabra.* TrackTab verändert die Modelle nicht; es führt sie nur aus.
 
@@ -57,7 +58,7 @@ Mitgelieferte Bibliotheken in `vendor/libs/` (Lizenzen laut Projektangaben):
 | OpenSSL (libssl, libcrypto) 4.x | Apache-2.0 | <https://www.openssl.org> |
 | liblzma (xz) | 0BSD / gemeinfrei | <https://tukaani.org/xz/> |
 
-**Quellcode-Zugang (GPL/LGPL):** Zu jeder `.dmg` gehört der Quellcode der darin enthaltenen GPL-/LGPL-Komponenten genau dieser Versionen. Er liegt als Download am **selben GitHub-Release** wie die `.dmg`, zusammengefasst in `TrackTab-<Version>-third-party-sources.zip` (darin `ffmpeg-<Version>.tar.xz`, `x264-<Commit>.tar.bz2`, `x265_<Version>.tar.gz`, `lame-<Version>.tar.gz`, `mpg123-<Version>.tar.bz2`, `mutagen-<Version>.tar.gz`, dazu `BUILD-INFO.txt` mit der FFmpeg-Konfiguration, `SHA256SUMS` und die Lizenztexte). Die Datei erstellt `package_sources.sh`. Der Quellcode von TrackTab selbst liegt im Repository. Die Adressen der Originalprojekte in der Tabelle sind nur zusätzliche Information. Die übrigen Bibliotheken stehen unter freizügigen Lizenzen ohne Pflicht zur Quellcode-Herausgabe.
+**Quellcode-Zugang (GPL/LGPL):** Zu jeder `.dmg` gehört der Quellcode der darin enthaltenen GPL-/LGPL-Komponenten genau dieser Versionen. Er liegt als Download am **selben GitHub-Release** wie die `.dmg`, zusammengefasst in `TrackTab-<Version>-third-party-sources.zip` (darin `ffmpeg-<Version>.tar.xz`, `x264-<Commit>.tar.bz2`, `x265_<Version>.tar.gz`, `lame-<Version>.tar.gz`, `mpg123-<Version>.tar.bz2`, `mutagen-<Version>.tar.gz`, `GlideMix-<Version>-source.tar.xz` (nur wenn das Phrasenmodell im Build steckt), dazu `BUILD-INFO.txt` mit der FFmpeg-Konfiguration, `SHA256SUMS` und die Lizenztexte). Die Datei erstellt `package_sources.sh`. Der Quellcode von TrackTab selbst liegt im Repository. Die Adressen der Originalprojekte in der Tabelle sind nur zusätzliche Information. Die übrigen Bibliotheken stehen unter freizügigen Lizenzen ohne Pflicht zur Quellcode-Herausgabe.
 
 ## 3. Python-Pakete (in der App gebündelt)
 
@@ -78,17 +79,24 @@ Mitgelieferte Bibliotheken in `vendor/libs/` (Lizenzen laut Projektangaben):
 
 LightGBM braucht die OpenMP-Laufzeit **libomp** (LLVM-Projekt, Homebrew-Formel `libomp`), die über den Ladepfad von `lib_lightgbm.dylib` mit ins Bundle kommt: Apache-2.0 mit LLVM-Ausnahme, Text in [licenses/native/libomp/](licenses/native/libomp/), Quelle <https://openmp.llvm.org>. Sie wird nur beim Training geladen; ist das macOS älter als das, für das diese Bibliothek gebaut ist, bietet die App kein Training an.
 
-Dazu kommen mitgebündelte Abhängigkeiten dieser Pakete (u. a. SQLAlchemy, sqlcipher3-wheels, construct, bidict, protobuf, flatbuffers, psutil, Pygments, markdown-it-py, python-dateutil, six, typing_extensions, tzdata) mit ihren Lizenztexten in [licenses/python/](licenses/python/).
+Dazu kommen mitgebündelte Abhängigkeiten dieser Pakete (u. a. SQLAlchemy, sqlcipher3-wheels, construct, bidict, protobuf, flatbuffers, psutil, Pygments, markdown-it-py, python-dateutil, six, typing_extensions, tzdata) mit ihren Lizenztexten in [licenses/python/](licenses/python/). Drei davon verdienen einen eigenen Hinweis:
 
-Die Laufzeit des Pakets (CPython) steht unter der PSF-Lizenz 2.0; zum Bündeln dient **PyInstaller** (GPL-2.0-oder-später mit Ausnahme, die die Weitergabe der damit gebauten Programme erlaubt; reines Build-Werkzeug, nicht Teil der App).
+- **bidict** steht unter der **MPL-2.0** (schwaches Copyleft, mit der GPL-3.0 vereinbar). TrackTab nutzt es unverändert; Quellcode: <https://github.com/jab/bidict>.
+- **sqlcipher3-wheels** (zlib-Lizenz) enthält fest eingebunden **SQLCipher** (Zetetic LLC, BSD-3-Clause, Text in [licenses/other/](licenses/other/sqlcipher-LICENSE.md)) und **OpenSSL 3.x** (Apache-2.0, derselbe Text wie in `licenses/ffmpeg-libs/openssl@4/`).
+- **onnxruntime** bringt die Hinweise zu seinen eigenen Bestandteilen in `ThirdPartyNotices.txt` mit (liegt neben der Lizenz in `licenses/python/`).
 
-## 4. Oberfläche
+Texte, die ein Paket nicht selbst mitbringt (flatbuffers, SQLCipher), liegen von Hand gepflegt in [licenses/other/](licenses/other/); `collect_licenses.py` legt sie zum jeweiligen Paket.
+
+Die Laufzeit des Pakets (CPython) steht unter der PSF-Lizenz 2.0 (Text samt Copyright-Vermerken in `licenses/python/CPython-<Version>/`); zum Bündeln dient **PyInstaller** (GPL-2.0-oder-später mit Ausnahme, die die Weitergabe der damit gebauten Programme erlaubt; reines Build-Werkzeug, nicht Teil der App).
+
+## 4. Oberfläche und übernommener Code
 
 | Bestandteil | Lizenz | Quelle |
 |---|---|---|
 | Lucide-Icons (`app/webui/lucide-icons.js`) | ISC (Text in [licenses/ui/](licenses/ui/lucide-LICENSE.txt)) | <https://lucide.dev> · <https://github.com/lucide-icons/lucide/blob/main/LICENSE> |
 | Spektralmerkmale für Auto Cue (`app/autocue/dsp.py`), Nachbau von Funktionen aus librosa 0.11 (STFT, Spektralform, Onset, Mel, Chroma mit Stimmungsschätzung); librosa selbst ist nicht gebündelt | ISC (Text in [licenses/ui/](licenses/ui/librosa-LICENSE.md)) | <https://github.com/librosa/librosa> |
-| Beatgrid-Analyse (`app/beatgrid.py`) und Rekordbox-Analysedateien (`app/anlzwrite.py`), Python-Nachbauten von `crates/rbl-analysis` und `crates/rbl-anlz` aus rbxport | GPL-2.0-oder-später | <https://github.com/chrisle/rbxport> |
+| Phrasenerkennung (`app/phrases.py`), Python-Nachbau von `src/mixhouse/mixhousephrasemodel.cpp` und `mixhousephrasedetector.cpp` aus GlideMix 1.3.0 (Copyright der GlideMix-Autoren; Eingangswerte und Schwellwerte wie im Original, damit das Modell dieselben Zahlen sieht). Weitergabe unter GPL-3.0-oder-später. | GPL (GlideMix: Gesamtwerk GPL-3.0, Dateien ohne eigene Angabe GPL-2.0-oder-später) | <https://github.com/cristitm76/glidemix-releases> |
+| Beatgrid-Analyse (`app/beatgrid.py`) und Rekordbox-Analysedateien (`app/anlzwrite.py`), Python-Nachbauten von `crates/rbl-analysis` und `crates/rbl-anlz` aus rbxport (Copyright der rbxport-Autoren; Schwellwerte und Konstanten unverändert übernommen, Änderungen in den Dateiköpfen beschrieben). TrackTab gibt diese Teile nach der „oder später“-Klausel unter GPL-3.0-oder-später weiter. | GPL-2.0-oder-später (Text in [licenses/gnu/](licenses/gnu/COPYING.GPLv2)) | <https://github.com/chrisle/rbxport> |
 
 ## 5. Hinweise
 

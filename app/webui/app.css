@@ -155,7 +155,7 @@
      Klasse -- ohne !important gewinnt trotzdem jede eigene Regel mit
      display:... (z.B. .chipsrow, button.act), weil Autoren-Regeln UA-Regeln
      unabhaengig von der Spezifitaet schlagen. Betraf konkret #plHeadBubblesRow/
-     #plHeadMergeToggle/#plHeadBubblesExpand: das hidden-Attribut wurde beim
+     #plHeadValueMode/#plHeadBubblesExpand: das hidden-Attribut wurde beim
      Listenwechsel korrekt gesetzt, blieb aber wegen .chipsrow/button.act
      sichtbar. Eine Regel hier fuer alle [hidden]-Elemente statt einzelner
      Ausnahmen je Klasse.
@@ -256,13 +256,6 @@
   tr.albumgroup td { font-weight:600; font-size:14px; cursor:default; }
   tr.albumgroup td .path { display:inline; font-weight:400; margin-left:4px; }
   tr.albumgroup td .albumgroup-artist { font-weight:400; color:var(--dim); }
-  tr.albumgroup.dupwarn { --rowtint:var(--susp-bg); }
-  tr.albumgroup.dupok { --rowtint:var(--ok-bg); }
-  .dupdismissbtn { margin-left:10px; padding:1px 9px; border-radius:999px;
-       background:transparent; font-size:11px; font-weight:600; cursor:pointer; }
-  tr.albumgroup.dupwarn .dupdismissbtn { color:var(--susp); border:1px solid var(--susp); }
-  tr.albumgroup.dupok .dupdismissbtn { color:var(--ok); border:1px solid var(--ok); }
-  .dupdismissbtn:hover { filter:brightness(0.92); }
   .badge { display:inline-flex; align-items:center; gap:4px; padding:2px 9px;
            border-radius:999px; font-size:12px; font-weight:600; white-space:nowrap; }
   .badge svg { width:12px; height:12px; flex:none; }
@@ -270,6 +263,8 @@
   .badge.VERDAECHTIG{background:var(--susp-bg);color:var(--susp);}
   .badge.OK{background:var(--ok-bg);color:var(--ok);}
   .badge.UNKLAR{background:var(--unk-bg);color:var(--unk);}
+  /* Manuell korrigiert (statusBadgeHtml()): fest blau, unabhaengig von der Designfarbe. */
+  .badge.CORR{background:var(--dc-blue-bg);color:var(--dc-blue);}
   .name { font-weight:500; }
   .path { color:var(--dim); font-size:12px; word-break:break-all; }
   .path.copyable { cursor:pointer; }
@@ -731,7 +726,7 @@
 
   /* Zielauswahl im "Zur Playlist hinzufuegen"-Dialog. Eigene Hoehenbegrenzung
      mit Scrollbereich, weil die Zahl der Listen nach oben offen ist. */
-  .picklist { max-height:min(46vh, 320px); overflow:auto; margin:10px 0 4px;
+  .picklist { max-height:min(56vh, 460px); overflow:auto; margin:10px 0 4px;
        border:1px solid var(--line); border-radius:8px; }
   .pickitem { display:flex; align-items:center; gap:8px; width:100%; border:0;
        background:none; color:var(--fg); font:inherit; text-align:left;
@@ -741,6 +736,11 @@
   .pickitem .pickpath { color:var(--dim); font-size:12px; }
   .pickitem .pickcount { margin-left:auto; color:var(--dim); font-size:12px;
        font-variant-numeric:tabular-nums; }
+  .pickitem.pickfolder { font-weight:600; }
+  .pickitem .twist { width:10px; font-size:9px; color:var(--dim); transition:transform .12s; }
+  .pickitem .twist.open { transform:rotate(90deg); }
+  .pickitem .ticon { display:inline-flex; width:16px; height:16px; color:var(--dim); }
+  .pickitem .ticon svg { width:16px; height:16px; }
   .pickempty { padding:14px; color:var(--dim); text-align:center; }
 
   /* Vorschau-Popup des Rekordbox-Abgleichs -- breiter als der uebliche
@@ -850,6 +850,10 @@
   #stickyHead .colresize { display:none; }
   #colsMenu { margin-bottom:8px; }
   .colsrow { display:flex; flex-wrap:wrap; gap:14px; align-items:center; }
+  /* Pflichtspalte (requiredCols() in app.js): Haken gesetzt und gesperrt, Schloss dahinter */
+  .colsrow label.colreq { cursor:default; }
+  .colsrow label.colreq .colreqicon { display:inline-flex; color:var(--dim); }
+  .colsrow label.colreq .colreqicon svg { width:12px; height:12px; }
   .colsrow label { display:flex; align-items:center; gap:6px; cursor:pointer;
                    font-size:13px; user-select:none; }
   /* Spalten-Menue von oben nach unten: welche gespeicherte Spaltenansicht
@@ -864,10 +868,47 @@
   .colsbtnrow { display:flex; flex-wrap:wrap; gap:8px; align-items:center;
                 padding:10px 0; margin-bottom:10px;
                 border-bottom:1px solid var(--line); }
-  /* Zeile im Einstellungs-Dialog: Name der Spaltenansicht + Loeschen. */
-  .cvrow { display:flex; gap:8px; align-items:center; margin-bottom:8px; }
+  /* Karte "Ansichten" (redrawColumnViewsBlock() in app.js): je Ansicht eine
+     Zeile -- Aufklappen, Name, Zahl der Zuordnungen, Loeschen --, randlos mit
+     Trennlinie wie die Zeilen der anderen Gruppen. Feste Ansichten tragen statt
+     des Namensfelds Text + "Standard"-Kennzeichen und keinen Papierkorb. */
+  #cvRows { margin:0 -14px; }
+  .cvrow { display:flex; gap:10px; align-items:center; padding:9px 14px;
+    border-bottom:1px solid var(--line); }
   .cvrow input { flex:1 1 auto; min-width:0; background:var(--bg); color:var(--fg);
     border:1px solid var(--line); border-radius:7px; padding:6px 9px; font-size:13px; }
+  .cvrow .cvname { flex:1 1 auto; min-width:0; display:flex; align-items:center; gap:8px;
+    font-size:13px; font-weight:600; padding:6px 0; }
+  .cvrow .cvbadge { font-size:11px; font-weight:500; padding:1px 7px; border-radius:4px;
+    background:var(--accent-bg); color:var(--accent); }
+  .cvrow .cvpill { flex:none; font-size:12px; padding:2px 9px; border-radius:6px; white-space:nowrap;
+    background:var(--accent-bg); color:var(--accent); }
+  .cvrow .cvpill.none { background:transparent; color:var(--dim); border:1px dashed var(--line); }
+  .cvrow .cvdelspace { flex:none; width:21px; }
+  .cvrow.open { border-bottom:0; }
+  /* Aufgeklappt: sichtbare Spalten als ziehbare Chips, darunter die ausgeblendeten
+     gestrichelt (Klick = einblenden). Ablegen auf einer Zone blendet ein/aus. */
+  .cvedit { padding:2px 14px 14px; border-bottom:1px solid var(--line); }
+  .cvlbl { font-size:12px; color:var(--dim); margin:6px 0 6px; }
+  .cvchips { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:8px; min-height:30px;
+    border-radius:8px; outline:1px dashed transparent; outline-offset:3px; }
+  .cvchips.dropzone { outline-color:var(--accent); }
+  .cvchip { display:inline-flex; align-items:center; gap:4px; font:inherit; font-size:12.5px; color:var(--fg);
+    padding:4px 6px; border:1px solid var(--line); border-radius:7px; background:var(--card);
+    cursor:grab; user-select:none; }
+  .cvchip .cvgrip, .cvchip .cvlock { display:inline-flex; color:var(--dim); }
+  .cvchip .cvgrip svg, .cvchip .cvlock svg { width:12px; height:12px; }
+  .cvchip.off { color:var(--dim); border-style:dashed; background:transparent; cursor:pointer; padding:4px 9px; }
+  .cvchip.off:hover { color:var(--fg); border-color:var(--accent); }
+  .cvchip.dragging { opacity:.4; }
+  .cvchip.dropover { border-color:var(--accent); }
+  .cvchip .cvchipx { border:0; background:none; color:var(--dim); cursor:pointer; font-size:14px;
+    line-height:1; padding:0 2px; opacity:0; }
+  .cvchip:hover .cvchipx, .cvchip .cvchipx:focus-visible { opacity:1; }
+  .cvchip .cvchipx:hover { color:var(--fake); }
+  .cvfoot { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding-top:14px; }
+  .cvfoot #cvStatus { font-size:12.5px; color:var(--dim); }
+  .cvfoot #cvStatus.warn { color:var(--fake); }
   /* Luft unter dem Namensfeld im Listen-Dialog -- ohne sie klebten die
      Knoepfe direkt darunter, sobald Symbol/Farbe ausgeblendet sind. */
   #nameField { margin-top:14px; margin-bottom:20px; }
@@ -1105,11 +1146,10 @@ button.act.small { padding:3px 9px; font-size:12px; }
    alle anderen Listen unveraendert einzeilig. Zwei unabhaengige Bedienteile:
    #plHeadBubblesExpand (zentrierter Link UNTER der Bubble-Reihe, wie ein
    "mehr anzeigen" bei einer gekuerzten Liste) vergroessert/verkleinert NUR
-   die Bubble-Reihe (200px Standard- / 550px Maximalhoehe), #plHeadMergeToggle
-   (Knopf im Kopf) blendet die Zusammenfuehrungs-Vorschlaege separat ein/aus
-   -- kein gemeinsamer "Ganze Box zuklappen"-Schalter mehr. */
+   die Bubble-Reihe (200px Standard- / 550px Maximalhoehe), #plHeadValueMode
+   (Umschalter A-Z | Vorschlaege im Kopf) zeigt an derselben Stelle die
+   Zusammenfuehrungs-Vorschlaege statt der Bubbles. */
 .plhead-row { display:flex; align-items:center; gap:10px; }
-#plHeadMergeToggle.active { border-color:var(--accent); color:var(--accent); }
 .genrebox-bubbles { max-height:200px; overflow-y:auto; padding:0; margin:10px 0 0;
                     transition:max-height .15s ease; }
 .genrebox-bubbles.expanded { max-height:550px; }
@@ -1129,6 +1169,10 @@ button.azbtn:hover { background:var(--card); }
 .azbtn.off { color:var(--dim); opacity:.4; cursor:default; }
 .azsec { display:flex; gap:14px; align-items:flex-start; margin:0 0 14px;
          padding-top:12px; border-top:1px solid var(--line); }
+/* Lange Listen (Album, Interpret): Abschnitte ausserhalb des Scrollbereichs
+   ueberspringt der Browser bei Layout und Zeichnen. Die geschaetzte Hoehe
+   setzt buildValueBubbles() (app.js) je Abschnitt als contain-intrinsic-size. */
+.genrebox-bubbles.azlazy .azsec { content-visibility:auto; }
 .azletter { flex:0 0 36px; font-size:30px; font-weight:700; line-height:1.1; text-align:center; }
 .azchips { flex:1; min-width:0; display:grid; gap:6px; justify-content:start;
           grid-template-columns:repeat(auto-fill, 260px); }
@@ -1185,6 +1229,24 @@ tr.albumgroup .genrerename { margin-left:6px; }
              color:var(--dim); padding:3px; display:inline-flex; border-radius:6px; }
 .mergehint .mergedismiss:hover { color:var(--fg); background:var(--bg); }
 .mergehint-empty { color:var(--dim); font-size:13px; padding:8px 12px; }
+.mergecard { border:1px solid var(--line); border-radius:8px; background:var(--card);
+             padding:10px 12px; margin-bottom:10px; }
+.mergecard:last-child { margin-bottom:0; }
+.mergecard-head { display:flex; align-items:center; gap:6px; margin-bottom:8px; }
+.mergecard-reason { flex:1; font-size:12px; font-weight:600; color:var(--dim); }
+.mergecard-head .act.small svg { width:13px; height:13px; vertical-align:-2px; }
+.mergecard-opts { display:flex; flex-direction:column; gap:6px; }
+.mergecard-opts .mergechoose-opt { gap:12px; text-align:left; }
+.mergeopt-main { display:inline-flex; align-items:center; gap:8px; min-width:0; }
+.mergeopt-icon { display:inline-flex; color:var(--accent); flex:none; }
+.mergeopt-icon svg { width:14px; height:14px; }
+.mergehint-reason { display:block; margin-top:2px; font-size:11px; color:var(--dim); }
+.mergecard:not(.previewing) { cursor:pointer; }
+.mergecard:not(.previewing):hover { border-color:var(--accent); }
+.mergecard:not(.previewing) .mergechoose-opt { opacity:.85; }
+.mergecard.previewing { border-color:var(--accent); background:var(--accent-bg); }
+.mergecard-head .act.small.on { color:var(--accent); border-color:var(--accent); }
+.valuemode .lsbtn { padding:4px 12px; font-size:12px; }
 .mergehint-heading { position:sticky; top:0; z-index:1; background:var(--card);
              font-size:12px; font-weight:600; color:var(--dim);
              letter-spacing:.02em; padding:0 12px 6px 0; }
@@ -1237,6 +1299,13 @@ tr.albumgroup .genrerename { margin-left:6px; }
 .settingsbox .setrow > .setfield.third { flex:0 0 calc(33.333% - 11px); max-width:calc(33.333% - 11px); }
 .settingsbox .setrow > .setfield.full { flex:1 1 100%; max-width:100%; }
 .setfield label { display:block; font-size:13px; margin-bottom:4px; }
+.tagsuggest { display:flex; align-items:center; gap:6px; margin-top:6px; max-width:100%; padding:4px 10px;
+  border:1px dashed var(--accent); border-radius:6px; background:transparent; color:var(--accent);
+  font:inherit; font-size:12px; cursor:pointer; text-align:left; }
+.tagsuggest[hidden] { display:none; }
+.tagsuggest svg { width:12px; height:12px; flex:none; }
+.tagsuggest:hover { background:color-mix(in srgb, var(--accent) 10%, transparent); }
+.tagsuggest .tsval { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-weight:600; }
 .fieldhint { margin-top:4px; font-size:12px; color:var(--dim); }
 /* Info-Variante: Icon + getoente Flaeche in der Designfarbe */
 .fieldhint.info { display:flex; gap:8px; align-items:flex-start; margin-top:6px; padding:8px 10px;
@@ -1399,10 +1468,12 @@ tr.albumgroup .genrerename { margin-left:6px; }
 .helplist li.kv code { flex:none; box-sizing:border-box; width:calc(13ch + 14px); }
 .sethelp code { background:var(--bg); border:1px solid var(--line); border-radius:4px; padding:0 5px; font-size:11.5px; color:var(--fg); }
 .sethelp code.helpex { display:block; padding:6px 9px; margin-top:2px; width:fit-content; max-width:100%; overflow-wrap:anywhere; }
+.setgroup[data-sg="columnviewstd"] .setbody,
 .setgroup[data-sg="columnviews"] .setbody, .setgroup[data-sg="shops"] .setbody,
 .setgroup[data-sg="backup"] .setbody, .setgroup[data-sg="logs"] .setbody,
 .setgroup[data-sg="autocuehot"] .setbody, .setgroup[data-sg="autocuemem"] .setbody, .setgroup[data-sg="autocuemodel"] .setbody,
 .setgroup[data-sg="autocuetrain"] .setbody { padding:0 14px 14px; }
+.setgroup[data-sg="columnviewstd"] .sethint,
 .setgroup[data-sg="columnviews"] .sethint, .setgroup[data-sg="shops"] .sethint,
 .setgroup[data-sg="backup"] .sethint, .setgroup[data-sg="logs"] .sethint,
 .setgroup[data-sg="autocuehot"] > .setbody > .sethint:first-child, .setgroup[data-sg="autocuemem"] > .setbody > .sethint:first-child,
@@ -1411,6 +1482,14 @@ tr.albumgroup .genrerename { margin-left:6px; }
   margin:0 -14px 12px; }
 /* Zeilen laufen randlos wie in den anderen Gruppen (.setbody hat hier schon 14px) */
 .setgroup[data-sg="columnviews"] .setrows { margin:0 -14px; }
+.setgroup[data-sg="columnviewstd"] .setrows { margin:0 -14px -14px; }
+.setgroup[data-sg="columnviewstd"] .sethint { margin-bottom:0; }
+/* Standards: Symbol + Name links, Auswahl rechts (wie .setfield.inline) */
+.settingsbox .setfield.cvstd > label { display:flex; align-items:center; gap:10px; }
+.settingsbox .setfield.cvstd .cvstdicon { display:inline-flex; color:var(--dim); }
+.settingsbox .setfield.cvstd .cvstdicon svg { width:16px; height:16px; }
+.settingsbox .setfield.cvstd > select { width:240px; max-width:45vw; }
+.settingsbox .setfield.cvstd > .sethelp { padding-left:26px; }
 .settingsbox .setsubgroups { margin:0; gap:0; padding:14px 14px 0; border-top:1px solid var(--line); }
 
 .settingsbox .setrows { gap:0; border:0; }
@@ -1650,6 +1729,9 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
   color:var(--accent); cursor:pointer; line-height:1; }
 .tagsreset:hover { background:color-mix(in srgb, var(--accent) 15%, transparent); }
 .tagsreset svg { width:13px; height:13px; }
+/* Tempowechsel in den Titel (syncTagsTempoBtn()): wie der Bereinigungsvorschlag ein
+   Knopf unter dem Feld, "on" = uebernommen, Klick nimmt es zurueck. */
+.tagsuggest.on { background:color-mix(in srgb, var(--accent) 14%, var(--bg)); border-style:solid; }
 .tagscover.chg img, .tagscover.chg .tagscover-empty { border-color:var(--accent); border-width:2px; }
 /* Schreibgeschuetzte Datei (setTagsWriteLock() in app.js): Felder gesperrt
    und ausgegraut, Cover ohne Ablegen; eigene Tags bleiben bedienbar. */
@@ -1872,12 +1954,6 @@ button.act.primary:hover { background:color-mix(in srgb, var(--accent) 85%, #000
 .actiongroup .groupicons.flgroup { gap:6px; }
 
 /* ── Manuell korrigiert ────────────────────────────────────────────── */
-/* Bewusst KEINE Deckkraft-Reduktion wie bei .ign -- ein manuell korrigierter
-   Track gilt als korrekt, nicht als "erledigt/weg", er soll in der Liste
-   genauso lesbar bleiben wie ein normaler Treffer. */
-.correctedtag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
-                background:var(--accent-bg); color:var(--accent);
-                font-size:11px; font-weight:600; }
 .iconbtn.corr:hover { color:var(--accent); }
 .miktag { display:inline-block; margin-left:6px; padding:1px 7px; border-radius:999px;
           background:var(--accent-bg); color:var(--accent);
@@ -1885,10 +1961,17 @@ button.act.primary:hover { background:color-mix(in srgb, var(--accent) 85%, #000
 tr.corr .iconbtn.corr { color:var(--accent); }
 
 /* ── Auffaelligkeiten-Spalte (Text + Aktionsknoepfe direkt in der Zelle) ── */
-.ticell { display:flex; flex-direction:column; gap:4px; }
-.tiline { font-size:12px; line-height:1.3; }
-.tiactions { display:flex; gap:6px; margin-top:2px; }
-.tiactions .act.small { padding:2px 8px; font-size:11px; }
+.ticell { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.tichip { display:inline-flex; align-items:center; gap:5px; padding:2px 3px 2px 7px; border-radius:4px;
+          font-size:11px; line-height:1.3; font-weight:500; }
+.tichip > svg { width:11px; height:11px; flex:none; margin-left:-2px; }
+.tichip.auto { background:var(--accent-bg); color:var(--accent); }
+.tichip.manual { background:var(--susp-bg); color:var(--susp); }
+.tibtn { display:inline-flex; align-items:center; justify-content:center; flex:none; width:18px; height:18px;
+         padding:0; border:0; border-radius:3px; background:transparent; color:inherit; cursor:pointer; }
+.tibtn:hover { background:color-mix(in srgb, currentColor 18%, transparent); }
+.tibtn:disabled { opacity:.5; cursor:default; }
+.tibtn svg { width:12px; height:12px; }
 
 /* ── Farben der Aktionen ────────────────────────────────────────────── */
 /* Papierkorb rot, Ausblenden neutral, manuell korrigiert blau — damit die
@@ -1905,6 +1988,9 @@ tr.ign .iconbtn.ig, tr.corr .iconbtn.corr { color:var(--accent); }
    einer schmaleren Zelle -- nur so laesst sich in der Tabelle mit fester
    Breite die noetige Breite der Aktionsspalte messen (syncLinksWidth). Bei
    flex-direction:column ergibt sich die Breite aus der breitesten Gruppe. */
+/* Noch nicht gefuellte Aktionszelle (rowLinksCellHtml() in app.js): haelt die
+   Zeile auf der Hoehe einer gefuellten, damit beim Fuellen nichts springt. */
+#tb td.links[data-lazyact] { height:var(--lazy-rowh, 128px); box-sizing:border-box; }
 .links .actions { display:flex; flex-direction:column; gap:6px; width:max-content; }
 .actiongroup.top { display:flex; align-items:center; gap:1px; }
 /* Beschriftete Gruppen: Label und Icons in EINER Zeile, nicht gestapelt. */
@@ -2280,11 +2366,53 @@ table.trk > tbody > tr:first-child.albumgroup > td { --rowgap:6px; }
 /* Gewoehnliche Gruppen als schlichte Zwischenueberschrift statt eigener
    Karte; nur die Duplikat-Gruppen behalten ihre farbige Flaeche (sie
    tragen eine Aussage: bestaetigt oder nicht). */
-table.trk > tbody > tr.albumgroup:not(.dupwarn):not(.dupok) > td {
+table.trk > tbody > tr.albumgroup:not(.dupgroup) > td {
   background:none; box-shadow:none; padding:4px 4px 2px; }
 /* Die Schlagschatten der fixierten Spalten (th/td.sel, th/td.links oben)
    ersetzt der Kartenrahmen bewusst: sie zeichneten ausserhalb der Zelle,
    also auch in den Zeilenabstand. Die Trennlinien (::before/::after) bleiben. */
+
+/* Duplikate: Gruppenkopf + Kopien bilden EINE Karte (wie Zeile + Detailzeile
+   oben): Kopf unten eckig mit Trennlinie, Kopien ohne Abstand und Rundung,
+   die letzte Kopie schliesst die Karte unten ab. Eingeklappte Gruppen
+   (Reiter "Kein Duplikat") sind nur der Kopf, ringsum rund. */
+table.trk > tbody > tr.albumgroup.dupgroup > td { padding:10px 12px; --r-bot:0px; font-weight:400;
+  overflow:visible; }  /* sonst ist die Zelle selbst der Bezugsrahmen fuer position:sticky */
+table.trk > tbody > tr.albumgroup.dupgroup.dupclosed > td { --r-bot:10px; cursor:pointer; }
+table.trk > tbody > tr.row.dupmember > td { --rowgap:0px; --r-top:0px; --r-bot:0px; }
+table.trk > tbody > tr.row.dupmember.duplast > td { --r-bot:10px; }
+tr.row.dupkept:not(:hover):not(.picked) { --rowtint:var(--ok-bg); }
+table.trk > tbody > tr.row.dupmember > td.dupdiff {
+  --rowtint:color-mix(in srgb, var(--susp-bg) 75%, transparent); }
+/* Klebt links: die Kopfzelle reicht ueber alle Spalten, bei breiter Tabelle
+   laegen Knoepfe am rechten Rand sonst ausserhalb des Sichtbereichs. */
+.duphead { display:flex; align-items:center; gap:14px; }
+.duptitle { min-width:0; position:sticky; left:12px; }
+.dupname { font-weight:600; font-size:14px; }
+.duptitle .path { margin-left:6px; }
+.dupsub { font-size:12px; color:var(--dim); margin-top:2px; }
+.dupsame { color:var(--accent); }
+.dupchev { display:inline-flex; color:var(--dim); }
+.dupchev svg { width:16px; height:16px; }
+/* Rechts festgesetzt (klebt am rechten Rand wie die Spalte "Öffnen"): die
+   Knoepfe stehen so in jeder Gruppe an derselben Stelle, egal wie lang der
+   Titel ist oder wie weit die Tabelle gescrollt ist. */
+.dupacts { display:inline-flex; gap:6px; flex:none; margin-left:auto; position:sticky; right:12px; }
+.dupact { display:inline-flex; align-items:center; gap:5px; }
+.dupact svg { width:14px; height:14px; }
+/* Behalten: eigene Spalte direkt nach der Auswahl (nur Duplikate-Pruefung,
+   in allen Ansichten gleich), klebt beim horizontalen Scrollen neben ihr. */
+th.dupcol, td.dupcol { position:sticky; left:var(--selw, 54px); z-index:1; text-align:center; }
+th.dupcol { z-index:3; }
+.dupkeep { border:none; background:none; border-radius:999px; padding:3px; line-height:0;
+           cursor:pointer; display:inline-flex; align-items:center; color:var(--dim); }
+.dupkeep svg { width:18px; height:18px; }
+.dupkeep.on { color:var(--ok); }
+.dupkeep:hover { color:var(--fg); background:rgba(127,127,127,.14); }
+.dupkeep.on:hover { color:var(--ok); }
+.duptabsrow { padding-top:4px; }
+.duptabs .lsbtn { padding:6px 14px; font-size:13px; }
+.duptabcount { color:var(--dim); margin-left:2px; }
 
 /* Titel kraeftiger, BPM gross wie im Generator (.gentitle/.genbpm). */
 td.titlecell { font-weight:600; }
@@ -2345,8 +2473,8 @@ body[data-layout="dj"] .applayout [data-sep="1"] {
    in der Player-Ansicht ist Umbenennen/Zusammenfuehren kein Werkzeug. */
 body[data-layout="player"] .genrerename,
 body[data-layout="dj"] .genrerename,
-body[data-layout="player"] #plHeadMergeToggle,
-body[data-layout="dj"] #plHeadMergeToggle,
+body[data-layout="player"] #plHeadValueMode,
+body[data-layout="dj"] #plHeadValueMode,
 body[data-layout="player"] .genrebox-merge,
 body[data-layout="dj"] .genrebox-merge {
   display:none;
@@ -2519,15 +2647,15 @@ body { padding-bottom:96px; }
 /* Zug-Abbild fuer setDragImage() -- haengt kurz unsichtbar offscreen im DOM
    (siehe buildDragBadge() in app.js), nie sichtbar am eigentlichen Platz. */
 .drag-badge { position:fixed; top:-9999px; left:-9999px; display:flex;
-              align-items:center; gap:6px; padding:6px 12px 6px 6px;
-              border-radius:999px; background:var(--accent); color:var(--on-accent);
-              max-width:220px; }
-.drag-badge-cover { width:24px; height:24px; border-radius:4px; flex:0 0 auto;
-                     object-fit:cover; background:rgba(255,255,255,.25); }
-.drag-badge-title { font-size:12.5px; font-weight:600; white-space:nowrap;
+              align-items:center; gap:10px; padding:6px 12px 6px 6px;
+              border-radius:8px; background:var(--bg); color:var(--fg);
+              border:1px solid var(--line); max-width:300px; }
+.drag-badge-cover { width:48px; height:48px; border-radius:4px; flex:0 0 auto;
+                     object-fit:cover; background:var(--unk-bg); }
+.drag-badge-title { font-size:13px; font-weight:500; white-space:nowrap;
                      overflow:hidden; text-overflow:ellipsis; min-width:0; }
-.drag-badge-count { flex:0 0 auto; font-size:11px; font-weight:600;
-                     opacity:.85; }
+.drag-badge-count { flex:0 0 auto; font-size:12px; font-weight:500; color:var(--dim);
+                     background:var(--card); border-radius:5px; padding:3px 8px; }
 
 /* ── Erweiterte Suche (syncAdvSearch()/advPanelHtml() in app.js) ─────────────
    Panel unter der Suchleiste und Liederpool im Generator (.genadv). Ein
@@ -2575,7 +2703,7 @@ body[data-gen] #filterPanel, body[data-gen] #colsMenu,
 body[data-gen] #stickyHead, body[data-gen] .tablewrap, body[data-gen] #more,
 body[data-gen] #plHeadBubblesRow, body[data-gen] #plHeadIssueBubblesRow,
 body[data-gen] #plHeadTagBubblesRow, body[data-gen] #plHeadBubblesExpand,
-body[data-gen] #plHeadMergeSuggestions, body[data-gen] #plHeadMergeToggle,
+body[data-gen] #plHeadMergeSuggestions, body[data-gen] #plHeadValueMode,
 body[data-gen] #plUndo, body[data-gen] #plRedo { display:none !important; }
 .genpane { display:flex; flex-direction:column; gap:12px; margin-bottom:16px; }
 .genpane[hidden] { display:none; }
@@ -2746,6 +2874,8 @@ canvas.wave.genwave { flex:1 1 220px; min-width:120px; height:40px; border-radiu
 .genbpm { display:flex; flex-direction:column; align-items:flex-end; flex:0 0 40px;
           font-weight:700; font-size:16px; font-variant-numeric:tabular-nums; line-height:1.05; }
 .genbpm small { font-size:9px; font-weight:600; letter-spacing:.08em; color:var(--dim); }
+/* Tempowechsel ("100→128"): kleiner und so breit wie noetig. */
+.genbpm.tempochg { flex:0 0 auto; min-width:40px; font-size:13px; white-space:nowrap; color:var(--accent); }
 .genconf { display:flex; align-items:center; gap:6px; align-self:flex-start; margin:-1px 0 -1px 44px;
            padding:2px 9px; border-radius:6px; border:1px solid var(--dc-red); color:var(--dc-red);
            background:var(--dc-red-bg); font-size:11.5px; font-weight:600; }
@@ -2816,20 +2946,20 @@ canvas.wave.genwave { flex:1 1 220px; min-width:120px; height:40px; border-radiu
 :root { --dj-light:0; --dj-screen:#0d0f13; --dj-beat:rgba(255,255,255,.28); --dj-beat-edit:rgba(255,255,255,.55);
         --dj-bar:rgba(255,77,79,.8); --dj-bar-edit:#ff4d4f; --dj-text:rgba(255,255,255,.65); --dj-head:#fff;
         --dj-shade:rgba(13,15,19,.55); --dj-label-bg:rgba(13,15,19,.72); --dj-label-fg:#8cc4ff;
-        --dj-tempo:#ffbe3c; --dj-tempo-bg:#4a3710; --dj-tempo-fg:#ffcf70; --dj-loop:rgba(255,190,60,.22); --dj-loop-faint:rgba(255,190,60,.1); --dj-loop-line:#ffbe3c;
+        --dj-tempo:#c8f03c; --dj-tempo-bg:#33400c; --dj-tempo-fg:#dcff6a; --dj-ramp:rgba(200,240,60,.09); --dj-anchor:#c8f03c; --dj-loop:rgba(255,190,60,.22); --dj-loop-faint:rgba(255,190,60,.1); --dj-loop-line:#ffbe3c;
         --dj-window:rgba(255,255,255,.5); --dj-selected:#fff; }
 :root[data-dj-surface="light"], :root[data-dj-surface="ui"][data-theme="light"] {
         --dj-light:1; --dj-screen:#eef1f5; --dj-beat:rgba(20,24,32,.22); --dj-beat-edit:rgba(20,24,32,.5);
         --dj-bar:rgba(210,40,45,.75); --dj-bar-edit:#d0282d; --dj-text:rgba(20,24,32,.72); --dj-head:#14181f;
         --dj-shade:rgba(238,241,245,.62); --dj-label-bg:rgba(238,241,245,.88); --dj-label-fg:#1d5fa8;
-        --dj-tempo:#b36b00; --dj-tempo-bg:#fbe6bf; --dj-tempo-fg:#7a4900; --dj-loop:rgba(217,130,0,.2); --dj-loop-faint:rgba(217,130,0,.1); --dj-loop-line:#c97a00;
+        --dj-tempo:#5f7d00; --dj-tempo-bg:#e6f4bd; --dj-tempo-fg:#3d5200; --dj-ramp:rgba(110,150,0,.1); --dj-anchor:#5f7d00; --dj-loop:rgba(217,130,0,.2); --dj-loop-faint:rgba(217,130,0,.1); --dj-loop-line:#c97a00;
         --dj-window:rgba(20,24,32,.45); --dj-selected:#14181f; }
 @media (prefers-color-scheme: light) {
   :root[data-dj-surface="ui"]:not([data-theme="dark"]) {
         --dj-light:1; --dj-screen:#eef1f5; --dj-beat:rgba(20,24,32,.22); --dj-beat-edit:rgba(20,24,32,.5);
         --dj-bar:rgba(210,40,45,.75); --dj-bar-edit:#d0282d; --dj-text:rgba(20,24,32,.72); --dj-head:#14181f;
         --dj-shade:rgba(238,241,245,.62); --dj-label-bg:rgba(238,241,245,.88); --dj-label-fg:#1d5fa8;
-        --dj-tempo:#b36b00; --dj-tempo-bg:#fbe6bf; --dj-tempo-fg:#7a4900; --dj-loop:rgba(217,130,0,.2); --dj-loop-faint:rgba(217,130,0,.1); --dj-loop-line:#c97a00;
+        --dj-tempo:#5f7d00; --dj-tempo-bg:#e6f4bd; --dj-tempo-fg:#3d5200; --dj-ramp:rgba(110,150,0,.1); --dj-anchor:#5f7d00; --dj-loop:rgba(217,130,0,.2); --dj-loop-faint:rgba(217,130,0,.1); --dj-loop-line:#c97a00;
         --dj-window:rgba(20,24,32,.45); --dj-selected:#14181f; }
 }
 /* Feste Liste: keine Aktionsspalte und kein Spalten-Menue (DJ_COLUMNS in app.js). */
@@ -2882,7 +3012,7 @@ body[data-layout="dj"] table.trk > tbody > tr.row.expanded:hover + tr.detail .gr
 .ducell .dj-remain { color:var(--dim); }
 .dj-main { min-width:0; display:flex; flex-direction:column; gap:8px; }
 .dj-toolbar, .dj-tools { display:flex; align-items:center; flex-wrap:wrap; gap:6px; }
-.dj-tools { min-height:28px; }
+.dj-tools { min-height:28px; align-content:flex-start; }  /* feste Hoehe (djFitTools()): Zeilen oben halten, nicht verteilen */
 .dj-spacer { flex:1 1 auto; }
 .dj-btn { display:inline-flex; align-items:center; justify-content:center; gap:5px; min-width:28px; height:28px;
   padding:0 7px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg);
@@ -2938,10 +3068,68 @@ canvas.dj-zoom { height:220px; cursor:grab; }
 .dj-toollabel { display:inline-flex; align-items:center; gap:4px; color:var(--dim); font-size:12px; white-space:nowrap; }
 .dj-toollabel svg { width:14px; height:14px; }
 .dj-hint { color:var(--dim); font-size:13px; }
+/* Zeilenumbruch in der Werkzeugleiste (Beatgrid: zweite Zeile mit den Tempowechseln). */
+.dj-rowbreak { flex-basis:100%; height:0; }
+.dj-rampbeats.off { opacity:.45; }
+/* Wo das Ende der Rampe im Takt liegt: auf der 1 gruen, sonst als Hinweis gelb. */
+.dj-rampend { font-weight:600; color:var(--ok); }
+.dj-rampend.warn { color:var(--susp); }
+/* Zusammengehoerige Knoepfe brechen nur gemeinsam um. */
+.dj-group { display:inline-flex; align-items:center; gap:6px; }
 .dj-bpminput { width:76px; height:28px; padding:0 6px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--fg); font:inherit; font-size:13px; font-variant-numeric:tabular-nums; }
-.dj-kind { height:26px; padding:0 8px; border:none; border-radius:5px; background:var(--c); color:#fff; font:inherit; font-size:11px; font-weight:600; cursor:pointer; opacity:.8; }
+/* Werkzeugleiste unter den Reitern: Zeilen (.dj-trow) aus beschrifteten Gruppen (djToolGroup()),
+   Knopfreihen ohne Abstand (djSegRow()), Rampe als eigener Kasten (djRampTools()). */
+.dj-tools { flex-direction:column; align-items:stretch; flex-wrap:nowrap; gap:10px; padding:10px; }
+/* Nur der Inhalt des Reiters ist hinterlegt (Karte wie die Seitenleiste .dj-side); Reiter-Umschalter,
+   Memory Cue, Sperren, Rueckgaengig und Q stehen frei in der Zeile darueber (Nutzervorgabe). */
+.dj-tools { border:1px solid var(--line); border-radius:8px; background:var(--card); }
+/* Beatjump/Loop luftiger: mehr Abstand zwischen den Gruppen und breitere Wert-Knoepfe. */
+.dj-tools[data-mode="cue"] { gap:18px; padding:14px; }
+.dj-tools[data-mode="cue"] .dj-tgroup { gap:7px; }
+.dj-tools[data-mode="cue"] .dj-tbtns { gap:10px; }
+.dj-tools[data-mode="cue"] .dj-btn.kb { min-width:48px; padding:5px 10px; }
+.dj-tools[data-mode="cue"] .dj-jumpmid { margin:0 4px; }
+/* Reiter-Umschalter: die fette Schrift des aktiven Reiters ist schon reserviert (unsichtbare
+   Zweitzeile ueber data-text), sonst rueckt beim Umschalten alles daneben um ein paar Pixel. */
+.dj-mode { display:inline-grid; align-items:center; justify-items:center; }
+.dj-mode::after { content:attr(data-text); font-weight:600; visibility:hidden; height:0; overflow:hidden; }
+/* Aktive Schalter in den Werkzeugen hell hinterlegt statt in voller Hauptfarbe. */
+.dj-tools .dj-btn.on { background:color-mix(in srgb, var(--accent) 14%, var(--card)); border-color:color-mix(in srgb, var(--accent) 55%, var(--line)); color:var(--accent); }
+.dj-tools .dj-btn.on:hover:not(:disabled) { background:color-mix(in srgb, var(--accent) 22%, var(--card)); border-color:var(--accent); }
+.dj-trow { display:flex; align-items:flex-end; flex-wrap:wrap; gap:8px 16px; }
+.dj-tgroup { display:inline-flex; flex-direction:column; gap:3px; min-width:0; }
+.dj-tcap { font-size:11px; color:var(--dim); white-space:nowrap; }
+.dj-tbtns { display:inline-flex; align-items:center; flex-wrap:wrap; gap:6px; }
+.dj-segrow { display:inline-flex; }
+.dj-segrow > * { margin-left:-1px; border-radius:0; }
+.dj-segrow > :first-child { margin-left:0; border-top-left-radius:6px; border-bottom-left-radius:6px; }
+.dj-segrow > :last-child { border-top-right-radius:6px; border-bottom-right-radius:6px; }
+.dj-segrow > .dj-btn.on, .dj-segrow > .dj-btn:hover { position:relative; z-index:1; }
+.dj-segval { display:inline-flex; align-items:center; height:28px; padding:0 10px; border:1px solid var(--line); background:var(--card);
+  font-size:12px; font-variant-numeric:tabular-nums; white-space:nowrap; cursor:help; }
+.dj-btn.kb { height:auto; min-height:28px; padding:3px 8px; }
+.dj-kl { display:inline-flex; flex-direction:column; align-items:center; line-height:1.15; }
+.dj-kl kbd, .dj-kbd { font-family:var(--mono, ui-monospace, monospace); font-size:10px; font-weight:400; color:var(--dim); }
+.dj-btn.on .dj-kl kbd, .dj-btn.on .dj-kbd { color:inherit; opacity:.8; }
+.dj-btn.danger:not(:disabled) { color:var(--fake); }
+.dj-jumpmid { display:inline-flex; color:var(--dim); }
+.dj-jumpmid svg { width:15px; height:15px; }
+.dj-thint { color:var(--dim); font-size:12px; }
+.dj-ramp { display:flex; align-items:center; flex-wrap:wrap; gap:6px 8px; padding:6px 8px; border:1px dashed var(--line); border-radius:8px; }
+/* Limette wie die Tempowechsel in der Wellenform (--dj-tempo); Loops bleiben orange. */
+.dj-ramp.open { border-style:solid; border-color:color-mix(in srgb, #7fa800 50%, var(--line)); }
+.dj-ramp.on { border-style:solid; border-color:color-mix(in srgb, #7fa800 50%, var(--line)); background:color-mix(in srgb, #9cc800 14%, var(--card)); }
+.dj-ramplabel { display:inline-flex; align-items:center; gap:5px; color:var(--dim); font-size:12px; white-space:nowrap; }
+.dj-ramp.on .dj-ramplabel { color:var(--fg); font-weight:600; cursor:help; }
+.dj-ramplabel svg { width:14px; height:14px; }
+.dj-ramphint { color:var(--dim); font-size:12px; }
+.dj-pnav { display:flex; align-items:center; gap:10px; width:50%; min-width:280px; }
+.dj-ptitle { flex:1 1 auto; display:flex; align-items:center; gap:6px; min-width:0; font-size:13px; white-space:nowrap; overflow:hidden; }
+.dj-dim { color:var(--dim); font-weight:400; }
+.dj-pdot { width:10px; height:10px; border-radius:3px; flex:none; }
+.dj-kind { height:28px; padding:0 10px; border:none; border-radius:6px; background:var(--c); color:#fff; font:inherit; font-size:12px; font-weight:600; cursor:pointer; opacity:.8; }
 .dj-kind:hover { opacity:1; }
-.dj-kind.on { opacity:1; box-shadow:0 0 0 2px var(--fg); }
+.dj-kind.on { opacity:1; box-shadow:0 0 0 2px var(--card), 0 0 0 4px var(--fg); }
 .dj-side { position:relative; display:flex; flex-direction:column; min-height:0; min-width:0; border:1px solid var(--line); border-radius:8px; background:var(--card); overflow:hidden; }
 .dj-sidetabs { display:flex; border-bottom:1px solid var(--line); flex:none; }
 .dj-sidetab { flex:1 1 0; height:30px; border:none; background:none; color:var(--dim); font:inherit; font-size:12px; cursor:pointer; white-space:nowrap; padding:0 4px; }

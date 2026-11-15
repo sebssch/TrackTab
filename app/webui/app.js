@@ -106,8 +106,8 @@ document.addEventListener("DOMContentLoaded", () => {
   initTagsChangeTracking();
 });
 
-const PAGE = 150;
-const INFINITE_SCROLL_CHUNK = 50;
+const PAGE = 20;
+const INFINITE_SCROLL_CHUNK = 20;
 // Slice-Index, ab dem die zuletzt in render() gebauten Zeilen aus einem
 // beginLoadMore()-Aufruf stammen -- die bekommen die Klasse "fresh" (Fade-in).
 // -1 = kein Nachladen, normaler Render (Sortierung, Ignorieren-Klick, ...).
@@ -122,8 +122,10 @@ const VIEWS = [
   // Alle Tracks, beim Oeffnen nach "Hinzugefuegt" absteigend sortiert
   // (selectView(), enterRecentSort()); Tracks ohne Datum stehen hinten.
   {id: "recent",    label: t("views.recent"),    test: () => true},
+  // Reiter Offen/Kein Duplikat (state.dupTab): bestaetigte Gruppen stehen nur
+  // im zweiten Reiter; der Zaehler im Baum nimmt dupBaseRow() ohne Reiter.
   {id: "duplicates",label: t("views.duplicates"),
-   test: r => !!r.dg && !merkPlaylists().some(n => PLAYLIST_SETS[n.id] && PLAYLIST_SETS[n.id].has(r.p))},
+   test: r => dupBaseRow(r) && (state.dupTab === "dismissed") === dupGroupDismissed(r.dg)},
   {id: "tag_issues", label: t("views.tag_issues"), test: r => hasAnyTagIssues(r)},
   // "Aufraeumen"-Ordner: zeigen die ganze Bibliothek, nur nach Genre/Album/
   // Interpret gruppiert statt gefiltert (siehe groupMode in render()).
@@ -151,6 +153,25 @@ const VIEW_TABS = ["all", "recent", "ignored", "gone"];
 // kommen aus tags.py (META) -- eine einzige Quelle fuer Server und Oberflaeche.
 const KEY_TABLE = META.keyTable || {};
 const KEY_ALIASES = META.keyAliases || {};
+
+// ── Pfadanzeige ───────────────────────────────────────────────────────────
+// Bibliotheksordner (absolut, ~ aufgeloest; report.library_roots()). Gebacken
+// und nach /api/settings aktualisiert. shortPath() zeigt nur ab dem Ordner der
+// Bibliothek: "/Users/x/Music/Music/A/b.mp3" -> ".../Music/A/b.mp3". Kopiert und
+// gesucht wird immer der volle Pfad -- das hier ist nur Anzeige.
+let LIBRARY_ROOTS = Array.isArray(META.libraryRoots) ? META.libraryRoots : [];
+function shortPath(p) {
+  if (!p) return "";
+  const path = String(p).normalize("NFC");
+  let best = "";
+  for (const raw of LIBRARY_ROOTS) {
+    const root = String(raw || "").normalize("NFC").replace(/\/+$/, "");
+    if (root && path.startsWith(root + "/") && root.length > best.length) best = root;
+  }
+  if (!best) return p;
+  const name = best.slice(best.lastIndexOf("/") + 1);
+  return `…/${name}${path.slice(best.length)}`;
+}
 const KEY_NOTATION_INDEX = {camelot: 0, openkey: 1, notes: 2};
 let KEY_NOTATION = KEY_NOTATION_INDEX[META.keyNotation] !== undefined ? META.keyNotation : "camelot";
 function setKeyNotation(value) {
@@ -406,15 +427,17 @@ rebuildPlaylistViews();
 rebuildMerkViews();
 
 // Spalten, die sich ausblenden lassen — Checkbox und Öffnen bleiben immer
-// da, die sind fuer die Bedienung noetig. Status (v) steht wie diese beiden
-// als feste, nicht per Drag verschiebbare Kopfzelle im HTML (siehe renderHead()
-// weiter unten), ist aber wie jede andere Spalte hier ausblendbar.
+// da, die sind fuer die Bedienung noetig. Status (v) ist eine normale,
+// verschiebbare Spalte; nur in den Pruef-Listen laesst sie sich nicht
+// abwaehlen (siehe requiredCols()). Sie steht vorn, weil sie frueher fest
+// direkt nach der Checkbox stand -- die Standard-Reihenfolge sieht so aus wie
+// damals (gespeicherte Reihenfolgen: settings.migrate_status_column()).
 const OPTIONAL_COLUMNS = [
+  {key: "v", label: t("col.status"), numeric: false},
   // Position in der geoeffneten Playlist (eigene, Music.app, Rekordbox) --
   // in allen anderen Ansichten leer. Die Zahl ist die massgebliche
   // Reihenfolge; eine Spaltensortierung aendert sie nicht.
   {key: "po", label: t("col.position"), numeric: true},
-  {key: "v", label: t("col.status"), numeric: false},
   {key: "co", label: t("col.cutoff"), numeric: true},
   {key: "kb", label: t("field.declared"), numeric: true},
   {key: "mk", label: t("col.class"), numeric: true},
@@ -426,6 +449,8 @@ const OPTIONAL_COLUMNS = [
   {key: "rb", label: t("col.rekordbox"), numeric: true},
   {key: "im", label: t("col.in_music"), numeric: true},
   {key: "da", label: t("field.added"), numeric: true},
+  // Aenderungszeit der Datei (files.mtime): jeder eigene Schreibvorgang (Tags, Cover) setzt sie neu.
+  {key: "mt", label: t("col.modified"), numeric: true},
   {key: "cv", label: t("col.cover"), numeric: false},
   {key: "al", label: t("field.album"), numeric: false},
   {key: "tn", label: t("col.track_no"), numeric: true},
@@ -442,10 +467,10 @@ const OPTIONAL_COLUMNS = [
   {key: "cm", label: t("field.comment"), numeric: false},
   // Titel + Interpret in einer Zelle, darunter Format/Bitrate mit Pfad kopieren
   // und Finder (djMetaLine()). Feste Spalte der DJ-Ansicht, sonst waehlbar.
-  {key: "ta", label: t("dj.col_track"), numeric: false},
+  {key: "ta", label: t("col.title_artist_meta"), numeric: false},
   {key: "a", label: t("field.artist"), numeric: false},
   {key: "t", label: t("field.title"), numeric: false},
-  {key: "n", label: t("field.file"), numeric: false},
+  {key: "n", label: t("col.title_artist_path"), numeric: false},
   {key: "ti", label: t("col.tag_issues"), numeric: false},
 ];
 // Muss zu den Breiten im <thead> in index.html passen — dient als
@@ -455,7 +480,7 @@ const OPTIONAL_COLUMNS = [
 // liesse sich die Spalte nicht anpassen (sie wuerde jede Aenderung sofort
 // wieder mit dem freien Platz ausgleichen).
 const DEFAULT_COL_WIDTHS = {po:50, v:105, co:90, kb:105, mk:75, cf:110, st:75, lu:90, tp:60, du:70, rb:105,
-  im:85, da:115, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, ky:70, eg:110, mm:170, cm:180, ta:360, a:150, t:200, n:340,
+  im:85, da:115, mt:135, cv:80, al:160, tn:70, aa:150, cp:140, ge:125, yr:60, bp:62, ky:70, eg:110, mm:170, cm:180, ta:360, a:150, t:200, n:340,
   ti:280};
 
 let state = {
@@ -479,7 +504,12 @@ let state = {
   // Code (siehe app/taganomaly.py), nicht persistiert wie valueFilter, gilt
   // nur solange die Liste aktiv ist (selectView() setzt ihn zurueck).
   tagIssueFilter: null,
-  rbStage: 1,
+  // Reiter der Duplikate-Liste: "open" (offen) oder "dismissed" (als "kein
+  // Duplikat" bestaetigt), je Browser gemerkt (saveFilters()).
+  dupTab: "open",
+  rbStage: "in",
+  tiStage: null,          // Sortierstufe der Spalte Auffaelligkeiten (Code der Auffaelligkeit, die zuerst kommt)
+  bpStage: null,          // Sortierstufe der Spalte BPM in der DJ-Ansicht, siehe BP_SORT_STAGES
   // Gewaehlte Tag-Bubbles der Liste "Tags" (ids aus rowTags()), nicht
   // persistiert wie tagIssueFilter.
   tagFilter: [],
@@ -521,8 +551,8 @@ let state = {
 // diese drei Felder liest/schreibt (Spalten-Menue, Drag-Resize, Drag-Reorder,
 // render(), ...), unveraendert weiterfunktioniert.
 state.columnsByLayout = {
-  edit: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: ["ta"], widths: {}},
-  player: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: ["t", "a", "n"], widths: {}},
+  edit: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: ["ta", "mt"], widths: {}},
+  player: {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: ["t", "a", "n", "mt"], widths: {}},
 };
 
 // Die DJ-Ansicht hat eine feste Liste: "#", Cover, "Titel - Interpret", Laenge,
@@ -570,31 +600,89 @@ state.dropColumns = {order: OPTIONAL_COLUMNS.map(c => c.key), hidden: [], widths
 // in den richtigen Topf -- keine Fallunterscheidung an den Aufrufstellen.
 let COLUMN_VIEWS = [];
 let COLUMN_ASSIGN = {};
-// Vorgabe nur fuer Apple-Music-Playlisten (view-id "mu:<id>") -- diese
-// Fremd-Listen bekommen ueber das Sidebar-Menue bewusst keine eigene
-// Zuordnung (siehe extSourceOfView()-Aufrufstellen), brauchen also einen
-// eigenen Vorgabe-Weg VOR den Standard-Spalten der Ansicht.
-let COLUMN_VIEW_MUSIC_DEFAULT = "";
-// Spaltenansicht der Einzelpruefungen (leer = eigene Konfiguration state.dropColumns).
+// Spaltenansicht der Einzelpruefungen (leer = feste Ansicht "Einzelpruefung").
 let COLUMN_VIEW_DROP = "";
+// Standard je Layout (Einstellungen -> Spaltenansichten -> Standards): gilt fuer
+// jede Liste ohne (geerbte) Zuordnung. Leer = feste Ansicht des Layouts.
+let COLUMN_VIEW_EDIT = "";
+let COLUMN_VIEW_PLAYER = "";
 // Der Topf, der in den Einzelpruefungen tatsaechlich gilt.
-const dropColumnStore = () => columnViewById(COLUMN_VIEW_DROP) || state.dropColumns;
+// state.dropColumns nur noch ohne Server (keine festen Ansichten geladen).
+const dropColumnStore = () => columnViewById(COLUMN_VIEW_DROP)
+  || columnViewById(STD_COLUMN_VIEWS.drop) || state.dropColumns;
 
 const columnViewById = id => (id && COLUMN_VIEWS.find(v => v.id === id)) || null;
-// Nur die Zuordnung dieser einen Liste -- ohne Ruecksicht auf die
-// Standardansicht. Das Auswahlfeld im Spalten-Menue und der Listen-Dialog
-// zeigen genau das an: "eigene Einstellung" oder eben keine.
-const columnViewFor = viewId => columnViewById(COLUMN_ASSIGN[viewId]);
-// Was tatsaechlich gilt: eigene Zuordnung, sonst (fuer Music.app-Playlisten)
-// die Apple-Music-Standardansicht, sonst null = "Standard – Bearbeiten" bzw.
-// "Standard – Player" (state.columnsByLayout der aktiven Ansicht). Eine
-// eigene Zuordnung gilt in Bearbeiten UND Player; die DJ-Ansicht hat ihre
-// feste Liste (DJ_COLUMN_STORE).
-const activeColumnView = () =>
-  columnViewFor(state.view) ||
-  (extSourceOfView(state.view) === "music" ? columnViewById(COLUMN_VIEW_MUSIC_DEFAULT) : null);
+// Feste Ansichten (settings.py: STD_*_VIEW): bearbeitbar, nie loeschbar. Bearbeiten/
+// Player gelten je Layout fuer alles ohne (geerbte) Zuordnung, Pruefliste haengt bei
+// Erststart am Ordner "Pruefliste" (fd:sys_verdicts).
+const STD_COLUMN_VIEWS = {edit: "cv_std_edit", player: "cv_std_player", check: "cv_std_check",
+                          drop: "cv_std_drop", issues: "cv_std_issues"};
+const isFixedColumnView = id => Object.values(STD_COLUMN_VIEWS).includes(id);
+// Angezeigter Name: feste Ansichten uebersetzt, eigene wie gespeichert.
+function columnViewLabel(v) {
+  if (!v) return "";
+  const key = {cv_std_edit: "cols.std_edit", cv_std_player: "cols.std_player",
+               cv_std_check: "cols.std_check", cv_std_drop: "cols.std_drop",
+               cv_std_issues: "cols.std_issues"}[v.id];
+  return key ? t(key) : v.name;
+}
+// Nur die Zuordnung dieses einen Knotens (Liste, Ordner, Wurzel) -- ohne
+// Vererbung. Die Auswahlfelder zeigen genau das: eigene Wahl oder "Uebernehmen".
+const columnViewFor = key => columnViewById(COLUMN_ASSIGN[key]);
+const layoutStandardViewFor = layout => layout === "player"
+  ? columnViewById(COLUMN_VIEW_PLAYER) || columnViewById(STD_COLUMN_VIEWS.player)
+  : columnViewById(COLUMN_VIEW_EDIT) || columnViewById(STD_COLUMN_VIEWS.edit);
+const layoutStandardView = () => layoutStandardViewFor(state.layout);
+
+// Zuordnungs-Schluessel des Knotens darueber -- die Kette, ueber die sich eine
+// Spaltenansicht vererbt. Listen "pl:/sm:/gen:" und Ordner "fd:" haengen an
+// parent_id (PLAYLISTS), feste Ansichten ("all", "duplicates", ...) an ihrem
+// Platz im Baum (viewPlaceOf()), Music-/Rekordbox-Knoten ("mu:/rb:", Ordner wie
+// Playlisten) an 'parent' ihres Astes. Oberste Ebene = Wurzel ("root:..."),
+// darueber null.
+function columnViewParentKey(key) {
+  key = String(key || "");
+  if (!key || key.startsWith("root:")) return null;
+  const own = /^(pl|sm|gen|fd):(.+)$/.exec(key);
+  if (own) {
+    const n = PLAYLISTS.find(p => p.id === own[2]);
+    return n && n.parent_id ? `fd:${n.parent_id}` : "root:tracktab";
+  }
+  const src = extSourceOfView(key);
+  if (src) {
+    const {prefix, root} = EXT_SOURCES[src];
+    const id = key.slice(prefix.length);
+    const n = ((EXT_TREES[src] || {}).nodes || []).find(x => String(x.id) === id);
+    return n && n.parent ? `${prefix}${n.parent}` : root;
+  }
+  const place = viewPlaceOf(key);
+  return place ? `fd:${place}` : "root:tracktab";
+}
+// Welche Ansicht ein Knoten tatsaechlich bekommt: eigene Zuordnung, sonst die des
+// naechsten Knotens darueber, sonst die feste Ansicht des Layouts. 'from' = Schluessel
+// des Knotens, der sie liefert (null = Layout-Standard) -- fuer "Uebernehmen von ...".
+function resolveColumnView(key) {
+  for (let k = key, depth = 0; k && depth < 32; k = columnViewParentKey(k), depth++) {
+    const v = columnViewFor(k);
+    if (v) return {view: v, from: k};
+  }
+  return {view: layoutStandardView(), from: null};
+}
+// Was in der offenen Liste gilt. null nur ohne Server (keine festen Ansichten
+// geladen) -- dann greifen die alten Toepfe state.columnsByLayout.
+const activeColumnView = () => resolveColumnView(state.view).view;
 const activeColumnStore = () => state.layout === "dj" ? DJ_COLUMN_STORE
   : (activeColumnView() || state.columnsByLayout[state.layout]);
+
+// Pflichtspalten der gerade offenen Liste: in den Pruef-Listen (Status-Listen
+// im Ordner "Pruefliste", db._SYSTEM_PLAYLISTS sys_v_*) laesst sich Status
+// nicht abwaehlen (Nutzervorgabe), verschieben schon. Bewusst NICHT im
+// Spalten-Topf selbst erzwungen: eine Spaltenansicht gilt oft fuer mehrere
+// Listen, ein dort ausgeblendetes Status bleibt ausserhalb der Pruef-Listen
+// ausgeblendet. Wer Sichtbarkeit fuer die Darstellung prueft, nimmt deshalb
+// colHidden(), nicht state.hiddenCols.includes().
+const requiredCols = () => state.layout !== "dj" && /^sm:sys_v_/.test(String(state.view || "")) ? ["v"] : [];
+const colHidden = k => state.hiddenCols.includes(k) && !requiredCols().includes(k);
 
 // Gespeicherte Spalten-Toepfe (Server, localStorage, alte Ansichten) auf den
 // heutigen Spaltenbestand bringen: unbekannte Keys raus, seither
@@ -605,6 +693,7 @@ const activeColumnStore = () => state.layout === "dj" ? DJ_COLUMN_STORE
 // (gleiche Darstellung wie die DJ-Ansicht). Ueberall sonst kommt sie
 // ausgeblendet dazu, damit gespeicherte Ansichten unveraendert aussehen.
 // Rueckgabe: true, wenn ta neu eingetragen wurde (Aufrufer speichert dann).
+const COLUMNS_HIDDEN_WHEN_NEW = new Set(["mt"]);
 function normalizeColumnStore(store, opts = {}) {
   const known = new Set(OPTIONAL_COLUMNS.map(c => c.key));
   const order = (Array.isArray(store.order) ? store.order : []).filter(k => known.has(k));
@@ -624,15 +713,18 @@ function normalizeColumnStore(store, opts = {}) {
       store.hidden = hidden.includes("ta") ? hidden : [...hidden, "ta"];
     }
   }
+  const newHidden = [];
   for (const c of OPTIONAL_COLUMNS) {
     if (order.includes(c.key)) continue;
+    // Neue Spalten, die ohne Zutun nicht auftauchen sollen (in gespeicherten Toepfen ausgeblendet).
+    if (COLUMNS_HIDDEN_WHEN_NEW.has(c.key)) newHidden.push(c.key);
     // "#" gehoert nach vorn, auch in schon gespeicherten Reihenfolgen --
     // hinten angehaengt (wie jede andere neue Spalte) waere sie gerade dort
     // unsichtbar, wo sie gebraucht wird.
     if (c.key === "po") order.unshift(c.key); else order.push(c.key);
   }
   store.order = order;
-  store.hidden = (Array.isArray(store.hidden) ? store.hidden : []).filter(k => known.has(k));
+  store.hidden = [...new Set([...(Array.isArray(store.hidden) ? store.hidden : []), ...newHidden])].filter(k => known.has(k));
   store.widths = (store.widths && typeof store.widths === "object") ? store.widths : {};
   if (opts.report) return addedTa;
   return store;
@@ -669,7 +761,8 @@ function saveFilters() {
       view: state.view,
       groupAlbums: state.groupAlbums,
       advOpen: !!state.advOpen,
-      sort: state.sort, dir: state.dir, rbStage: state.rbStage,
+      sort: state.sort, dir: state.dir, rbStage: state.rbStage, bpStage: state.bpStage, tiStage: state.tiStage,
+      dupTab: state.dupTab,
       layout: state.layout,
       editFilterSnapshot: state.editFilterSnapshot || null,
       sidebarW: state.sidebarW, treeClosed: state.treeClosed,
@@ -693,8 +786,9 @@ function saveFilters() {
       // aufblitzt, bevor /api/settings zurueck ist.
       columnViews: COLUMN_VIEWS,
       columnAssign: COLUMN_ASSIGN,
-      columnViewMusicDefault: COLUMN_VIEW_MUSIC_DEFAULT,
       columnViewDrop: COLUMN_VIEW_DROP,
+      columnViewEdit: COLUMN_VIEW_EDIT,
+      columnViewPlayer: COLUMN_VIEW_PLAYER,
       // Eigene Spaltenkonfiguration der Einzelprueflungen (state.dropColumns)
       // -- serverseitig die Wahrheit (siehe saveDropColumns()), hier nur die
       // Rueckfallebene wie bei columnsByLayout oben.
@@ -1097,8 +1191,13 @@ function loadFilters() {
     for (const k of ["sort"]) if (s[k] !== undefined) state[k] = s[k];
     if (typeof s.groupAlbums === "boolean") state.groupAlbums = s.groupAlbums;
     if (typeof s.advOpen === "boolean") state.advOpen = s.advOpen;
+    if (s.dupTab === "open" || s.dupTab === "dismissed") state.dupTab = s.dupTab;
     if (s.dir === 1 || s.dir === -1) state.dir = s.dir;
-    if ([1, 2, 3, 4].includes(s.rbStage)) state.rbStage = s.rbStage;
+    if ([1, 2, 3, 4].includes(s.rbStage)) state.rbStage = RB_SORT_LEGACY[s.rbStage - 1];
+    else if (typeof s.rbStage === "string" && (RB_SORT_RANK[s.rbStage] || s.rbStage.startsWith("sig:")))
+      state.rbStage = s.rbStage;
+    if (typeof s.bpStage === "string" && BP_SORT_STAGES[s.bpStage]) state.bpStage = s.bpStage;
+    if (typeof s.tiStage === "string") state.tiStage = s.tiStage;
     if (typeof s.shuffle === "boolean") queueState.shuffle = s.shuffle;
     if (typeof s.repeatTrack === "boolean") queueState.repeatTrack = s.repeatTrack;
     if (typeof s.repeatList === "boolean") queueState.repeatList = s.repeatList;
@@ -1140,7 +1239,8 @@ function loadFilters() {
       COLUMN_VIEWS = s.columnViews
         .filter(v => v && v.id && v.name)
         .map(v => normalizeColumnStore({id: String(v.id), name: String(v.name),
-                                        order: v.order, hidden: v.hidden, widths: v.widths}));
+                                        order: v.order, hidden: v.hidden, widths: v.widths},
+                                       {trackFirst: v.id === STD_COLUMN_VIEWS.player}));
     }
     if (s.columnAssign && typeof s.columnAssign === "object") {
       COLUMN_ASSIGN = {};
@@ -1148,12 +1248,11 @@ function loadFilters() {
         if (COLUMN_VIEWS.some(v => v.id === id)) COLUMN_ASSIGN[view] = id;
       }
     }
-    if (COLUMN_VIEWS.some(v => v.id === s.columnViewMusicDefault)) {
-      COLUMN_VIEW_MUSIC_DEFAULT = s.columnViewMusicDefault;
-    }
     if (COLUMN_VIEWS.some(v => v.id === s.columnViewDrop)) {
       COLUMN_VIEW_DROP = s.columnViewDrop;
     }
+    if (COLUMN_VIEWS.some(v => v.id === s.columnViewEdit)) COLUMN_VIEW_EDIT = s.columnViewEdit;
+    if (COLUMN_VIEWS.some(v => v.id === s.columnViewPlayer)) COLUMN_VIEW_PLAYER = s.columnViewPlayer;
     if (s.dropColumns && typeof s.dropColumns === "object") {
       if (Array.isArray(s.dropColumns.order) && s.dropColumns.order.length) {
         state.dropColumns.order = s.dropColumns.order;
@@ -1179,6 +1278,7 @@ let apiMode = false;
 
 const fmtTime = s => Math.floor(s/60) + ":" + String(s%60).padStart(2,"0");
 const fmtDate = ts => ts ? new Date(ts*1000).toLocaleDateString("de-DE") : "";
+const fmtDateTime = ts => ts ? new Date(ts*1000).toLocaleString("de-DE", {dateStyle: "short", timeStyle: "short"}) : "";
 // Das einfache Anfuehrungszeichen gehoert mit dazu: derzeit steht zwar kein
 // Attribut in der Oberflaeche in einfachen Anfuehrungszeichen (alle Vorlagen
 // nutzen doppelte), aber ein kuenftiges title='${esc(r.t)}' waere sonst mit
@@ -1217,10 +1317,39 @@ const CAN_PLAY_AIFF = (() => {
 // Strichzeichnungen erben ihre Farbe vom Knopf (currentColor), damit sich
 // erledigt/löschen farblich absetzen können. Finder und der Audio-Editor
 // bekommen ihr echtes Programmsymbol vom Server.
+// Der Inhalt eines Icons steht EINMAL im Dokument (#iconSprite, hier bei
+// Bedarf angelegt), jedes gezeichnete Icon verweist per <use> darauf. Eine
+// Tabellenzeile traegt rund 14 Icons -- ausgeschrieben waren das rund 6 von
+// 11 KB HTML je Zeile, die bei jedem Neuaufbau geparst werden mussten. Farbe,
+// Fuellung und Strichstaerke stehen weiter am aeusseren <svg> und vererben
+// sich in den Verweis. Folge: CSS oder JS kann die Pfade EINES Icons nicht
+// mehr einzeln ansprechen (`svg path { … }` greift nicht in <use> hinein).
+const _iconIds = new Map();
+let _iconDefs = null;
+function iconRef(inner) {
+  let id = _iconIds.get(inner);
+  if (id) return id;
+  id = "ic" + _iconIds.size;
+  _iconIds.set(inner, id);
+  if (!_iconDefs) {
+    const NS = "http://www.w3.org/2000/svg";
+    const sprite = document.createElementNS(NS, "svg");
+    sprite.id = "iconSprite";
+    sprite.setAttribute("width", "0");
+    sprite.setAttribute("height", "0");
+    sprite.setAttribute("aria-hidden", "true");
+    sprite.style.position = "absolute";
+    _iconDefs = document.createElementNS(NS, "defs");
+    sprite.appendChild(_iconDefs);
+    (document.body || document.documentElement).appendChild(sprite);
+  }
+  _iconDefs.insertAdjacentHTML("beforeend", `<g id="${id}">${inner}</g>`);
+  return id;
+}
 const SVG = (inner, fill) =>
   `<svg viewBox="0 0 24 24" width="15" height="15" fill="${fill || "none"}"
         stroke="currentColor" stroke-width="2" stroke-linecap="round"
-        stroke-linejoin="round" aria-hidden="true">${inner}</svg>`;
+        stroke-linejoin="round" aria-hidden="true">${inner ? `<use href="#${iconRef(inner)}"/>` : ""}</svg>`;
 
 const ICONS = {
   play: SVG('<polygon points="6 3 20 12 6 21 6 3"/>', "currentColor"),
@@ -1252,6 +1381,9 @@ const ICONS = {
   gripVertical: SVG(LUCIDE_ICONS["grip-vertical"]),
   audioLines: SVG(LUCIDE_ICONS["audio-lines"]),
   chevronDown: SVG(LUCIDE_ICONS["chevron-down"]),
+  dupKeep: SVG(LUCIDE_ICONS["circle-check"]),
+  dupKeepOff: SVG(LUCIDE_ICONS["circle"]),
+  chevronRight: SVG(LUCIDE_ICONS["chevron-right"]),
   squareX: SVG(LUCIDE_ICONS["square-x"]),
   // Generisch statt App-gebunden — das Programm dahinter ist frei wählbar.
   editor: SVG('<line x1="4" y1="20" x2="4" y2="12"/><line x1="9" y1="20" x2="9" y2="6"/>' +
@@ -1584,40 +1716,217 @@ const AUTO_FIXABLE_TAG_ISSUE_CODES = new Set([
   "control_chars", "leading_trailing_ws", "id3_v1_only", "id3_v22",
   "unresolved_genre_code", "duplicate_frames", "nfc_nfd_mismatch",
   "oversized_cover", "tempo_change_title", "key_notation",
+  "web_junk", "video_words", "underscore_spaces",
 ]);
 // Tempowechsel im Beatgrid, der nicht im Titel steht. Kommt nicht aus der Datei wie die
 // uebrigen Auffaelligkeiten, sondern aus der gemerkten Tempo-Folge (r.gridSeq), die der
 // DJ-Editor beim Oeffnen eines Tracks festhaelt; aeltere Eintraege kennen nur die Spanne.
 // Mehr als TEMPO_ISSUE_MAX_CHANGES Stufen sind ein schwankendes Grid, kein Titel-Thema.
 const TEMPO_ISSUE_MIN_BPM = 1, TEMPO_ISSUE_MAX_CHANGES = 8;
-const TITLE_TEMPO_RE = /\s*[(\[]?\s*\d+(?:[.,]\d+)?(?:\s*BPM)?(?:\s*(?:→|->|-|–|—|>)\s*\d+(?:[.,]\d+)?(?:\s*BPM)?)*\s*(?:→|->|-|–|—|>)\s*\d+(?:[.,]\d+)?\s*BPM\s*[)\]]?/i;
+// Tempo-Angaben im Titel, wie sie in DJ-Edits vorkommen: "(128 - 80 BPM)", "100-128 Transition",
+// "(DJ Rukus 100 128 Transition)", "(BPM128 - 97)", "126 To 70 BPM", "(100 → 128 BPM)" (eigenes
+// Format), dazu Einzelangaben MIT Einheit ("(150BPM)", "128 BPM-DJ ..."). Werte nur zwischen
+// TEMPO_TITLE_MIN und TEMPO_TITLE_MAX und ohne Ziffer/Buchstabe/Punkt davor -- sonst trafen
+// Daten ("19-07-2024"), Jahreszahlen und Versionen ("PARTYUP-1.0"). An allen Titeln einer echten
+// Bibliothek mit "BPM"/"Transition"/Zahlenpaar geprueft (119 Stueck).
+const TEMPO_TITLE_MIN = 50, TEMPO_TITLE_MAX = 220;
+const _TT_NUM = String.raw`(?:bpm\s*)?\d{2,3}(?:[.,]\d+)?(?!\d)(?:\s*bpms?(?![a-z]))?`;
+const _TT_SEP = String.raw`(?:\s*(?:->|→|-|–|—|>|\bto\b)\s*|\s+)`;
+const TITLE_TEMPO_SEQ_RE = new RegExp(String.raw`(?<![\w.,#])${_TT_NUM}(?:${_TT_SEP}${_TT_NUM})+`, "gi");
+const TITLE_TEMPO_ONE_RE = /(?<![\w.,#])(?:bpm\s*\d{2,3}(?:[.,]\d+)?|\d{2,3}(?:[.,]\d+)?\s*bpms?)(?![a-z\d])/gi;
+function titleTempoValues(text) {
+  const vals = (text.match(/\d+(?:[.,]\d+)?/g) || []).map(v => parseFloat(v.replace(",", ".")));
+  return vals.every(v => v >= TEMPO_TITLE_MIN && v <= TEMPO_TITLE_MAX) ? vals : null;
+}
+// Titel ohne Tempo-Angaben -> {text, seqs}; seqs = gefundene Folgen (je mind. zwei Tempi).
+// Gefundenes wird erst markiert und danach samt Klammer bzw. Trennzeichen daneben entfernt:
+// "(128-70BPM + Original-W&W)" -> "(Original-W&W)", "Turn Down - 128-100 Transition" ->
+// "Turn Down - Transition", eine Klammer nur mit Tempo verschwindet ganz.
+function stripTitleTempo(title) {
+  const seqs = [], M = "\u0000", S = "[-–—+,:/]";
+  let s = String(title || "").replace(TITLE_TEMPO_SEQ_RE, m => {
+    const vals = titleTempoValues(m);
+    if (!vals || vals.every(v => v === vals[0])) return m;
+    seqs.push(vals);
+    return M;
+  }).replace(TITLE_TEMPO_ONE_RE, m => titleTempoValues(m) ? M : m)
+    // Das Wort "Transition" (samt Tippfehlern und "Trans") faellt mit weg, Nutzervorgabe: das
+    // einheitliche "(100 → 128 BPM)" sagt dasselbe.
+    .replace(new RegExp(TRANSITION_WORD_RE.source, "gi"), M);
+  if (!s.includes(M)) return {text: s, seqs};
+  const re = (src, flags = "g") => new RegExp(src, flags);
+  s = s
+    .replace(re(String.raw`${M}(?:\s*${M})+`), M)                                    // Nachbarn zusammenfassen
+    .replace(re(String.raw`\s*${S}\s*${M}\s*(?=[(\[]|$)`), " " + M)                  // "X - Transition (Edit)"
+    .replace(re(String.raw`[(\[]\s*(?:${S}\s*)*${M}(?:\s*${S})*\s*[)\]]`), "")      // Klammer nur mit Tempo
+    .replace(re(String.raw`\s*[(\[]\s*(?:${S}\s*)*${M}\s*$`, ""), "")               // offene Klammer am Ende
+    .replace(re(String.raw`([(\[])\s*${M}\s*(?:${S}\s*)*`), "$1")                    // Anfang einer Klammer
+    .replace(re(String.raw`(?:\s*${S})*\s*${M}\s*([)\]])`), "$1")                    // Ende einer Klammer
+    .replace(re(String.raw`(?:\s*${S})*\s*${M}\s*$`, ""), "")                        // Ende des Titels
+    .replace(re(String.raw`\s*(${S})?\s*${M}\s*(${S})?\s*`), (m, a, b) => /[-–—]/.test((a || "") + (b || "")) ? " - " : " ")
+    .replace(/([(\[])\s+/g, "$1").replace(/\s+([)\]])/g, "$1")
+    .replace(/\s{2,}/g, " ")
+    .replace(/^\s*[-–—]\s*|\s*[-–—]\s*$/g, "")
+    .trim();
+  return {text: s, seqs};
+}
+const tempoLabel = seq => `${seq.map(v => Math.round(v)).join(" → ")} BPM`;
+const titleWithTempoFor = (title, seq) => `${stripTitleTempo(title).text} (${tempoLabel(seq)})`;
 function tempoSequence(r) {
   const seq = r.gridSeq || (r.gridTempo && r.gridTempo[1] - r.gridTempo[0] >= TEMPO_ISSUE_MIN_BPM ? r.gridTempo : null);
   return seq && seq.length >= 2 && seq.length <= TEMPO_ISSUE_MAX_CHANGES ? seq : null;
 }
+// Auffaellig, solange der Titel nicht genau so lautet, wie der Autofix ihn schreiben wuerde:
+// fehlt die Folge, passt sie nicht zum Grid oder steht sie in anderer Schreibweise da
+// ("128-112 Transition" statt "(128 → 112 BPM)", Nutzervorgabe: einheitlich). Ein Titel im
+// eigenen Format ist dadurch stabil -- titleWithTempo() liefert fuer ihn denselben Text.
 function tempoIssueOf(r) {
   const seq = tempoSequence(r);
   if (!seq) return null;
-  const m = TITLE_TEMPO_RE.exec(r.t || "");
-  const inTitle = m ? m[0].match(/\d+(?:[.,]\d+)?/g).map(v => parseFloat(v.replace(",", "."))) : [];
-  if (inTitle.length === seq.length && inTitle.every((v, i) => Math.abs(v - seq[i]) <= 1)) return null;
-  return {code: "tempo_change_title", field: "title"};
+  return (r.t || "") === titleWithTempo(r) ? null : {code: "tempo_change_title", field: "title"};
 }
-const titleWithTempo = r => {
-  const base = (r.t || baseName(r.p).replace(/\.[^.]+$/, "")).replace(TITLE_TEMPO_RE, "").trim();
-  return `${base} (${tempoSequence(r).map(v => Math.round(v)).join(" → ")} BPM)`;
-};
+const titleStem = r => baseName(r.p).replace(/\.[^.]+$/, "");
+const titleWithTempo = r => titleWithTempoFor(r.t || titleStem(r), tempoSequence(r));
+// Tempowechsel aus Titel bzw. Dateiname: das Wort "Transition" (auch "Trans" und die
+// Tippfehler "Transistion"/"Transititon" aus echten Dateinamen) und die erste Tempo-Folge
+// wie "100-128" (stripTitleTempo()). Haengt nur an Titel und Pfad und wird je Zeile
+// gemerkt -- Suche und Playlist-Generator fragen es fuer jede Zeile ab.
+const TRANSITION_WORD_RE = /\btrans(?:ition|istion|ititon|itions)?\b/i;
+const TEMPO_HINT_RE = /trans|\d{2,3}\s*(?:bpms?\s*)?(?:-|–|—|>|→|to\b|\s)\s*(?:bpm\s*)?\d{2,3}/i;
+const _titleTempo = new WeakMap();
+function titleTempoInfo(r) {
+  const key = (r.t || "") + "\u0001" + (r.p || "");
+  const hit = _titleTempo.get(r);
+  if (hit && hit.key === key) return hit;
+  let seq = null, word = false;
+  for (const x of [r.t || "", titleStem(r)]) {
+    if (!TEMPO_HINT_RE.test(x)) continue;
+    if (TRANSITION_WORD_RE.test(x)) word = true;
+    if (!seq) seq = stripTitleTempo(x).seqs[0] || null;
+  }
+  const info = {key, seq, word};
+  _titleTempo.set(r, info);
+  return info;
+}
+// Suchschalter /Tempowechsel: Tempowechsel im Beatgrid (sobald der Track einmal im
+// DJ-Editor offen war) oder Hinweis in Titel bzw. Dateiname.
+function hasTempoChange(r) {
+  if (tempoSequence(r)) return true;
+  const {seq, word} = titleTempoInfo(r);
+  return !!seq || word;
+}
+// Tempo am Anfang und am Ende eines Tracks -- fuer Uebergaenge im Playlist-Generator: ein
+// Transition-Track 100 -> 128 schliesst an einen 100er an und fuehrt zu einem 128er. Folge
+// aus dem Beatgrid vor der aus dem Titel; ohne beides gilt das BPM-Tag fuer beide Enden.
+function tempoEnds(r) {
+  const seq = tempoSequence(r) || titleTempoInfo(r).seq;
+  return seq ? {start: seq[0], end: seq[seq.length - 1]} : {start: r.bp, end: r.bp};
+}
 // Tonart-Schreibweise weicht von key_notation ab (gestrichelter Rahmen in der
 // Tonart-Spalte). Wie der Tempowechsel nicht aus der Datei-Pruefung
 // (taganomaly.py), sondern aus keyNeedsSync() -- dieselbe Regel wie das
 // Notenschluessel-Symbol, behoben ueber denselben Weg (/api/tags mit key).
 const keyIssueOf = r => keyNeedsSync(r) ? {code: "key_notation", field: "key"} : null;
+// Dasselbe Cover (r.ch, Hash der Bilddaten) bei mehreren VERSCHIEDENEN Alben: fast immer ein
+// falsch eingebettetes Bild. Mehrere Tracks desselben Albums mit gleichem Cover sind der
+// Normalfall und zaehlen nie. Album wie in Music.app (albumIdentityKey()): Album + Albumkuenstler
+// (ersatzweise Interpret), bei gesetzter Sampler-Markierung (r.cl) nur der Albumtitel; Tracks
+// ohne Album zaehlen je Datei als eigenes Album. Erst ab COVER_DUP_MIN_ALBUMS Alben
+// (Nutzervorgabe: 2, auch ein bewusst geteiltes Label-Logo wird dadurch gemeldet). Gemeldet
+// werden nur die Alben, die NICHT die Mehrheit stellen (das Album mit den meisten Tracks je
+// Cover gilt als das richtige); bei Gleichstand alle. Nicht aus der Datei-Pruefung
+// (taganomaly.py), sondern ueber alle Zeilen gerechnet -- darum ein Cache, den
+// invalidateFieldValueCache() leert (jede Aenderung an Album/Cover ruft ihn).
+const COVER_DUP_MIN_ALBUMS = 2;
+let coverDupCache = null;
+// Zaehlzusatz am Albumende ("Disc 2", "CD1", "(Disc 2 of 3)", "(3)"): gehoert zum selben Album bzw.
+// zur selben Reihe und teilt sich meist das Cover, darum fuer die Cover-Pruefungen abgeschnitten.
+const ALBUM_COUNT_SUFFIX = /[\s\-\u2013:,]*(?:[(\[]\s*(?:(?:disc|disk|cd)\s*\d+(?:\s*(?:of|von|\/)\s*\d+)?|\d{1,2})\s*[)\]]|(?:disc|disk|cd)\s*\d+)\s*$/i;
+function albumIdentityKey(r) {
+  const full = (r.al || "").trim().toLowerCase();
+  const alb = full.replace(ALBUM_COUNT_SUFFIX, "").trim() || full;
+  if (!alb) return `\u0001${r.p}`;
+  if (r.cl) return `\u0002${alb}`;
+  return `${(r.aa || r.a || "").trim().toLowerCase()}\u0000${alb}`;
+}
+// Map: Cover-Hash -> Set der Album-Schluessel, die als abweichend gemeldet werden.
+function coverDupHashes() {
+  if (coverDupCache) return coverDupCache;
+  const perHash = new Map();
+  for (const r of DATA) {
+    if (!r.ch || r.removed || r.gone || r.ig) continue;
+    let albums = perHash.get(r.ch);
+    if (!albums) perHash.set(r.ch, albums = new Map());
+    const key = albumIdentityKey(r);
+    albums.set(key, (albums.get(key) || 0) + 1);
+  }
+  coverDupCache = new Map();
+  for (const [h, albums] of perHash) {
+    if (albums.size < COVER_DUP_MIN_ALBUMS) continue;
+    const top = Math.max(...albums.values());
+    const lead = [...albums].filter(([, n]) => n === top);
+    coverDupCache.set(h, new Set(lead.length === 1
+      ? [...albums.keys()].filter(k => k !== lead[0][0]) : albums.keys()));
+  }
+  return coverDupCache;
+}
+const coverDupIssueOf = r => {
+  if (!r.ch) return null;
+  const flagged = coverDupHashes().get(r.ch);
+  return flagged && flagged.has(albumIdentityKey(r)) ? {code: "duplicate_cover", field: "cover"} : null;
+};
+// Cover innerhalb EINES Albums: jeder Track soll dasselbe Bild tragen. Gruppiert wie
+// coverDupHashes() (albumIdentityKey(), mindestens zwei Tracks mit Album-Tag, ausgeblendete und
+// fehlende Dateien zaehlen nicht; Tracks mit Cover, aber ohne lesbaren Hash, werden nicht
+// bewertet). Ein Bild, das die meisten Tracks tragen, gilt als das richtige: abweichende und
+// fehlende Cover sind Auffaelligkeiten mit Quick Fix (issue.source = Pfad eines Tracks mit dem
+// richtigen Bild, kopiert ueber /api/cover-copy). Bei Gleichstand (z. B. 1:1) gibt es keine
+// Mehrheit: alle Tracks des Albums werden gemeldet, ohne source, also ohne Quick Fix -- das
+// Bild waehlt man dann im Tags-Dialog. Album ganz ohne Cover wird hier nicht gemeldet (das
+// ist missing_cover). Ergebnis: Map Zeile -> Auffaelligkeit, Cache wie coverDupCache.
+let albumCoverCache = null;
+// Zwei getrennte Auffaelligkeiten: das Cover fehlt (Track ohne Bild in einem Album, dessen andere
+// Tracks eins haben) bzw. es weicht ab (anderes Bild als die Mehrheit).
+const ALBUM_COVER_CODES = new Set(["album_cover_mismatch", "album_cover_missing"]);
+const albumCoverCode = r => r.cv ? "album_cover_mismatch" : "album_cover_missing";
+function albumCoverMap() {
+  if (albumCoverCache) return albumCoverCache;
+  const albums = new Map();
+  for (const r of DATA) {
+    if (r.removed || r.gone || r.ig || !(r.al || "").trim() || (r.cv && !r.ch)) continue;
+    const key = albumIdentityKey(r);
+    let a = albums.get(key);
+    if (!a) albums.set(key, a = []);
+    a.push(r);
+  }
+  albumCoverCache = new Map();
+  for (const rows of albums.values()) {
+    if (rows.length < 2) continue;
+    const counts = new Map();
+    for (const r of rows) if (r.cv) counts.set(r.ch, (counts.get(r.ch) || 0) + 1);
+    if (!counts.size || (counts.size === 1 && rows.every(r => r.cv))) continue;
+    const top = Math.max(...counts.values());
+    const lead = [...counts].filter(([, n]) => n === top);
+    if (lead.length === 1) {
+      const hash = lead[0][0], source = rows.find(r => r.cv && r.ch === hash).p;
+      for (const r of rows) {
+        if (!r.cv || r.ch !== hash) albumCoverCache.set(r, {code: albumCoverCode(r), field: "cover", source});
+      }
+    } else {
+      for (const r of rows) albumCoverCache.set(r, {code: albumCoverCode(r), field: "cover", source: null});
+    }
+  }
+  return albumCoverCache;
+}
+const albumCoverIssueOf = r => albumCoverMap().get(r) || null;
+// Quick-Fix-faehig: feste Codes, oder das Album-Cover mit eindeutiger Mehrheit (issue.source).
+const isAutoFixIssue = i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code) || (ALBUM_COVER_CODES.has(i.code) && !!i.source);
 const rowIssues = r => {
-  const extra = [tempoIssueOf(r), keyIssueOf(r)].filter(Boolean), own = Array.isArray(r.ti) ? r.ti : [];
+  const extra = [tempoIssueOf(r), keyIssueOf(r), coverDupIssueOf(r), albumCoverIssueOf(r)].filter(Boolean), own = Array.isArray(r.ti) ? r.ti : [];
   return extra.length ? [...own, ...extra] : own;
 };
 const hasAnyTagIssues = r => rowIssues(r).length > 0;
-const hasAutoFixableTagIssues = r => rowIssues(r).some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code));
+const hasAutoFixableTagIssues = r => rowIssues(r).some(isAutoFixIssue);
 // Feldnamen von /api/fix-tag-issues (wie tags.write_tags()) auf die kompakten
 // Zeilen-Kurzschluessel -- nur fuer den Drop-Zweig ohne DB-Zeile gebraucht,
 // eine DB-Zeile kommt bereits kompakt vom Server (report.rows_to_payload()).
@@ -1642,6 +1951,21 @@ const VERDICT_ICONS = {
   FAKE: SVG(LUCIDE_ICONS["badge-x"]),
   UNKLAR: SVG(LUCIDE_ICONS["badge-question-mark"]),
 };
+// Symbol fuer "manuell korrigiert" -- dasselbe wie die feste Liste
+// "Manuell korrigiert" im Seitenbaum (db._SYSTEM_PLAYLISTS, sym:badge-info).
+const CORRECTED_ICON = SVG(LUCIDE_ICONS["badge-info"]);
+
+// Status-Badge einer Zeile. Manuell korrigiert zaehlt fachlich als "Korrekt"
+// (verdictOf()), steht aber sichtbar als eigenes, blaues "Korrigiert" mit
+// Tooltip da -- frueher ein Zusatz-Badge in der Spalte Datei (Nutzervorgabe).
+function statusBadgeHtml(r) {
+  if (r.mc) {
+    return `<span class="badge CORR" title="${esc(t("chip.manual_corrected"))}">${CORRECTED_ICON}${
+      esc(t("badge.corrected"))}</span>`;
+  }
+  const v = verdictOf(r);
+  return `<span class="badge ${v}">${VERDICT_ICONS[v] || ""}${labels[v] || ""}</span>`;
+}
 
 // Ausgeblendete zaehlen nirgends mit — das ist der Sinn der Funktion.
 // Ersatzzeilen fremder Playlisten (ext:1, siehe EXT_SOURCES weiter oben)
@@ -1914,7 +2238,7 @@ function treeRoots() {
   // statt ueber PLAYLISTS/_SYSTEM_PLAYLISTS.
   const dupView = VIEWS.find(v => v.id === "duplicates");
   const dupNode = {id: "view:duplicates", view: "duplicates", label: dupView.label,
-                    icon: TREE_ICONS.duplicates, count: live().filter(dupView.test).length,
+                    icon: TREE_ICONS.duplicates, count: live().filter(r => dupBaseRow(r) && !dupGroupDismissed(r.dg)).length,
                     kids: [], top: true};
   // "Auffaelligkeiten" haengt wie "Duplikate" als reiner VIEWS-Eintrag ohne
   // eigene DB-Zeile im "Pruefliste"-Ordner (sys_verdicts).
@@ -2637,6 +2961,11 @@ function smartFields() {
     {key: "ig", type: SMART_TYPES.BOOL, label: t("views.ignored")},
     {key: "im", type: SMART_TYPES.BOOL, label: t("smart.field_in_music")},
     {key: "rb", type: SMART_TYPES.BOOL, label: t("smart.field_in_rekordbox")},
+    // Dieselben Schalter wie in der Suche (/Cover, /HotCues, /Tempowechsel). "get" statt
+    // Zeilenfeld, wo der Wert erst berechnet wird (hasTempoChange(): Grid oder Titel).
+    {key: "cv", type: SMART_TYPES.BOOL, label: t("col.cover")},
+    {key: "hc", type: SMART_TYPES.BOOL, label: t("col.hot_cues")},
+    {key: "tw", type: SMART_TYPES.BOOL, label: t("flag.tempo_change"), get: hasTempoChange},
     // Kein Feld der Zeile -- evalSmartRule() prueft die Mitgliedschaft.
     {key: "pl", type: SMART_TYPES.PLAYLIST, label: t("smart.field_playlist"),
      options: smartPlaylistOptions},
@@ -2724,7 +3053,7 @@ function evalSmartRule(r, rule) {
   if (!field) return true;                       // unbekanntes Feld nicht filtern
   const raw = r[rule.field];
   if (field.type === SMART_TYPES.BOOL) {
-    return (!!raw) === (String(rule.value) === "1");
+    return (!!(field.get ? field.get(r) : raw)) === (String(rule.value) === "1");
   }
   if (field.type === SMART_TYPES.TAGS) {
     const hit = rowTags(r).some(tg => tg.id === rule.value);
@@ -3203,6 +3532,9 @@ function renderPlaylistHeader() {
   const st = undoStackFor(node.id);
   const undoBtn = document.getElementById("plUndo");
   const redoBtn = document.getElementById("plRedo");
+  // Nur normale Playlisten haben einen Verlauf -- anderswo (feste Ansichten,
+  // Smart-Listen, Music/Rekordbox) waeren die Knoepfe immer gesperrt.
+  undoBtn.hidden = redoBtn.hidden = !editable;
   undoBtn.disabled = !editable || !st.undo.length || !apiMode;
   redoBtn.disabled = !editable || !st.redo.length || !apiMode;
   // Der naechste Schritt steht im Tooltip -- ohne das ist nicht erkennbar,
@@ -3234,26 +3566,52 @@ function openPlaylistPicker(paths) {
   const ov = document.getElementById("pickOverlay");
   const host = document.getElementById("pickList");
   const close = () => { ov.style.display = "none"; document.onkeydown = null; };
-  const lists = PLAYLISTS.filter(n => n.kind === "playlist");
+  // Ganzer Listenbaum mit Ordnern und Unterordnern (wie der Seitenbaum), damit sich
+  // die Zielliste leichter finden laesst. Waehlbar sind nur normale Playlisten;
+  // Ordner ohne eine solche (z. B. die Pruefliste) bleiben weg. Alle Ordner starten
+  // offen, ein Klick auf den Ordner klappt ihn zu.
+  const hasPlaylist = n => n.node.kind === "playlist" || n.kids.some(hasPlaylist);
+  const closed = new Set();
   document.getElementById("pickNote").textContent = t("tree.pick_note", {
     count: paths.length,
     track_word: paths.length === 1 ? t("tree.track_singular") : t("tree.track_plural"),
   });
-  host.innerHTML = lists.length
-    ? lists.map(n => {
-        const path = playlistPathLabel(n);
-        return `<button type="button" class="pickitem" data-pick="${esc(n.id)}">` +
-          playlistBadgeHtml(n) +
-          `<span>${esc(n.name)}</span>` +
-          (path ? `<span class="pickpath">${esc(path)}</span>` : "") +
-          `<span class="pickcount">${playlistCount(n.id).toLocaleString("de-DE")}</span>` +
-          `</button>`;
-      }).join("")
-    : `<div class="pickempty">${esc(t("tree.pick_empty"))}</div>`;
-  host.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => {
-    close();
-    dropTracksOnPlaylist(b.dataset.pick, paths);
-  });
+  const renderPick = () => {
+    const out = [];
+    const walk = (nodes, depth) => {
+      for (const n of nodes) {
+        if (!hasPlaylist(n)) continue;
+        const pad = `style="padding-left:${10 + depth * 18}px"`;
+        if (n.node.kind === "folder") {
+          const open = !closed.has(n.node.id);
+          out.push(`<button type="button" class="pickitem pickfolder" data-folder="${esc(n.node.id)}" ${pad}>` +
+            `<span class="twist${open ? " open" : ""}">&#9654;</span>` +
+            `<span class="ticon">${SVG(LUCIDE_ICONS[(open ? TREE_FOLDER_ICONS.open : TREE_FOLDER_ICONS.closed).slice(4)] || "")}</span>` +
+            `<span>${esc(n.node.name)}</span></button>`);
+          if (open) walk(n.kids, depth + 1);
+        } else if (n.node.kind === "playlist") {
+          out.push(`<button type="button" class="pickitem" data-pick="${esc(n.node.id)}" ${pad}>` +
+            playlistBadgeHtml(n.node) +
+            `<span>${esc(n.node.name)}</span>` +
+            `<span class="pickcount">${playlistCount(n.node.id).toLocaleString("de-DE")}</span></button>`);
+        }
+      }
+    };
+    walk(playlistChildren(null), 0);
+    host.innerHTML = out.length ? out.join("") : `<div class="pickempty">${esc(t("tree.pick_empty"))}</div>`;
+    host.querySelectorAll("[data-pick]").forEach(b => b.onclick = () => {
+      close();
+      dropTracksOnPlaylist(b.dataset.pick, paths);
+    });
+    host.querySelectorAll("[data-folder]").forEach(b => b.onclick = () => {
+      const id = b.dataset.folder;
+      if (closed.has(id)) closed.delete(id); else closed.add(id);
+      const top = host.scrollTop;
+      renderPick();
+      host.scrollTop = top;
+    });
+  };
+  renderPick();
   document.getElementById("pickNo").onclick = close;
   document.getElementById("pickNew").onclick = async () => {
     close();
@@ -3434,6 +3792,7 @@ function leaveRecentSort() {
 }
 
 function selectView(id) {
+  lastSelPos = null;
   // Eine fremde Liste wird beim Anklicken geholt (Fokus-Ereignis) -- ihr
   // Inhalt liegt in Music.app bzw. Rekordbox, nicht bei uns.
   if (extSourceOfView(id)) { openExtPlaylist(id); return; }
@@ -3638,7 +3997,7 @@ function askPlaylistProps(title, current, withStyle = true, columnsView = undefi
     colsField.style.display = withColumns ? "" : "none";
     if (withColumns) {
       colsSelect.innerHTML = columnViewOptionsHTML(
-        columnsView ? (COLUMN_ASSIGN[columnsView] || "") : "");
+        columnsView ? (COLUMN_ASSIGN[columnsView] || "") : "", columnsView || null);
     }
 
     merkField.style.display = withMerkliste ? "" : "none";
@@ -3863,14 +4222,32 @@ function nodeViewId(node) {
   return prefix ? `${prefix}:${node.id}` : null;
 }
 
-async function setNodeColumnView(node) {
-  const viewId = nodeViewId(node);
-  if (!viewId) return;
-  const props = await askPlaylistProps(t("cols.view_dialog_for", {name: playlistLabel(node)}),
-                                       node, false, viewId, false);
+// Zuordnungs-Schluessel eines TrackTab-Knotens: Listen wie ihre View-Kennung,
+// Ordner "fd:<id>" (haben keine View, vererben aber, siehe columnViewParentKey()).
+function columnAssignKey(node) {
+  return node.kind === "folder" ? `fd:${node.id}` : nodeViewId(node);
+}
+
+// Spaltenansicht fuer einen beliebigen Knoten waehlen (Liste, Ordner, Wurzel,
+// Music-/Rekordbox-Knoten). Eine Ordner- oder Wurzel-Zuordnung trifft viele
+// Listen -- ob die offene darunter ist, entscheidet syncColumnsForView() ueber
+// den geaenderten Spalten-Topf.
+async function editColumnAssign(key, label, current = null) {
+  if (!key) return;
+  const props = await askPlaylistProps(t("cols.view_dialog_for", {name: label}),
+                                       current, false, key, false);
   if (!props) return;
-  setColumnAssign(viewId, props.columnView);
-  if (state.view === viewId) repaintColumns();
+  setColumnAssign(key, props.columnView);
+  if (syncColumnsForView()) render(); else renderColsMenu();
+}
+
+function setNodeColumnView(node) {
+  return editColumnAssign(columnAssignKey(node), playlistLabel(node), node);
+}
+
+// Menuepunkt "Spaltenansicht …" -- je Knotenart derselbe Eintrag.
+function columnViewMenuItem(key, label) {
+  return {icon: ICONS.columnView, label: t("cols.view_menu"), action: () => editColumnAssign(key, label)};
 }
 
 // Menuepunkt "Duplizieren" -- fuer eigene wie feste Listen gleich.
@@ -4013,12 +4390,12 @@ function nodeMenuItems(node) {
     if (spielbar) listeSelbst.push(duplicateNodeItem(node));
   }
 
-  // Eigener Menuepunkt fuer JEDE spielbare Liste -- normale wie feste
-  // (setNodeColumnView() baut sich die viewId selbst ueber nodeViewId() und
-  // ist damit fuer beide gleichermassen generisch). Bewusst getrennt vom
-  // Bearbeiten-Dialog, damit es pro Einstellung nur eine Stelle gibt.
-  // Ein Generator zeigt keine Tabelle (generator.js) -- keine Spaltenansicht.
-  if (spielbar && node.kind !== "generator") {
+  // Eigener Menuepunkt fuer JEDE spielbare Liste und jeden Ordner -- normale
+  // wie feste (setNodeColumnView() baut sich den Schluessel selbst ueber
+  // columnAssignKey()). Ein Ordner vererbt seine Wahl an alles darunter.
+  // Bewusst getrennt vom Bearbeiten-Dialog, damit es pro Einstellung nur eine
+  // Stelle gibt. Ein Generator zeigt keine Tabelle (generator.js).
+  if ((spielbar && node.kind !== "generator") || node.kind === "folder") {
     ansicht.push({
       icon: ICONS.columnView, label: t("cols.view_menu"),
       action: () => setNodeColumnView(node),
@@ -4112,6 +4489,7 @@ function tracktabRootMenuItems() {
       {icon: SVG(LUCIDE_ICONS["file-up"]), label: t("tree.import_m3u"),
        action: () => document.getElementById("m3uImportFile").click()},
     ]},
+    {head: t("cols.group_view"), items: [columnViewMenuItem("root:tracktab", t("tree.root_tracktab"))]},
   ]);
 }
 
@@ -4123,12 +4501,8 @@ function openNodeMenu(node, el) {
 // Baum-Eintraege ohne eigene Playlist-Zeile (Alle/Ausgeblendet/Datei
 // fehlt/Duplikate/Merklisten) -- die tragen nur ein VIEWS-Element, keinen
 // PLAYLISTS-Knoten, deshalb kein nodeMenuItems()/askPlaylistProps(node, ...).
-async function setViewColumnView(view) {
-  const props = await askPlaylistProps(
-    t("cols.view_dialog_for", {name: view.label}), null, false, view.id, false);
-  if (!props) return;
-  setColumnAssign(view.id, props.columnView);
-  if (state.view === view.id) repaintColumns();
+function setViewColumnView(view) {
+  return editColumnAssign(view.id, view.label);
 }
 // Zeilen einer festen Liste (Ausgeblendet/Duplikate/Merkliste) in derselben
 // Filterlogik wie filtered() fuer den aktiven View, aber unabhaengig davon,
@@ -4197,6 +4571,9 @@ function extMenuItems(source) {
     ]},
     {head: t("tree.group_source"), items: [
       {icon: ICONS.reanalyse, label: t("tree.reload"), action: () => reloadExtTree(source)},
+    ]},
+    {head: t("cols.group_view"), items: [
+      columnViewMenuItem(EXT_SOURCES[source].root, t(source === "music" ? "tree.root_music" : "tree.root_rekordbox")),
     ]},
   ]);
 }
@@ -4522,6 +4899,7 @@ function extNodeMenuItems(source, node) {
     ]},
     {head: t("bulk.group_edit"), items: [
       {icon: ICONS.edit, label: t("tree.rename"), action: () => renameExtNode(source, node)},
+      columnViewMenuItem(`${EXT_SOURCES[source].prefix}${node.id}`, node.name),
     ]},
     {head: t("bulk.group_delete"), items: [
       {icon: ICONS.trash, cls: "del", label: t("tree.delete"), action: () => deleteExtNode(source, node)},
@@ -5121,7 +5499,7 @@ async function syncMarks() {
     const dupDismissed = new Set(ddm.dup_dismissed || []);
     const rekordbox = new Set(rbx.paths || []);
     const musicAdded = mad.added || {};
-    const rbDiff = djb.rb_diff || {};
+    const rbDiff = djb.rb_diff || {}, rbTagFields = djb.rb_tag_fields || {};
     // Mindestens ein Hot Cue nach der Regel der DJ-Ansicht (server._hot_cue_paths()), fuer /HotCues.
     const hotCues = new Set(djb.hot_cues || []);
     RB_COMPARE = djb.rb_compare !== false;
@@ -5136,6 +5514,7 @@ async function syncMarks() {
       r.gridTempo = djb.tempo[r.p] || null;
       r.gridSeq = (djb.tempo_seq && djb.tempo_seq[r.p]) || null;
       r.rbDiff = rbDiff[r.p] || null;
+      r.rbTagFields = rbTagFields[r.p] || null;
       r.hc = hotCues.has(r.p) ? 1 : 0;
     }
   } catch (err) {
@@ -5240,6 +5619,7 @@ async function initStorage() {
         applyTheme(s.values.theme);
         applyAccentColor(s.values.accent_color);
         applyDjSurface(s.values.dj_waveform_surface);
+        DJ_METRO_SOUND = s.values.dj_metronome_sound || "beep";
         setKeyNotation(s.values.key_notation);
         state.infiniteScroll = !!s.values.infinite_scroll;
         state.searchTolerance = typeof s.values.search_typo_tolerance === "number"
@@ -5288,6 +5668,7 @@ async function initStorage() {
         // hier die Wahrheit, die localStorage-Fassung aus loadFilters() war
         // nur die Ueberbrueckung bis hierher.
         if (Array.isArray(s.column_views)) adoptColumnViewsFromServer(s);
+        if (Array.isArray(s.library_roots)) LIBRARY_ROOTS = s.library_roots;
         // Eigene Energiekurven des Generators (generator.js). Ein schon
         // geoeffneter Generator braucht sie fuer seine Verlauf-Auswahl.
         if (Array.isArray(s.generator_curves)) {
@@ -5428,6 +5809,7 @@ let SEARCH_HELP_ENTRIES = [
   [t("search.help.music.token"), t("search.help.music.desc"), t("search.help.music.example")],
   [t("search.help.rekordbox.token"), t("search.help.rekordbox.desc"), t("search.help.rekordbox.example")],
   [t("search.help.hotcues.token"), t("search.help.hotcues.desc"), t("search.help.hotcues.example")],
+  [t("search.help.tempo_change.token"), t("search.help.tempo_change.desc"), t("search.help.tempo_change.example")],
   [t("search.help.exact.token"), t("search.help.exact.desc"), t("search.help.exact.example")],
 ];
 
@@ -5490,7 +5872,9 @@ const INSTANT_VALUE_FIELDS = new Set(["v", "mm"]);
 
 // onApply (optional): wohin der Text nach einem uebernommenen Vorschlag geht --
 // ohne Angabe in die Hauptsuche (state.q), der Generator gibt seinen Liederpool an.
-function attachSearchFilterAutocomplete(el, list, onApply) {
+// hoverCloseEl: faehrt die Maus darauf (z. B. die Tabelle), schliesst die Liste,
+// damit sie die obersten Treffer nicht verdeckt; weitertippen oeffnet sie wieder.
+function attachSearchFilterAutocomplete(el, list, onApply, hoverCloseEl = null) {
   let items = [], active = -1, tokStart = -1, tokEnd = -1, debounceTimer = 0;
 
   const close = () => {
@@ -5672,6 +6056,9 @@ function attachSearchFilterAutocomplete(el, list, onApply) {
   el.addEventListener("input", open);
   el.addEventListener("click", open);
   el.addEventListener("blur", () => setTimeout(close, 100));
+  if (hoverCloseEl) hoverCloseEl.addEventListener("pointerenter", () => {
+    if (list.style.display !== "none") close();
+  });
   el.addEventListener("keydown", ev => {
     if (list.style.display === "none") return;
     if (ev.key === "ArrowDown") { ev.preventDefault(); active = Math.min(active + 1, items.length - 1); highlight(); }
@@ -5680,7 +6067,8 @@ function attachSearchFilterAutocomplete(el, list, onApply) {
     else if (ev.key === "Escape") { close(); }
   });
 }
-attachSearchFilterAutocomplete(document.getElementById("q"), document.getElementById("searchAcList"));
+attachSearchFilterAutocomplete(document.getElementById("q"), document.getElementById("searchAcList"),
+  undefined, document.querySelector(".tablewrap"));
 searchInputEl().addEventListener("keydown", ev => {
   const el = ev.target;
   const atStart = el.selectionStart === 0 && el.selectionEnd === 0;
@@ -5827,15 +6215,43 @@ function syncSortHeaders() {
     const old = th.querySelector(".sortarrow");
     if (old) old.remove();
     if (th.dataset.k === "rb") th.removeAttribute("title");
+    // Eigener Sortier-Tooltip der Vorrunde wieder abraeumen (siehe unten).
+    if (th.dataset.sortTip) { th.removeAttribute("title"); delete th.dataset.sortTip; }
+    // Nur den Stufen-Titel von BPM entfernen, nicht einen eigenen Spaltentitel.
+    if (th.dataset.k === "bp" && th.dataset.bpStageTitle) { th.removeAttribute("title"); delete th.dataset.bpStageTitle; }
     if (th.dataset.k === state.sort) {
       const span = document.createElement("span");
       span.className = "sortarrow";
       if (state.sort === "rb") {
         // Die Stufe zeigt, was gerade zuerst kommt.
         span.textContent = "●";
-        span.style.color = ["", "var(--ok)", "var(--fake)", "var(--dim)"][state.rbStage - 1];
-        th.title = t(`col.rb_sort_${state.rbStage}`);
-      } else span.textContent = state.dir === 1 ? "▲" : "▼";
+        const stage = String(state.rbStage);
+        const sig = stage.startsWith("sig:") ? stage.slice(4) : null;
+        span.style.color = sig !== null ? "var(--fake)"
+          : ({in: "", same: "var(--ok)", diff: "var(--fake)", off: "var(--dim)"}[stage] || "");
+        th.title = sig !== null ? t("col.rb_sort_sig", {fields: rbSigLabel(sig)}) : t(`col.rb_sort_${stage}`);
+      } else if (state.sort === "ti" && state.tiStage) {
+        // Welche Auffaelligkeit gerade zuerst kommt und die wievielte das ist.
+        const stages = tiSortStages(), pos = Math.max(stages.indexOf(state.tiStage), 0) + 1;
+        span.textContent = `${pos}/${stages.length || 1}`;
+        th.title = t("sort.ti_tip", {issue: t("tagissue." + state.tiStage), pos, total: stages.length || 1});
+        th.dataset.sortTip = "1";
+      } else if (state.sort === "bp" && state.bpStage && state.layout === "dj") {
+        span.textContent = "●";
+        span.style.color = BP_SORT_COLORS[state.bpStage] || "";
+        th.title = t(`col.bp_sort_${state.bpStage}`);
+        th.dataset.bpStageTitle = "1";
+      } else {
+        span.textContent = state.dir === 1 ? "▲" : "▼";
+        // Tooltip: nach welcher Spalte und wie sortiert wird (bei Cover z. B. nach Bild, nicht
+        // nach "hat Cover"). Text je Spalte aus sort.how.<key>, sonst nur die Richtung.
+        const label = (th.firstChild && th.firstChild.nodeType === 3 ? th.firstChild.textContent : th.textContent).trim();
+        const dirText = t(state.dir === 1 ? "sort.asc" : "sort.desc");
+        const howKey = "sort.how." + state.sort;
+        const how = STRINGS[howKey] ? t(howKey) : "";
+        th.title = t("sort.tip", {name: label, how: how ? how + " · " + dirText : dirText});
+        th.dataset.sortTip = "1";
+      }
       th.appendChild(span);
     }
   });
@@ -5852,7 +6268,7 @@ function applyColumnLayout() {
     const k = th.dataset.k;
     const w = state.colWidths[k] || DEFAULT_COL_WIDTHS[k];
     th.style.width = w ? w + "px" : "";
-    th.style.display = state.hiddenCols.includes(k) ? "none" : "";
+    th.style.display = colHidden(k) ? "none" : "";
   });
   syncTableWidths();
   syncStickyHeadContent();
@@ -6025,17 +6441,44 @@ function initColumnResize(ths) {
 // settings.py::_MAX_COLUMN_VIEWS.
 const MAX_COLUMN_VIEWS = 20;
 
-// Die Auswahlliste "Spaltenansicht": erster Eintrag ist immer der Standard
-// (keine eigene Einstellung fuer diese Liste), danach die gespeicherten
-// Ansichten. Im Spalten-Menue heisst er nach der aktiven Ansicht ("Standard –
-// Player"), im Listen-Dialog allgemein -- dort gilt die Wahl fuer beide.
-function columnViewOptionsHTML(selectedId, forLayout) {
-  const standard = forLayout === "edit" || forLayout === "player"
-    ? t("cols.view_standard_layout", {layout: t("layout." + forLayout)})
-    : t("cols.view_standard");
-  return `<option value="">${esc(standard)}</option>` +
+// Lesbarer Name des Knotens hinter einem Zuordnungs-Schluessel (Ordner,
+// Wurzel, Liste) -- fuer "Uebernehmen von ...".
+function columnAssignSourceLabel(key) {
+  if (!key) return "";
+  if (key === "root:tracktab") return t("tree.root_tracktab");
+  if (key === "root:music") return t("tree.root_music");
+  if (key === "root:rekordbox") return t("tree.root_rekordbox");
+  const own = /^(pl|sm|gen|fd):(.+)$/.exec(key);
+  if (own) {
+    const n = PLAYLISTS.find(p => p.id === own[2]);
+    return n ? playlistLabel(n) : key;
+  }
+  const src = extSourceOfView(key);
+  if (src) {
+    const id = key.slice(EXT_SOURCES[src].prefix.length);
+    const n = ((EXT_TREES[src] || {}).nodes || []).find(x => String(x.id) === id);
+    // Ast noch nicht geladen (Music/Rekordbox laden erst beim Aufklappen) -- dann
+    // wenigstens die Quelle statt einer rohen ID.
+    return n ? n.name : t("cols.ext_unloaded", {source: t(src === "music" ? "tree.root_music" : "tree.root_rekordbox")});
+  }
+  const v = VIEWS.find(x => x.id === key);
+  return v ? v.label : key;
+}
+
+// Die Auswahlliste "Spaltenansicht" fuer den Knoten 'key': erster Eintrag =
+// keine eigene Wahl, also erben -- beschriftet mit dem, was dann gilt und von
+// wo es kommt. Ohne Zuordnung darueber gilt der Standard des Layouts; der
+// Listen-Dialog nennt beide, weil die Wahl in Bearbeiten und Player gilt.
+function columnViewOptionsHTML(selectedId, key, forLayout) {
+  const parent = resolveColumnView(columnViewParentKey(key));
+  const inherit = parent.from
+    ? t("cols.view_none_inherit", {view: columnViewLabel(parent.view), from: columnAssignSourceLabel(parent.from)})
+    : forLayout === "edit" || forLayout === "player"
+      ? t("cols.view_none_layout", {view: columnViewLabel(parent.view)})
+      : t("cols.view_none_standard");
+  return `<option value="">${esc(inherit)}</option>` +
     COLUMN_VIEWS.map(v => `<option value="${esc(v.id)}"` +
-      `${v.id === selectedId ? " selected" : ""}>${esc(v.name)}</option>`).join("");
+      `${v.id === selectedId ? " selected" : ""}>${esc(columnViewLabel(v))}</option>`).join("");
 }
 
 function renderColsMenu() {
@@ -6047,8 +6490,8 @@ function renderColsMenu() {
   const sortedCols = [...OPTIONAL_COLUMNS].sort((a, b) => a.label.localeCompare(b.label, "de"));
   menu.innerHTML = `<div class="colsviewrow">
     <label for="colsViewSel">${esc(t("cols.view_for", {list: currentView().label}))}</label>
-    <select id="colsViewSel">${columnViewOptionsHTML(eigene ? eigene.id : "", state.layout)}</select>
-    <span class="sethelp">${esc(t("cols.view_hint", {layout: t("layout." + state.layout)}))}</span>
+    <select id="colsViewSel">${columnViewOptionsHTML(eigene ? eigene.id : "", state.view, state.layout)}</select>
+    <span class="sethelp">${esc(t("cols.view_hint"))}</span>
   </div>
   <div class="colsbtnrow">
     <button class="act" id="colsViewSave"><span class="btnicon">${ICONS.save}</span> ${
@@ -6059,11 +6502,13 @@ function renderColsMenu() {
       esc(t("cols.reset_order"))}</button>
   </div>
   <div class="colsrow">
-    ${sortedCols.map(c => `
-      <label><input type="checkbox" data-colkey="${c.key}" ${state.hiddenCols.includes(c.key) ? "" : "checked"}>
+    ${sortedCols.map(c => requiredCols().includes(c.key)
+      ? `<label class="colreq" title="${esc(t("cols.required_title", {list: currentView().label}))}"><input type="checkbox" data-colkey="${c.key}" checked disabled>
+        ${esc(c.label)}<span class="colreqicon">${ICONS.lock}</span></label>`
+      : `<label><input type="checkbox" data-colkey="${c.key}" ${state.hiddenCols.includes(c.key) ? "" : "checked"}>
         ${esc(c.label)}</label>`).join("")}
   </div>`;
-  menu.querySelectorAll("[data-colkey]").forEach(cb => cb.onchange = () => {
+  menu.querySelectorAll("[data-colkey]:not(:disabled)").forEach(cb => cb.onchange = () => {
     const k = cb.dataset.colkey;
     state.hiddenCols = cb.checked
       ? state.hiddenCols.filter(x => x !== k)
@@ -6145,7 +6590,8 @@ function renderDropColsMenu() {
 function saveColumns() {
   saveFilters();
   if (state.layout === "dj") return;
-  if (activeColumnView()) postColumnViews(); else postStandardColumns();
+  const view = activeColumnView();
+  if (view) postColumnView(view); else postStandardColumns();
 }
 
 function postStandardColumns() {
@@ -6161,14 +6607,26 @@ function postStandardColumnsFor(layout) {
                           hidden: std.hidden, widths: std.widths})}).catch(() => {});
 }
 
-// Immer die ganze Liste -- Anlegen, Umbenennen, Loeschen und jede Aenderung
-// an einer aktiven Ansicht laufen ueber denselben Weg (siehe
-// server.py::_post_column_views).
-function postColumnViews() {
-  if (!apiMode) return Promise.resolve();
-  return fetch("/api/column-views", {method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({column_views: COLUMN_VIEWS})}).catch(() => {});
+// Nur EINE Ansicht schicken (Spalten-Menue, Ziehgriff, Einzelpruefung), nie die
+// ganze Liste: ein Fenster mit altem Stand holte sonst eine in den Einstellungen
+// geloeschte Ansicht zurueck. Der Server ersetzt nur Bekanntes, eine unbekannte Id
+// legt er nur mit 'create' an (settings.save_column_view()). Kennt er die Ansicht
+// nicht mehr, gleicht sich dieses Fenster an seinen Stand an -- die Listen, die
+// sie nutzten, fallen dann auf "Keine" und damit auf den Standard zurueck.
+async function postColumnView(view, create = false) {
+  if (!apiMode || !view) return;
+  try {
+    const res = await fetch("/api/column-views", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({view, create})});
+    const data = await res.json();
+    if (data.ok && !(data.column_views || []).some(v => v.id === view.id)) {
+      adoptColumnViewsFromServer(data);
+      repaintColumns();
+      renderDropColsMenu();
+      renderDrops();
+    }
+  } catch (_) { /* offline: localStorage hat den Stand */ }
 }
 
 // Eigener Speicherweg fuer state.dropColumns -- kein activeColumnView()/
@@ -6176,7 +6634,7 @@ function postColumnViews() {
 function saveDropColumns() {
   saveFilters();
   if (!apiMode) return;
-  if (columnViewById(COLUMN_VIEW_DROP)) { postColumnViews(); return; }
+  if (dropColumnStore() !== state.dropColumns) { postColumnView(dropColumnStore()); return; }
   fetch("/api/drop-columns", {method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({order: state.dropColumns.order,
@@ -6191,8 +6649,10 @@ const columnStoreKey = () => {
   // Zwei Schluessel, weil "#" nur in einer Playlist sichtbar ist (DJ_COLUMN_STORE.hidden)
   // -- sonst bliebe die Kopfzeile beim Wechsel Playlist <-> feste Liste stehen.
   if (state.layout === "dj") return djListOpen() ? "dj:list" : "dj";
+  // Pflichtspalten (requiredCols()) gehoeren dazu: dieselbe Spaltenansicht kann in
+  // einer Pruef-Liste Status zeigen und daneben nicht.
   const v = activeColumnView();
-  return v ? `cv:${v.id}` : `std:${state.layout}`;
+  return (v ? `cv:${v.id}` : `std:${state.layout}`) + (requiredCols().length ? "+req" : "");
 };
 let lastColumnStoreKey = null;
 
@@ -6252,11 +6712,11 @@ const newColumnViewId = () =>
 async function saveCurrentColumnsAsView() {
   const aktiv = activeColumnView();
   const props = await askPlaylistProps(t("cols.view_dialog_new"),
-                                       aktiv ? {name: aktiv.name} : null, false);
+                                       aktiv ? {name: columnViewLabel(aktiv)} : null, false);
   if (!props) return;
   const vorhanden = COLUMN_VIEWS.find(
-    v => v.name.toLowerCase() === props.name.toLowerCase());
-  if (!vorhanden && COLUMN_VIEWS.length >= MAX_COLUMN_VIEWS) {
+    v => columnViewLabel(v).toLowerCase() === props.name.toLowerCase());
+  if (!vorhanden && COLUMN_VIEWS.filter(v => !isFixedColumnView(v.id)).length >= MAX_COLUMN_VIEWS) {
     note(t("cols.view_limit", {max: MAX_COLUMN_VIEWS}), "soft");
     return;
   }
@@ -6271,7 +6731,9 @@ async function saveCurrentColumnsAsView() {
   // Erst die Ansicht selbst, dann die Zuordnung: der Server weist eine
   // Zuordnung auf eine ihm unbekannte Ansicht ab, und beide Anfragen laufen
   // in eigenen Threads -- ohne das Abwarten koennten sie sich ueberholen.
-  await postColumnViews();
+  // create: ausdrueckliches Speichern darf anlegen -- auch eine Ansicht, die ein
+  // anderes Fenster inzwischen geloescht hat.
+  await postColumnView(view, true);
   // Die Ansicht gleich der offenen Liste geben -- ein Speichern ohne
   // sichtbare Folge waere schwer zu deuten, und eine neu angelegte Ansicht,
   // die niemand verwendet, wuerde beim naechsten Spaltenklick still wieder
@@ -6285,20 +6747,15 @@ async function saveCurrentColumnsAsView() {
     saveFilters();
     renderColsMenu();
   }
-  note(t("cols.view_saved", {name: view.name}));
+  note(t("cols.view_saved", {name: columnViewLabel(view)}));
 }
 
 // Reorderbare Spalten-Kopfzellen — werden bei jeder Umsortierung komplett
 // neu gebaut und nach #colsAnchor eingefuegt (die Anker-Zelle selbst bleibt
-// unsichtbar liegen). Checkbox/Status/Datei/Öffnen bleiben statisch im HTML.
+// unsichtbar liegen). Checkbox/Füllzelle/Öffnen bleiben statisch im HTML.
 function renderHead() {
   document.querySelectorAll("table thead th[data-reorder]").forEach(th => th.remove());
   const anchor = document.getElementById("colsAnchor");
-  // CELL_RENDERERS statt OPTIONAL_COLUMNS-Mitgliedschaft als Filter -- "v"
-  // (Status) ist zwar seit Kurzem auch ein OPTIONAL_COLUMNS-Eintrag (fuer
-  // Auswahlmenue & Persistenz der Sichtbarkeit), hat aber bewusst keinen
-  // Cell-Renderer: seine Kopfzelle steht statisch im HTML (siehe oben), eine
-  // zweite, hier dynamisch eingefuegte wuerde die Spalte doppelt anzeigen.
   const html = state.colOrder
     .filter(k => CELL_RENDERERS[k])
     .map(k => {
@@ -6339,20 +6796,41 @@ function attachColumnDrag(ths) {
 }
 
 // 3-Klick-Zyklus je Spalte: aufsteigend -> absteigend -> zuruecksetzen
-// (state.sort = null, Liste faellt auf die Grundreihenfolge zurueck). Spalte Rekordbox: fuenf.
+// (state.sort = null, Liste faellt auf die Grundreihenfolge zurueck). Spalte Rekordbox:
+// Stufen aus rbSortStages(), danach zuruecksetzen.
 function bindHeaderSort() {
   document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
     const k = th.dataset.k;
     if (k === "rb") {
-      // Vier Stufen statt auf/ab: was zuerst kommt, siehe RB_SORT_RANK.
-      const stage = state.sort === "rb" ? state.rbStage + 1 : 1;
+      // Stufen statt auf/ab: was zuerst kommt, siehe RB_SORT_RANK/rbSortStages().
+      const stages = rbSortStages();
+      const next = state.sort === "rb" ? stages.indexOf(state.rbStage) + 1 : 0;
       state.dir = 1;
-      state.rbStage = stage > 4 ? 1 : stage;
-      state.sort = stage > 4 ? null : "rb";
+      state.rbStage = next >= stages.length ? "in" : stages[next];
+      state.sort = next >= stages.length ? null : "rb";
+    }
+    else if (k === "ti") {
+      // Stufen statt auf/ab: je Klick die naechste vorkommende Auffaelligkeit zuerst, danach zuruecksetzen.
+      const stages = tiSortStages();
+      const next = state.sort === "ti" ? stages.indexOf(state.tiStage) + 1 : 0;
+      state.dir = 1;
+      if (next >= stages.length) { state.sort = null; state.tiStage = null; }
+      else { state.sort = "ti"; state.tiStage = stages[next]; }
+    }
+    else if (k === "bp" && state.layout === "dj") {
+      // auf, ab, dann die Stufen aus BP_SORT_STAGES, dann zuruecksetzen.
+      const stages = ["asc", "desc", ...Object.keys(BP_SORT_STAGES)];
+      const cur = state.sort !== "bp" ? -1 : state.bpStage ? stages.indexOf(state.bpStage) : (state.dir === 1 ? 0 : 1);
+      const next = cur + 1;
+      if (next >= stages.length) { state.sort = null; state.dir = 1; state.bpStage = null; }
+      else { state.sort = "bp"; state.dir = next === 1 ? -1 : 1; state.bpStage = next >= 2 ? stages[next] : null; }
     }
     else if (state.sort !== k) { state.sort = k; state.dir = 1; }
     else if (state.dir === 1) { state.dir = -1; }
     else { state.sort = null; state.dir = 1; }
+    // Die BPM-Stufen gibt es nur in der DJ-Ansicht und nur, solange nach BPM sortiert wird.
+    if (state.sort !== "bp" || state.layout !== "dj") state.bpStage = null;
+    if (state.sort !== "ti") state.tiStage = null;
     // Spaltensortierung und Album-Gruppierung schliessen sich aus -- sonst
     // waere unklar, welche der beiden Reihenfolgen gerade gilt.
     if (state.groupAlbums) {
@@ -6455,6 +6933,7 @@ const FLAG_ALIASES = new Map([
   ["music", "im"],
   ["rekordbox", "rb"],
   ["hotcues", "hc"], ["hotcue", "hc"],
+  ["tempowechsel", "tw"], ["tempochange", "tw"],
 ]);
 // Zahlenfelder: ">", "<" und Bereiche ("120-128") ueber
 // parseOperatorRange(). Jahr und BPM stehen hier mit drin, obwohl sie aus
@@ -6508,6 +6987,7 @@ function refreshI18nCache() {
     [t("search.help.music.token"), t("search.help.music.desc"), t("search.help.music.example")],
     [t("search.help.rekordbox.token"), t("search.help.rekordbox.desc"), t("search.help.rekordbox.example")],
     [t("search.help.hotcues.token"), t("search.help.hotcues.desc"), t("search.help.hotcues.example")],
+    [t("search.help.tempo_change.token"), t("search.help.tempo_change.desc"), t("search.help.tempo_change.example")],
     [t("search.help.exact.token"), t("search.help.exact.desc"), t("search.help.exact.example")],
   ];
   SEARCH_FILTER_SUGGESTIONS = SEARCH_HELP_ENTRIES.flatMap(([p, desc]) =>
@@ -6522,10 +7002,10 @@ function refreshI18nCache() {
   // verlieren.
   const columnKeyToI18n = {po:"col.position", v:"col.status", co:"col.cutoff", kb:"field.declared", mk:"col.class", cf:"field.confidence",
     st:"col.steepness", lu:"col.loudness", tp:"col.clip", du:"field.duration", rb:"col.rekordbox",
-    im:"col.in_music", da:"field.added", cv:"col.cover", al:"field.album", tn:"col.track_no",
+    im:"col.in_music", da:"field.added", mt:"col.modified", cv:"col.cover", al:"field.album", tn:"col.track_no",
     aa:"field.album_artist", cp:"field.composer", ge:"field.genre", yr:"field.year", bp:"field.bpm", ky:"field.key",
     eg:"col.energy", mm:"col.mood",
-    cm:"field.comment", ta:"dj.col_track", a:"field.artist", t:"field.title", n:"field.file",
+    cm:"field.comment", ta:"col.title_artist_meta", a:"field.artist", t:"field.title", n:"col.title_artist_path",
     ti:"col.tag_issues"};
   for (const col of OPTIONAL_COLUMNS) col.label = t(columnKeyToI18n[col.key]);
   const viewIdToI18n = {ignored:"views.ignored", corrected:"views.corrected",
@@ -6828,14 +7308,47 @@ function fuzzyIncludes(haystack, needle, scope) {
   const tolerance = getSearchTolerance();
   if (!tolerance) return false;
   const needleWords = needle.split(/\s+/).filter(Boolean);
+  if (!scope) {
+    const hayWords = haystack.split(/\s+/).filter(Boolean);
+    return needleWords.every(nw => hayWords.some(hw => wordsSimilarEnough(nw, hw, tolerance)));
+  }
   // Der teure Fall: KEIN wortgetreuer Treffer. Genau der ist beim Tippen der
-  // Regelfall (die allermeisten Zeilen passen nicht), und genau dort lief
-  // bisher je Zeile ein split() ueber den ganzen Suchbereich plus je
-  // Wortpaar eine Levenshtein-Matrix.
-  const hayWords = scope
-    ? (scope.words || (scope.words = haystack.split(/\s+/).filter(Boolean)))
-    : haystack.split(/\s+/).filter(Boolean);
-  return needleWords.every(nw => hayWords.some(hw => wordsSimilarEnough(nw, hw, tolerance)));
+  // Regelfall (die allermeisten Zeilen passen nicht). Dieselbe Regel wie
+  // wordsSimilarEnough(), nur mit zwei Ausschluessen VOR der Levenshtein-
+  // Matrix, beide ohne Einfluss aufs Ergebnis: Laengenunterschied groesser
+  // als die erlaubte Distanz, und mehr als 2 * Distanz verschiedene Bits in
+  // der Zeichenmaske (jede einzelne Aenderung kippt hoechstens zwei, siehe
+  // charMask()). Wortliste und Masken der Zeile kommen aus scopeWords().
+  const hayWords = scopeWords(scope), hayMasks = scope.masks;
+  const slack = 1 - tolerance;
+  for (const nw of needleWords) {
+    const nl = nw.length, nm = charMask(nw);
+    let hit = false;
+    for (let i = 0; i < hayWords.length && !hit; i++) {
+      const hw = hayWords[i];
+      if (nw === hw) { hit = true; break; }
+      const hl = hw.length;
+      if (nl < 3 || hl < 3) continue;
+      const maxDist = Math.floor(slack * (nl > hl ? nl : hl));
+      if (maxDist <= 0 || (nl > hl ? nl - hl : hl - nl) > maxDist) continue;
+      if (popcount32(nm ^ hayMasks[i]) > 2 * maxDist) continue;
+      hit = levenshteinWithin(nw, hw, maxDist) <= maxDist;
+    }
+    if (!hit) return false;
+  }
+  return true;
+}
+// Wortliste einer Zeile fuer den Fuzzy-Zweig samt Zeichenmaske je Wort --
+// einmal gebildet und am Suchbereich behalten (verfaellt mit dropScopeCache()).
+function scopeWords(scope) {
+  if (!scope.words) {
+    const words = scope.text.split(/\s+/).filter(Boolean);
+    const masks = new Int32Array(words.length);
+    for (let i = 0; i < words.length; i++) masks[i] = charMask(words[i]);
+    scope.words = words;
+    scope.masks = masks;
+  }
+  return scope.words;
 }
 
 // Suchbereich einer Zeile: Interpret + Titel + Album + Pfad, kleingeschrieben und
@@ -6865,10 +7378,25 @@ const dropScopeCache = r => { r ? _scopeCache.delete(r) : _scopeCache.clear(); }
 // im Leerlauf nach dem ersten Zeichnen vorbereiten. requestIdleCallback
 // laesst dem Browser den Vortritt; wo es fehlt (Safari <17), genuegt ein
 // spaeter Timer, das Ergebnis ist dasselbe, nur ohne Leerlauf-Garantie.
+// Mit vorbereitet wird die Wortliste des Fuzzy-Zweigs (scopeWords()), in
+// Abschnitten: alles auf einmal waere im Leerlauf ein einzelner langer Block,
+// in den ein Klick hineinfallen kann.
 function warmScopeCache() {
-  const run = () => { for (const r of DATA) scopeEntry(r); };
-  if (typeof requestIdleCallback === "function") requestIdleCallback(run, {timeout: 2000});
-  else setTimeout(run, 500);
+  let at = 0;
+  const step = deadline => {
+    const until = performance.now() + 8;
+    while (at < DATA.length && performance.now() < until &&
+           (!deadline || deadline.timeRemaining() > 1 || deadline.didTimeout)) {
+      scopeWords(scopeEntry(DATA[at++]));
+    }
+    if (at < DATA.length) next();
+  };
+  const next = () => {
+    if (typeof requestIdleCallback === "function") requestIdleCallback(step, {timeout: 2000});
+    else setTimeout(step, 30);
+  };
+  if (typeof requestIdleCallback === "function") next();
+  else setTimeout(step, 500);
 }
 const defaultScope = r => scopeEntry(r).text;
 
@@ -6952,7 +7480,7 @@ function applyFilters(r, filters) {
               tg.id.slice(2).toLowerCase() === v.text)); break; }
       case "date": hit = f.values.some(v => matchesDateFilter(r[f.field], v.text, v.exact && !v.text)); break;
       case "verdict": hit = f.values.some(v => matchesVerdictFilter(r, v.text)); break;
-      case "flag": hit = !!r[f.field]; break;
+      case "flag": hit = f.field === "tw" ? hasTempoChange(r) : !!r[f.field]; break;
       // Nur von refreshDefaultFilters() erzeugt (Standard-Suchfilter-Zeile
       // ohne "/Parameter", reiner Freitext) -- der getippte Suchtext selbst
       // laeuft weiter ueber "free" in matchesSearch(), nicht ueber diesen Zweig.
@@ -6983,7 +7511,7 @@ function matchesParsedQuery(r, parsed) {
   return applyFilters(r, filters);
 }
 
-const FLAG_CHIP_KEYS = {ig: "views.ignored", cv: "col.cover", im: "col.in_music", rb: "col.rekordbox", hc: "col.hot_cues"};
+const FLAG_CHIP_KEYS = {ig: "views.ignored", cv: "col.cover", im: "col.in_music", rb: "col.rekordbox", hc: "col.hot_cues", tw: "flag.tempo_change"};
 function chipLabel(f) {
   const name = f.kind === "exclude" ? t("search.chip.exclude")
     : f.kind === "ext" ? t("field.file")
@@ -7062,6 +7590,7 @@ const ADV_FIELDS = [
   {key: "im", help: "music", label: "col.in_music", flag: true, group: "state"},
   {key: "rb", help: "rekordbox", label: "col.rekordbox", flag: true, group: "state"},
   {key: "hc", help: "hotcues", label: "col.hot_cues", flag: true, group: "state"},
+  {key: "tw", help: "tempo_change", label: "flag.tempo_change", flag: true, group: "mix"},
   {key: "ig", help: "hidden", label: "views.ignored", flag: true, group: "state"},
 ];
 // Reihenfolge der Gruppen im Panel, Ueberschrift ueber advsearch.group_<id>.
@@ -7306,9 +7835,15 @@ function albumGroupKeyExact(r) {
 //
 // Zwei Signale, ueber Union-Find zu Gruppen verschmolzen:
 //  - exakter Datei-Hash (hs): sichere Kopie, auch bei anderem Pfad/Tag.
-//  - normalisiert Interpret+Titel (wie scanner._norm), innerhalb dessen
-//    Dauer +-1s (wie scanner._DURATION_TOLERANCE_S): erkennt
-//    Qualitaets-Varianten (z.B. MP3 128 + FLAC), die nie denselben Hash haben.
+//  - lockerer Schluessel aus Interpret+Titel (dupArtistKey()/dupTitleKey(),
+//    Regeln dort), innerhalb dessen Dauer +-DUP_DURATION_TOLERANCE_S:
+//    erkennt Qualitaets-Varianten (z.B. MP3 128 + FLAC) und dasselbe Lied auf
+//    Single und Sampler, die nie denselben Hash haben. 3 s wie bei openDJ.
+//    r.du ist auf ganze Sekunden abgeschnitten, die echte Abweichung kann
+//    daher um knapp eine Sekunde von der Pruefung abweichen. Gemessen an
+//    10.968 Tracks: woertlicher Vergleich 13 Gruppen, lockerer Schluessel 95
+//    (openDJ meldet 167 Tracks) -- ohne Dauergrenze kaemen Live-Aufnahmen und
+//    Radio Edit/Extended Mix dazu, deshalb bleibt sie.
 // Wie albumGroupKey(): fehlender Interpret+Titel gruppiert NIE ueber den
 // Tag-Weg (sonst landen alle taglosen Dateien in einer Riesengruppe) --
 // solche Zeilen bekommen nur ueber einen Hash-Treffer eine Gruppe.
@@ -7317,6 +7852,239 @@ function albumGroupKeyExact(r) {
 // die ganze Bibliothek, quadratisch nur innerhalb eines Interpret+Titel-
 // Buckets (typischerweise 2-4 Zeilen).
 let dupGroupsDirty = false;
+
+// Beste Kopie einer Duplikat-Gruppe zuerst (Muster aus openDJ dupes::rank):
+// vorhandene Datei vor fehlender, hoehere tatsaechliche Qualitaet (dupQuality()), vollstaendigere Tags, bereits in
+// Rekordbox/Music.app, groessere Datei (VBR-Tie-Breaker), zuletzt der Pfad.
+const dupCompleteness = r => [r.cv, r.ge, r.bp, r.ky, r.yr, r.al, r.aa, r.cp, r.tn, r.cm].filter(Boolean).length;
+// Tatsaechliche Qualitaet statt der Angabe in der Datei: eine als Fake oder
+// verdaechtig erkannte Datei zaehlt mit ihrer gemessenen Bitrate-Klasse (mk),
+// eine "320er" aus 128er-Quelle steht also hinter einer echten 256er. Echt
+// verlustfreie Dateien stehen vor allem Verlustbehafteten.
+function dupQuality(r) {
+  const doubtful = r.v === "FAKE" || r.v === "VERDAECHTIG";
+  if (r.fam === "lossless" && !doubtful) return 100000;
+  return doubtful && r.mk ? r.mk : (r.kb || 0);
+}
+function dupRankCmp(a, b) {
+  // Fehlende Dateien nie als beste Kopie empfehlen.
+  if (!!a.gone !== !!b.gone) return a.gone ? 1 : -1;
+  const qa = dupQuality(a), qb = dupQuality(b);
+  if (qa !== qb) return qb - qa;
+  const ca = dupCompleteness(a), cb = dupCompleteness(b);
+  if (ca !== cb) return cb - ca;
+  const ua = (a.rb ? 1 : 0) + (a.im ? 1 : 0), ub = (b.rb ? 1 : 0) + (b.im ? 1 : 0);
+  if (ua !== ub) return ub - ua;
+  if ((b.sz || 0) !== (a.sz || 0)) return (b.sz || 0) - (a.sz || 0);
+  return cmpText(a.p || "", b.p || "");
+}
+// Je Gruppe einmal nach computeDuplicateGroups(): Mitglieder nach Rang,
+// abweichende Spalten (DUP_DIFF_SIG) und ob alle Kopien dieselbe Datei sind.
+// render() und die Reiter lesen nur noch hier, nie je Zeile ueber DATA.
+let DUP_GROUPS = new Map();
+// Behalten-Markierung je Pfad, nur wo sie von der Vorgabe abweicht (Vorgabe:
+// die beste Kopie der Gruppe). Ueberlebt ein Neuberechnen der Gruppen, weil
+// sie am Pfad haengt und nicht an der Gruppen-ID. Nur Sitzung.
+const DUP_KEEP_OVERRIDE = new Map();
+// Unterschiede werden nur fuer diese Spalten markiert; Pfad, Hinzugefuegt,
+// Position und reine Messwerte unterscheiden sich fast immer und waeren Rauschen.
+const DUP_DIFF_SIG = {
+  v: r => r.v, co: r => r.co, kb: r => r.fam + "|" + r.kb + "|" + fileExt(r.p), du: r => r.du,
+  rb: r => r.rb ? 1 : 0, im: r => r.im ? 1 : 0, cv: r => r.cv ? 1 : 0,
+  al: r => r.al || "", tn: r => r.tn || 0, aa: r => r.aa || "", cp: r => r.cp || "",
+  ge: r => r.ge || "", yr: r => r.yr || 0, bp: r => r.bp || 0, ky: r => r.ky || "",
+  eg: r => r.eg || 0, cm: r => r.cm || "", a: r => r.a || "", t: r => r.t || "", lu: r => r.lu || 0,
+};
+function buildDupGroupInfo() {
+  const groups = new Map();
+  for (const r of DATA) {
+    if (r.dg == null || r.removed) continue;
+    if (!groups.has(r.dg)) groups.set(r.dg, []);
+    groups.get(r.dg).push(r);
+  }
+  DUP_GROUPS = new Map();
+  for (const [gid, members] of groups) {
+    members.sort(dupRankCmp);
+    const diff = new Set();
+    for (const [k, sig] of Object.entries(DUP_DIFF_SIG))
+      if (new Set(members.map(sig)).size > 1) diff.add(k);
+    const sameFile = members.every(r => r.hs && r.hs === members[0].hs);
+    DUP_GROUPS.set(gid, {members, best: members[0], diff, sameFile});
+  }
+}
+const dupBaseRow = r => !!r.dg && !merkPlaylists().some(n => PLAYLIST_SETS[n.id] && PLAYLIST_SETS[n.id].has(r.p));
+function dupGroupDismissed(gid) {
+  const g = DUP_GROUPS.get(gid);
+  return !!g && g.members.every(r => r.dd);
+}
+function dupIsKept(r) {
+  if (DUP_KEEP_OVERRIDE.has(r.p)) return DUP_KEEP_OVERRIDE.get(r.p);
+  const g = DUP_GROUPS.get(r.dg);
+  return !!g && g.best === r;
+}
+// Umschalten; die letzte behaltene Kopie einer Gruppe laesst sich nicht abwaehlen.
+function toggleDupKeep(r) {
+  const g = DUP_GROUPS.get(r.dg);
+  if (!g) return;
+  const next = !dupIsKept(r);
+  if (!next && g.members.filter(m => !m.removed && dupIsKept(m)).length <= 1) {
+    note(t("dup.keep_last"), "soft");
+    return;
+  }
+  const dflt = g.best === r;
+  if (next === dflt) DUP_KEEP_OVERRIDE.delete(r.p); else DUP_KEEP_OVERRIDE.set(r.p, next);
+  render();
+}
+const dupColLabel = k => (OPTIONAL_COLUMNS.find(c => c.key === k) || {}).label || k;
+// Zellen einer Duplikat-Zeile: abweichende Spalten bekommen die Klasse dupdiff.
+function dupMarkCell(html, k, gid) {
+  const g = DUP_GROUPS.get(gid);
+  if (!g || !g.diff.has(k)) return html;
+  return html.trimStart().replace(/^<td(\s+class=")?/, (m, cls) => cls ? '<td class="dupdiff ' : '<td class="dupdiff"');
+}
+// Alle nicht behaltenen Kopien einer Gruppe in den Papierkorb, mit Rueckfrage.
+async function trashDupRest(gid) {
+  const g = DUP_GROUPS.get(gid);
+  if (!g || !apiMode) return;
+  const rest = g.members.filter(r => !r.removed && !r.gone && !dupIsKept(r));
+  if (!rest.length) return;
+  if (!await askTrashBulk(rest)) return;
+  let done = 0, musicErrors = 0, cloudNotes = 0;
+  for (const r of rest) {
+    try {
+      stopPlayerFor(r.p);
+      const data = await trashRowApi(r);
+      done++;
+      if (data.music_error) musicErrors++;
+      if (data.music_cloud_note) cloudNotes++;
+    } catch (err) {
+      note(t("toast.bulk_action_failed", {action: t("bulk.action_trash"), name: baseName(r.p), error: err.message}), true);
+    }
+  }
+  updateCards(); render();
+  if (done) note(t("toast.dup_trashed", {count: done}));
+  if (musicErrors) note(t("toast.trash_music_failed", {count: musicErrors}), "soft");
+  if (cloudNotes) note(t("toast.trash_music_cloud_note_bulk", {count: cloudNotes}), "soft");
+}
+// Gemeinsamer Kern von Sammel-Papierkorb und trashDupRest(): eine Datei
+// ueber /api/trash, Zeile als entfernt markieren, Duplikate neu rechnen.
+async function trashRowApi(r) {
+  const res = await fetch("/api/trash", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({path: r.p})});
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  r.removed = 1;
+  dupGroupsDirty = true;
+  invalidateFieldValueCache();
+  return data;
+}
+// Reiter Offen/Kein Duplikat im Listenkopf der Duplikate-Liste.
+function renderDupTabs() {
+  const row = document.getElementById("plHeadDupTabsRow");
+  if (!row) return;
+  if (state.view !== "duplicates") { row.hidden = true; return; }
+  // Der Zaehler im Listenkopf folgt dem Reiter (view.test) -- mit nachziehen.
+  renderPlaylistHeader();
+  let open = 0, dismissed = 0;
+  for (const [gid, g] of DUP_GROUPS) {
+    if (!g.members.some(dupBaseRow)) continue;
+    if (dupGroupDismissed(gid)) dismissed++; else open++;
+  }
+  row.hidden = false;
+  const btn = (id, label, n) => `<button type="button" class="lsbtn${state.dupTab === id ? " on" : ""}" data-duptab="${id}">${
+    esc(label)} <span class="duptabcount">${n.toLocaleString("de-DE")}</span></button>`;
+  row.innerHTML = `<span class="layoutswitch duptabs">${btn("open", t("dup.tab_open"), open)}${
+    btn("dismissed", t("dup.tab_dismissed"), dismissed)}</span>`;
+  row.querySelectorAll("[data-duptab]").forEach(b => b.onclick = () => {
+    if (state.dupTab === b.dataset.duptab) return;
+    state.dupTab = b.dataset.duptab;
+    state.shown = PAGE;
+    saveFilters();
+    render();
+  });
+}
+// Gruppenkopf als Kartenkopf: Interpret -- Titel, Anzahl, Art des Unterschieds,
+// rechts Papierkorb fuer Uebrige und Kein Duplikat/Wieder pruefen.
+function dupGroupHeaderHtml(gid, span) {
+  const g = DUP_GROUPS.get(gid);
+  if (!g) return "";
+  const live = g.members.filter(r => !r.removed);
+  const head = g.best;
+  const dismissed = dupGroupDismissed(gid);
+  const collapsible = state.dupTab === "dismissed";
+  const open = !collapsible || DUP_OPEN_GROUPS.has(gid);
+  const diffCols = [...g.diff].filter(k => k !== "a" && k !== "t").map(dupColLabel);
+  const sub = g.sameFile ? `<span class="dupsame">${esc(t("dup.same_file"))}</span>`
+    : diffCols.length ? esc(t("dup.differs_in", {fields: diffCols.join(", ")}))
+    : esc(t("dup.differs_path"));
+  const restCount = live.filter(r => !r.gone && !dupIsKept(r)).length;
+  const trashBtn = apiMode && !dismissed && restCount
+    ? `<button type="button" class="act small dupact danger" data-duptrash="${gid}" title="${
+        esc(t("dup.trash_rest_title"))}">${ICONS.trash}<span>${esc(t("dup.trash_rest", {count: restCount}))}</span></button>` : "";
+  return `<tr class="albumgroup dupgroup${dismissed ? " dupdone" : ""}${open ? "" : " dupclosed"}"${
+      collapsible ? ` data-duptoggle="${gid}"` : ""}><td colspan="${span}"><div class="duphead">${
+      collapsible ? `<span class="dupchev">${open ? ICONS.chevronDown : ICONS.chevronRight}</span>` : ""}
+    <div class="duptitle"><span class="dupname">${esc(head.a || "")} — ${esc(head.t || "")}</span>
+      <span class="path">${esc(t("group.copies_count", {count: live.length}))}</span>
+      <div class="dupsub">${sub}</div></div>
+    <span class="dupacts">${trashBtn}<button type="button" class="act small dupact" data-dupdismiss="${gid}">${
+      esc(t(dismissed ? "dup.recheck" : "group.dup_confirm_button"))}</button></span></div></td></tr>`;
+}
+// Behalten-Schalter: eigene, feste Spalte direkt nach der Auswahl-Checkbox,
+// nur in der Duplikate-Pruefung und in allen drei Ansichten gleich (frueher
+// je nach Ansicht in der Checkbox-Zelle oder in "Öffnen").
+function dupKeepBtnHtml(r) {
+  const on = dupIsKept(r);
+  return `<button type="button" class="dupkeep${on ? " on" : ""}" data-dupkeep="${r.i}" title="${
+    esc(t(on ? "dup.keep_on_title" : "dup.keep_off_title"))}">${on ? ICONS.dupKeep : ICONS.dupKeepOff}</button>`;
+}
+// Kopfzelle der Behalten-Spalte (statisch in index.html) ein-/ausblenden.
+// Nur bei einem Wechsel: Tabellenbreite und angeheftete Kopfzeile haengen
+// an den sichtbaren Kopfzellen.
+function syncDupColumn(show) {
+  const th = document.querySelector(".tablewrap thead th.dupcol");
+  if (!th || (th.style.display !== "none") === show) return;
+  th.style.display = show ? "" : "none";
+  syncTableWidths(false);
+  syncStickyHeadContent();
+}
+// Eingeklappte Gruppen im Reiter "Kein Duplikat" (nur Sitzung).
+const DUP_OPEN_GROUPS = new Set();
+
+// Lockere Vergleichsschluessel fuer die Duplikat-Erkennung (Regeln nach
+// openDJ): dieselbe Aufnahme steht in Bibliotheken oft mit leicht anderem
+// Tag -- "(feat. X)" vs. "feat. X" vs. "X" im Interpreten-Feld, "[Radio Edit]"
+// vs. "(Radio Edit)", "- Throttle Remix" vs. "(Throttle Remix)", ein
+// angehaengtes "(Original Mix)" (auch abgeschnitten: "(Original"). Der
+// Inhalt einer Klammer bleibt erhalten, nur Klammern/Trenner fallen weg --
+// zwei verschiedene Remixe bleiben damit verschieden. Akzente und
+// Apostrophe zaehlen nicht, "&"/"and" sind gleich.
+// "feat."-Teil im Titel: bis zur naechsten Klammer, " - " oder zum Ende.
+const DUP_FEAT_RE = /\s*[(\[]?\s*\b(?:feat\.?|ft\.?|featuring)\s+[^()\[\]]*?(?=[()\[\]]|\s-\s|$)[)\]]?/g;
+const DUP_ORIGINAL_RE = /\s*(?:[(\[]|\s-)\s*original(?:\s+(?:mix|version))?\s*(?:[)\]]|$)/g;
+// Trenner mehrerer Interpreten; die Teile werden sortiert ("A & B" = "B & A").
+const DUP_ARTIST_SPLIT_RE = /\s+(?:&|and|x|vs\.?|\+)\s+|\s*[&,;\/+]\s*/;
+function dupFold(s) {
+  return (s || "").normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
+    .replace(/[‘’´`'.!?"]/g, "");
+}
+function dupTitleKey(title) {
+  const folded = dupFold(title);
+  const key = folded.replace(DUP_FEAT_RE, " ").replace(DUP_ORIGINAL_RE, " ")
+    .replace(/[()\[\]{}]|\s-\s|[\/|,;:*_~]/g, " ")
+    .replace(/\s+(?:&|and|\+)\s+/g, " & ")
+    .replace(/^\s*the\s+/, "").replace(/\s+/g, " ").trim();
+  // Titel, der nur aus einem feat.-Teil besteht: dann der ganze Titel.
+  return key || folded.replace(/\s+/g, " ").trim();
+}
+function dupArtistKey(artist) {
+  const folded = dupFold(artist);
+  const parts = folded.replace(/\s*[(\[]?\s*\b(?:feat|ft|featuring)\s.*$/, "")
+    .replace(/[()\[\]{}]/g, " ").split(DUP_ARTIST_SPLIT_RE)
+    .map(p => p.replace(/^\s*the\s+/, "").replace(/\s+/g, " ").trim()).filter(Boolean);
+  return parts.length ? parts.sort().join("&") : folded.replace(/\s+/g, " ").trim();
+}
 
 function computeDuplicateGroups() {
   DATA.forEach(r => { delete r.dg; });
@@ -7337,17 +8105,16 @@ function computeDuplicateGroups() {
   for (const idxs of byHash.values())
     for (let k = 1; k < idxs.length; k++) union(idxs[0], idxs[k]);
 
-  const norm = s => (s || "").trim().toLowerCase().replace(/\s+/g, " ");
   const byTag = new Map();
   DATA.forEach((r, i) => {
     if (r.removed) return;
-    const artist = norm(r.a), title = norm(r.t);
+    const artist = dupArtistKey(r.a), title = dupTitleKey(r.t);
     if (!artist || !title) return;
-    const key = artist + " " + title;
+    const key = artist + "\u0000" + title;
     if (!byTag.has(key)) byTag.set(key, []);
     byTag.get(key).push(i);
   });
-  const DUP_DURATION_TOLERANCE_S = 1.0;
+  const DUP_DURATION_TOLERANCE_S = 3.0;
   for (const idxs of byTag.values())
     for (let a = 0; a < idxs.length; a++)
       for (let b = a + 1; b < idxs.length; b++)
@@ -7367,6 +8134,7 @@ function computeDuplicateGroups() {
     const gid = nextId++;
     for (const i of members) DATA[i].dg = gid;
   }
+  buildDupGroupInfo();
   resetPartiallyDismissedGroups();
 }
 
@@ -7456,13 +8224,7 @@ function filtered() {
     // wuerde die Checkbox die Duplikat-Ansicht durcheinanderbringen.
     rows.sort((a, b) => {
       if (a.dg !== b.dg) return (a.dg || 0) - (b.dg || 0);
-      // Beste Kopie zuerst: verlustfrei vor verlustbehaftet, dann hoehere
-      // deklarierte Bitrate, dann groessere Datei als Tie-Breaker (z.B. VBR).
-      const qa = a.fam === "lossless" ? 1 : 0, qb = b.fam === "lossless" ? 1 : 0;
-      if (qa !== qb) return qb - qa;
-      if ((b.kb || 0) !== (a.kb || 0)) return (b.kb || 0) - (a.kb || 0);
-      if ((b.sz || 0) !== (a.sz || 0)) return (b.sz || 0) - (a.sz || 0);
-      return cmpText(a.p || "", b.p || "");
+      return dupRankCmp(a, b);
     });
   } else if (view.id === "grp:album") {
     // "Aufraeumen"-Liste Album: EXAKTE Gross-/Kleinschreibung als Gruppen-
@@ -7544,6 +8306,16 @@ function filtered() {
       }
       return cmpText(tk.get(a), tk.get(b));
     });
+  } else if (!state.sort && view.id === "tag_issues" &&
+             (state.tagIssueFilter === "duplicate_cover" || ALBUM_COVER_CODES.has(state.tagIssueFilter))) {
+    // "Doppeltes Cover": gleiche Bilder nebeneinander, dann nach Album. "Album-Cover weicht
+    // ab": erst das Album, darin gleiche Bilder nebeneinander.
+    const ck = sortKeys(rows, r => r.ch || "");
+    const ak = sortKeys(rows, r => albumIdentityKey(r));
+    const albumFirst = ALBUM_COVER_CODES.has(state.tagIssueFilter);
+    rows.sort((a, b) => albumFirst
+      ? cmpText(ak.get(a), ak.get(b)) || cmpText(ck.get(a), ck.get(b))
+      : cmpText(ck.get(a), ck.get(b)) || cmpText(ak.get(a), ak.get(b)));
   } else if (state.sort === "po") {
     // "#" = Grundreihenfolge der Liste, auf- oder absteigend.
     const pos = listPositionMap(view);
@@ -7562,9 +8334,11 @@ function filtered() {
     const val = k === "n" ? (r => displayName(r).toLowerCase())
       : k === "ta" ? (r => ((r.t || baseName(r.p || "")) + " " + (r.a || "")).toLowerCase())
       : k === "ky" ? (r => keyRank(r.ky, state.dir))
+      : k === "cv" ? (r => r.ch || (r.cv ? "\u0001" : ""))
       : k === "eg" ? (r => r.eg || 0)
-      : k === "rb" ? (r => RB_SORT_RANK[state.rbStage - 1][rbMarkState(r)])
-      : k === "bp" && state.layout === "dj" ? (r => r.djBp || r.bp)
+      : k === "rb" ? rbSortKey(state.rbStage)
+      : k === "ti" ? tiSortKey(state.tiStage)
+      : k === "bp" && state.layout === "dj" ? (state.bpStage ? bpSortKey(state.bpStage) : (r => r.bp || 0))
       : k === "mm" ? (r => rowTags(r).map(tg => tg.label).join(", ")) : (r => r[k]);
     // Auch hier den Schluessel je Zeile einmal bilden: bei k === "n" steckt
     // darin displayName() + toLowerCase(), das sonst in jedem Vergleich neu
@@ -7647,18 +8421,95 @@ const RB_NOTE_FIELDS = new Set(["bpm_half"]);
 const rbRealDiff = r => (r.rbDiff || []).filter(f => !RB_NOTE_FIELDS.has(f));
 const rbMarkState = r => !r.rb ? "off" : rbRealDiff(r).length ? "diff"
   : r.rbDiff && r.rbDiff.length ? "half" : RB_COMPARE ? "same" : "on";
-// Sortierstufen der Spalte: in Rekordbox, gruen, rot, nicht in Rekordbox jeweils zuerst.
-const RB_SORT_RANK = [
-  {same: 0, on: 0, half: 0, diff: 0, off: 1},
-  {same: 0, on: 0, half: 1, diff: 2, off: 3},
-  {diff: 0, half: 1, same: 2, on: 2, off: 3},
-  {off: 0, same: 1, on: 1, half: 2, diff: 3},
-];
+// Sortierstufen der Spalte (Klickfolge, rbSortStages()): in Rekordbox, gruen, rot zuerst,
+// dann je vorkommender Abweichungs-Kombination eine Stufe ("sig:tags+cues"), zuletzt
+// nicht in Rekordbox. Innerhalb jeder Stufe stehen gleiche Zustaende/Kombinationen
+// zusammen (rbSortKey()). Stufen-Kennung als Text, gespeichert in state.rbStage.
+const RB_SORT_RANK = {
+  in:   {same: 0, on: 0, half: 0, diff: 0, off: 1},
+  same: {same: 0, on: 0, half: 1, diff: 2, off: 3},
+  diff: {diff: 0, half: 1, same: 2, on: 2, off: 3},
+  off:  {off: 0, same: 1, on: 1, half: 2, diff: 3},
+};
+const RB_SORT_LEGACY = ["in", "same", "diff", "off"];       // fruehere Stufen 1..4
+const RB_FIELD_ORDER = ["tags", "grid", "phrases", "cues"];
+const rbFieldIndex = f => { const i = RB_FIELD_ORDER.indexOf(f); return i < 0 ? RB_FIELD_ORDER.length : i; };
+// Kennung der Abweichungs-Kombination einer roten Zeile ("tags+cues"), sonst "".
+const rbDiffSig = r => rbMarkState(r) !== "diff" ? ""
+  : [...new Set(rbRealDiff(r))].sort((a, b) => rbFieldIndex(a) - rbFieldIndex(b) || cmpText(a, b)).join("+");
+// Vorkommende Kombinationen, wenige Felder zuerst, dann in Feldreihenfolge.
+function rbDiffSigs() {
+  const sigs = new Set();
+  for (const r of DATA) { const s = rbDiffSig(r); if (s) sigs.add(s); }
+  const parts = s => s.split("+");
+  return [...sigs].sort((a, b) => parts(a).length - parts(b).length
+    || parts(a).map(rbFieldIndex).join(",").localeCompare(parts(b).map(rbFieldIndex).join(",")));
+}
+// Eigene Stufen je Kombination nur, wenn es mehr als eine gibt (sonst = "rot zuerst").
+function rbSortStages() {
+  const sigs = rbDiffSigs();
+  return ["in", "same", "diff", ...(sigs.length > 1 ? sigs.map(s => "sig:" + s) : []), "off"];
+}
+const rbSigLabel = sig => sig.split("+").map(f => t("dj.field_" + f)).join(", ");
+function rbSortKey(stage) {
+  const sigIdx = new Map(rbDiffSigs().map((s, i) => [s, i]));
+  const sig = String(stage).startsWith("sig:") ? stage.slice(4) : null;
+  const ranks = RB_SORT_RANK[stage] || RB_SORT_RANK.diff;
+  return r => {
+    const st = rbMarkState(r), own = rbDiffSig(r);
+    const base = sig !== null ? (own === sig ? 0 : ranks[st] + 1) : ranks[st];
+    // Gruppieren innerhalb einer Stufe: gruen, Hinweis, dann rot je Kombination.
+    const group = st === "diff" ? 2 + (sigIdx.has(own) ? sigIdx.get(own) : 98) : st === "half" ? 1 : 0;
+    return base * 1000 + group;
+  };
+}
+// Spalte Auffaelligkeiten: ein Klick je vorkommende Auffaelligkeit (haeufigste zuerst, wie die
+// Bubbles), die sie tragenden Zeilen stehen vorn, danach zuruecksetzen. Stufe = Code in state.tiStage.
+function tiSortStages() {
+  const counts = new Map();
+  for (const r of live()) {
+    for (const code of new Set(rowIssues(r).map(i => i.code))) counts.set(code, (counts.get(code) || 0) + 1);
+  }
+  return [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a) || cmpText(a, b));
+}
+function tiSortKey(stage) {
+  // Innerhalb der Treffer bleibt gleiches Cover bzw. Album zusammen, sonst die Grundreihenfolge.
+  const cover = stage === "duplicate_cover" ? r => r.ch || "" : ALBUM_COVER_CODES.has(stage) ? r => albumIdentityKey(r) : null;
+  const text = new Map();
+  const hit = r => rowIssues(r).some(i => i.code === stage);
+  return r => {
+    if (!hit(r)) return 1e9;
+    if (!cover) return 0;
+    const key = cover(r);
+    if (!text.has(key)) text.set(key, text.size + 1);
+    return text.get(key);
+  };
+}
+// Spalte BPM in der DJ-Ansicht: nach auf-/absteigend drei Stufen, die jeweils eine
+// Gruppe nach vorn holen (innerhalb nach BPM aufsteigend), danach zuruecksetzen.
+// In den anderen Ansichten nur auf/ab (Nutzervorgabe). Stufe in state.bpStage.
+const BP_SORT_STAGES = {
+  rbdiff: r => !!(r.rbTagFields && r.rbTagFields.includes("bpm")),   // weicht von Rekordbox ab
+  half: r => !!(r.rbDiff && r.rbDiff.includes("bpm_half")),           // halb/doppelt zu Rekordbox
+  grid: r => bpmGridOff(r.bp, r.gridTempo),                          // rote Zahl
+};
+const BP_SORT_COLORS = {rbdiff: "var(--fake)", half: "var(--susp)", grid: "var(--fake)"};
+function bpSortKey(stage) {
+  const hit = BP_SORT_STAGES[stage];
+  return r => (hit(r) ? 0 : 100000) + (r.djBp || r.bp || 0);
+}
+// Feldname fuer Tooltips: "Metadaten" nennt die abweichenden Felder einzeln.
+function rbFieldLabel(r, f) {
+  if (f === "tags" && r.rbTagFields && r.rbTagFields.length)
+    return t("dj.field_tags_detail", {fields: r.rbTagFields.map(x => t("field." + x)).join(", ")});
+  return t("dj.field_" + f);
+}
 function rbSyncMark(r) {
   const diff = r.rbDiff && r.rbDiff.length ? r.rbDiff.map(f => t("dj.field_" + f)).join(", ") : "";
+  const diffTip = r.rbDiff && r.rbDiff.length ? r.rbDiff.map(f => rbFieldLabel(r, f)).join(", ") : "";
   const state_ = rbMarkState(r);
   if (state_ === "half") return `<span class="rbmark half" title="${esc(t("dj.rb_mark_half"))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span><small class="rbdiff half">${esc(diff)}</small>`;
-  if (state_ === "diff") return `<span class="rbmark diff" title="${esc(t("dj.rb_mark_diff", {fields: diff}))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span><small class="rbdiff">${esc(diff)}</small>`;
+  if (state_ === "diff") return `<span class="rbmark diff" title="${esc(t("dj.rb_mark_diff", {fields: diffTip}))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span><small class="rbdiff" title="${esc(diffTip)}">${esc(diff)}</small>`;
   return `<span class="rbmark ${state_}" title="${esc(t("dj.rb_mark_" + state_))}"><img class="appicon" src="${appIconSrc("rekordbox")}" alt=""></span>`;
 }
 // Die Einzelpruefungen sehen in jeder Ansicht gleich aus: ihre Zellen rechnen wie
@@ -7670,6 +8521,7 @@ function dropCellHtml(k, r) {
   try { return CELL_RENDERERS[k](r); } finally { renderingDropCells = false; }
 }
 const CELL_RENDERERS = {
+  v: r => `<td>${statusBadgeHtml(r)}</td>`,
   po: r => {
     const at = POS_MAP ? POS_MAP.get(posKeyOf(r)) : undefined;
     return `<td class="num">${at === undefined ? "" : at + 1}</td>`;
@@ -7692,6 +8544,7 @@ const CELL_RENDERERS = {
   im: r => apiMode ? `<td class="rbcell"><span class="rbmark ${r.im ? "on" : "off"}" title="${esc(t(r.im ? "badge.in_music_app" : "badge.not_in_music_app"))}"><img class="appicon" src="${appIconSrc("music")}" alt=""></span></td>`
     : `<td class="num">${r.im ? presenceMark("music", t("badge.in_music_app")) : ""}</td>`,
   da: r => `<td class="num">${esc(fmtDate(r.da))}</td>`,
+  mt: r => `<td class="num">${esc(fmtDateTime(r.mt))}</td>`,
   // r.gone ausschliessen: die Datei fehlt am gespeicherten Pfad, /api/cover
   // liefert dann 410 -- ohne diese Pruefung haengt ein kaputtes Bild-Icon in
   // der Zelle statt einfach nichts anzuzeigen (has_cover stammt vom letzten
@@ -7715,7 +8568,7 @@ const CELL_RENDERERS = {
   cp: r => `<td>${esc(r.cp || "")}</td>`,
   ge: r => `<td>${esc(r.ge || "")}</td>`,
   yr: r => `<td class="num">${r.yr || ""}</td>`,
-  bp: r => `<td class="num bpmcell">${cellLayout() === "dj" ? bpmCellHtml(r.bp, r.djBp, r.gridTempo, r.rb && RB_COMPARE ? "rekordbox" : "tracktab") : bpmCellHtml(r.bp, 0)}</td>`,
+  bp: r => `<td class="num bpmcell">${cellLayout() === "dj" ? bpmCellHtml(r.bp, r.gridTempo, r.rb && RB_COMPARE ? "rekordbox" : "tracktab", r.gridSeq) : bpmCellHtml(r.bp)}</td>`,
   ky: r => `<td>${keyBubble(r.ky, r.kr)}</td>`,
   eg: r => `<td>${energyCell(r.eg)}</td>`,
   mm: r => `<td>${rowTags(r).map(tg =>
@@ -7730,15 +8583,19 @@ const CELL_RENDERERS = {
   ti: r => {
     const issues = rowIssues(r);
     if (!issues.length) return `<td></td>`;
-    const lines = issues.map(i => `<div class="tiline">${esc(t("tagissue." + i.code))}${
-      i.field ? ` <span class="dim">(${esc(t("field." + i.field) || i.field)})</span>` : ""}</div>`).join("");
-    const autoOk = issues.some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code));
-    // Bearbeiten gibt es nur in der gleichnamigen Ansicht.
-    if (cellLayout() !== "edit") return `<td><div class="ticell">${lines}</div></td>`;
-    return `<td><div class="ticell">${lines}<div class="tiactions">
-      <button class="act small" data-tagfixmanual="${esc(r.p)}">${ICONS.pencil} ${esc(t("fixtag.manual_edit_link"))}</button>
-      ${autoOk ? `<button class="act small" data-tagfixauto="${esc(r.p)}">${ICONS.sparkles} ${esc(t("fixtag.auto_fix_button"))}</button>` : ""}
-    </div></div></td>`;
+    // Je Auffaelligkeit ein kleines Badge (Funken = per Quick Fix behebbar, Stift = nur von Hand);
+    // das betroffene Feld steht im Tooltip. In Bearbeiten sitzt die Aktion als Symbolknopf IM
+    // Badge (Funken: Quick Fix, Stift: Tags-Dialog), sonst steht das Symbol nur davor.
+    const edit = cellLayout() === "edit";
+    const chips = issues.map(i => {
+      const auto = isAutoFixIssue(i), label = t("tagissue." + i.code);
+      const tip = i.field ? `${label} (${t("field." + i.field) || i.field})` : label;
+      const btn = !edit ? ICONS[auto ? "sparkles" : "pencil"]
+        : auto ? `<button type="button" class="tibtn" data-tagfixauto="${esc(r.p)}" title="${esc(t("fixtag.auto_fix_button"))}">${ICONS.sparkles}</button>`
+               : `<button type="button" class="tibtn" data-tagfixmanual="${esc(r.p)}" title="${esc(t("fixtag.manual_edit_link"))}">${ICONS.pencil}</button>`;
+      return `<span class="tichip ${auto ? "auto" : "manual"}" title="${esc(tip)}">${edit ? "" : btn}<span>${esc(label)}</span>${edit ? btn : ""}</span>`;
+    }).join("");
+    return `<td><div class="ticell">${chips}</div></td>`;
   },
   a: r => `<td>${esc(r.a || "")}</td>`,
   // Titel und Interpret in einer Zelle (feste Spalte der DJ-Ansicht).
@@ -7758,12 +8615,12 @@ const CELL_RENDERERS = {
           ? ` <span class="fltag" style="background:${plColorBg(flColorTok(n))};color:${plColor(flColorTok(n))}">` +
             `${iconGlyphHtml(playlistIconValue(n))}${esc(n.name)}</span>`
           : "").join("")}${
-        r.mc ? ` <span class="correctedtag">${esc(t("badge.corrected"))}</span>` : ""}${
         r.mikPick ? ` <span class="miktag">${esc(t("badge.mik_pick"))}</span>` : ""}${
         r.libAdded ? ` <span class="miktag">${esc(t("badge.lib_added"))}</span>` : ""}</div>
       ${copyable
-        ? `<div class="path copyable" data-copy="${esc(r.p)}" title="${esc(t("action.copy_path"))}">${esc(r.p)}</div>`
-        : `<div class="path">${esc(r.p)}</div>`}</td>`,
+        ? `<div class="path copyable" data-copy="${esc(r.p)}" title="${esc(t("action.copy_path"))}" data-tip-hint="${
+            esc(r.p)}">${esc(shortPath(r.p))}</div>`
+        : `<div class="path" title="${esc(r.p)}">${esc(shortPath(r.p))}</div>`}</td>`,
 };
 
 // DJ-Liste: kleine Zeile unter Titel/Interpret -- Format und die in der Datei
@@ -7805,18 +8662,29 @@ async function copyPlainText(text) {
 // Ganze Werte ohne ",0" ("130"), echte Nachkommastellen bleiben ("127,5"). Ein im
 // DJ-Editor geaendertes Tempo steht mit zwei Stellen da ("125,50"). Rot, wenn das Tempo
 // in der Datei nicht zum Beatgrid passt: tempo = [kleinstes, groesstes] im Grid.
-function bpmCellHtml(bp, edited, tempo, source) {
-  if (!bp && !edited) return "";
-  const text = edited ? edited.toFixed(2) : String(Math.round(bp * 10) / 10);
-  const off = bp && tempo && (Math.abs(tempo[0] - bp) >= 0.05 || Math.abs(tempo[1] - bp) >= 0.05);
-  const fmt = v => v.toFixed(2).replace(".", ",");
-  const grid = off && (Math.abs(tempo[1] - tempo[0]) < 0.005 ? fmt(tempo[0]) : `${fmt(tempo[0])} – ${fmt(tempo[1])}`);
-  // Rote BPM: Hilfestellung, deshalb sofort, mit Angabe, woher das Beatgrid stammt.
-  const tip = off ? ` data-tip-now="" title="${esc(source
-    ? t("dj.bpm_off_title_src", {file: String(bp).replace(".", ","), grid, source: t("dj.source_" + source)})
-    : t("dj.bpm_off_title", {file: String(bp).replace(".", ","), grid}))}"` : "";
-  return `<span class="bpmval${off ? " off" : ""}"${tip}>${
-    text.replace(".", ",")}<small>${esc(t("field.bpm"))}</small></span>`;
+// Rote BPM der DJ-Liste: Tempo im Datei-Tag passt nicht zum Beatgrid. Auch die
+// Sortierstufe "grid" der Spalte BPM (BP_SORT_STAGES) haengt daran.
+const bpmGridOff = (bp, tempo) => !!(bp && tempo && (Math.abs(tempo[0] - bp) >= 0.05 || Math.abs(tempo[1] - bp) >= 0.05));
+// BPM-Zelle: zeigt immer den Wert aus der Datei (Nutzervorgabe), auch in der DJ-Ansicht nach
+// einer Grid-Bearbeitung. Weicht das Beatgrid ab (tempo = [min, max] der festen Abschnitte), ist
+// die Zahl rot und der Tooltip nennt das Grid-Tempo und, falls vorhanden, die Tempowechsel (seq).
+function bpmCellHtml(bp, tempo, source, seq) {
+  const off = bpmGridOff(bp, tempo) || !!(!bp && tempo);
+  if (!bp && !off) return "";
+  const fmt = v => String(Math.round(v * 100) / 100).replace(".", ",");
+  const file = bp ? fmt(bp) : "–";
+  let tip = "";
+  if (off) {
+    const grid = Math.abs(tempo[1] - tempo[0]) < 0.005 ? fmt(tempo[0]) : `${fmt(tempo[0])} – ${fmt(tempo[1])}`;
+    const fileText = bp ? file : t("dj.bpm_file_none");
+    tip = source
+      ? t("dj.bpm_off_title_src", {file: fileText, grid, source: t("dj.source_" + source)})
+      : t("dj.bpm_off_title", {file: fileText, grid});
+    if (seq && seq.length > 1) tip += "\n" + t("dj.bpm_tip_seq", {seq: seq.map(fmt).join(" → ")});
+  }
+  // Rote BPM: Hilfestellung, deshalb sofort.
+  const attr = tip ? ` data-tip-now="" title="${esc(tip)}"` : "";
+  return `<span class="bpmval${off ? " off" : ""}"${attr}>${file}<small>${esc(t("field.bpm"))}</small></span>`;
 }
 
 // Angezeigter Name einer Zeile -- "Interpret — Titel", ersatzweise der
@@ -7824,7 +8692,8 @@ function bpmCellHtml(bp, edited, tempo, source) {
 // haben kein eigenes Feld "n").
 const displayName = r => (r.a && r.t) ? (r.a + " — " + r.t) : (r.a || r.t || baseName(r.p));
 
-let lastSelPos = null;      // Shift-Klick-Anker — verfällt bei jeder neuen Zeilenliste
+let lastSelPos = null;      // Shift-Klick-Anker = Zeilenindex (data-sel), nicht die DOM-Position: bleibt beim Nachladen
+                            // und beim Neuzeichnen erhalten, verfaellt beim Ansichtswechsel (selectView())
 
 // Erhoeht state.shown und rendert neu -- merkt sich dabei den bisherigen
 // Stand als freshFrom, damit render() nur die neu hinzugekommenen Zeilen mit
@@ -8261,177 +9130,27 @@ document.addEventListener("keydown", ev => { if (ev.key !== "Tab") hideTip(); },
 window.addEventListener("scroll", hideTip, {passive: true, capture: true});
 window.addEventListener("blur", hideTip);
 
-function render() {
-  document.body.classList.add("booted");
-  closeRowMoreMenu();
-  // Ein Playlist-Generator ersetzt die Tabelle (generator.js) -- dort gibt
-  // es nichts zu filtern oder zu zeichnen.
-  if (syncGeneratorPane()) return;
-  lastSelPos = null;
-  renderSearchChips();
-  renderPlaylistHeaderValueBox();
-  renderIssueBubbles();
-  renderTagBubbles();
-  if (dupGroupsDirty) { computeDuplicateGroups(); dupGroupsDirty = false; }
-  const rows = filtered();
-  POS_MAP = listPositionMap(currentView());
-  // Geoeffnete normale Rekordbox-Playlist: Zeilen lassen sich dort
-  // umsortieren (inkl. Titel ohne lokale Datei).
-  const rbReorderable = !!currentRekordboxPlaylist();
-  // "Aus Playlist entfernen" steht in Bearbeiten und Player als Knopf in der
-  // Zeile (Bearbeiten: neben "Zur Playlist hinzufuegen", nicht im "…"-Menue;
-  // Player: statt des "…"-Menues). DJ hat keine Aktionsspalte -> Menue.
-  const listRemove = (state.layout === "player" || state.layout === "edit") && apiMode
-    ? playerRemoveTarget() : null;
-  state.totalFiltered = rows.length;
-  // Ergebniszahl direkt an der Suchleiste -- state.totalFiltered ist bereits
-  // NACH Liste/Verdikt-Chips/"nur harte Kante"/Suche gezaehlt (siehe
-  // filtered()), zeigt also wirklich das Suchergebnis, nicht die
-  // Bibliotheksgroesse. "weitere laden" (list.showing_count unten am Ende der
-  // Tabelle) zaehlt zusaetzlich die aktuell gerenderte Teilmenge dazu -- hier
-  // reicht die reine Trefferzahl.
-  const rc = document.getElementById("searchResultCount");
-  if (rc) rc.textContent = t("search.result_count", {count: rows.length.toLocaleString("de-DE")});
-  // Auswahl auf die aktuell gefilterte Ansicht begrenzen -- nach einem
-  // Wechsel von View/Verdikt-Chips/Suche/Schwellwerten sollen zuvor
-  // ausgewaehlte, jetzt nicht mehr sichtbare Zeilen nicht "geheim" in
-  // state.selected haengen bleiben (sonst wirken Bulk-Aktionen spaeter auf
-  // Zeilen aus einer laengst verlassenen Ansicht). "weitere laden" schneidet
-  // die Liste erst danach per state.shown, ist also hier nicht betroffen.
-  if (state.selected.size) {
-    const visible = new Set(rows.map(r => r.i));
-    for (const i of state.selected) if (!visible.has(i)) state.selected.delete(i);
-  }
-  const view = currentView();
-  // In der Duplikate-Ansicht ist die Gruppierung immer aktiv (siehe
-  // groupMode weiter unten) -- die Checkbox waere dort ohne Wirkung und
-  // wird deshalb gesperrt statt einen Zustand vorzutaeuschen, der nicht
-  // greift.
-  const gaToggle = document.getElementById("groupAlbums");
-  if (gaToggle) {
-    const forced = view.id === "duplicates" || view.id in GRP_VIEW_FIELD;
-    gaToggle.disabled = forced;
-    gaToggle.closest(".toggle").classList.toggle("disabled", forced);
-  }
-  const tb = document.getElementById("tb");
-  // Eine aufgeklappte Zeile traegt die Wellenform-Ansicht (siehe
-  // mountLibraryPlayer(), traegt bei den Einzelpruefungen zusaetzlich das
-  // eigene Audio-Objekt, siehe mountDropPlayer()) -- tb.innerHTML weiter
-  // unten wuerde sie sonst zerstoeren, auch wenn render() nur wegen einer
-  // ANDEREN Zeile aufgerufen wurde (z.B. Klick auf "Zu Rekordbox hinzufuegen"
-  // bei einem Nachbartrack). Die .detail-Knoten werden deshalb vor dem
-  // Neuaufbau beiseitegenommen und danach, falls ihre Zeile noch in der
-  // aktuellen Ansicht steht, an derselben Stelle wieder eingehaengt -- alles
-  // synchron, bevor der jeweilige MutationObserver ueberhaupt zum Zug kommt.
-  const expandedByIdx = new Map();
-  tb.querySelectorAll("tr.detail.expanded").forEach(det => {
-    const tr = det.previousElementSibling;
-    if (tr && tr.classList.contains("row")) {
-      expandedByIdx.set(+tr.dataset.i, det);
-      det.remove();
-    }
-  });
-  const slice = rows.slice(0, state.shown);
-  const hid = k => state.hiddenCols.includes(k);
-  // Gruppierung: Album-Checkbox ODER die Duplikate-Ansicht (dort immer aktiv,
-  // unabhaengig von der Checkbox -- filtered() sortiert dafuer bereits nach
-  // r.dg). Beide teilen sich dieselbe Header-/Zaehl-Logik, nur Schluessel-
-  // und Label-Funktion unterscheiden sich.
-  const groupMode = view.id === "duplicates" ? "dup"
-    : (view.id === "grp:album" || state.groupAlbums) ? "album"
-    : view.id === "grp:genre" ? "genre"
-    : view.id === "grp:artist" ? "artist"
-    : null;
-  // grp:album/grp:genre/grp:artist gruppieren EXAKT (Gross-/Kleinschreibung
-  // UND Leerzeichen zaehlen, kein trim()) -- sie sollen "Bootleg"/"BOOTLEG"
-  // bzw. "Bootleg"/"Bootleg " als je zwei Gruppen zeigen, genau wie
-  // Bubble-Leiste und Zusammenfuehrungs-Vorschlaege (groupCounts()/
-  // albumGroupCounts() trimmen ebenfalls nicht). Die Checkbox "nach Album
-  // gruppieren" (state.groupAlbums, in anderen Ansichten) behaelt ihr
-  // bisheriges, bewusst grosszuegigeres albumGroupKey() unveraendert bei.
-  const groupKeyOf = groupMode === "dup" ? (r => r.dg ?? null)
-    : groupMode === "album" ? (view.id === "grp:album" ? albumGroupKeyExact : albumGroupKey)
-    : groupMode === "genre" ? (r => r.ge || null)
-    : groupMode === "artist" ? (r => r.a || null)
-    : null;
-  // Gruppen-Gesamtzahl aus der VOLLSTAENDIGEN gefilterten/sortierten Liste,
-  // nicht nur dem geladenen Ausschnitt -- der Header zeigt sonst bei
-  // paginierten Gruppen eine falsche (zu niedrige) Anzahl.
-  // In der Duplikate-Ansicht faellt im selben Durchgang mit ab, ob JEDE Kopie
-  // einer Gruppe bestaetigt ist (faerbt den Gruppenkopf). Das stand frueher
-  // als rows.filter(...) IM Gruppenkopf, lief also einmal ueber alle Zeilen
-  // je gezeichnetem Kopf -- bei vielen kleinen Gruppen quadratisch.
-  const groupAllDismissed = groupMode === "dup" ? new Map() : null;
-  const groupTotals = groupMode ? (() => {
-    const m = new Map();
-    for (const gr of rows) {
-      const k = groupKeyOf(gr);
-      if (k === null) continue;
-      m.set(k, (m.get(k) || 0) + 1);
-      if (groupAllDismissed) groupAllDismissed.set(k, (groupAllDismissed.get(k) ?? true) && !!gr.dd);
-    }
-    return m;
-  })() : null;
-  // Gruppenkopf ueber genau so viele Spalten wie eine Zeile Zellen hat:
-  // Checkbox, Status, sichtbare Spalten, Fuellzelle, "Öffnen" (in der DJ-
-  // Ansicht ausgeblendet, zaehlt dort nicht). Frueher colspan="100" -- das
-  // legte bei table-layout:fixed rund 95 leere Spalten an. In Bearbeiten/
-  // Player fiel das nicht auf (alle Spalten mit fester Breite), in der DJ-
-  // Ansicht teilt sich "Track" (width:auto) den Rest mit ihnen und fiel auf
-  // Breite 0 zusammen.
-  const groupSpan = 1 + (hid("v") ? 0 : 1) + state.colOrder.filter(k => !hid(k) && CELL_RENDERERS[k]).length
-    + 1 + (state.layout === "dj" ? 0 : 1);
-  let lastGroupKey;   // Sentinel undefined -- erste Zeile bekommt so garantiert einen Header
-  tb.innerHTML = slice.map((r,i) => {
-    let groupHeader = "";
-    if (groupMode) {
-      const key = groupKeyOf(r);
-      if (key !== null && key !== lastGroupKey) {
-        if (groupMode === "dup") {
-          const allDismissed = groupAllDismissed.get(key) === true;
-          groupHeader = `<tr class="albumgroup ${allDismissed ? "dupok" : "dupwarn"}"><td colspan="${groupSpan}">${esc(r.a || "")} — ${esc(r.t || "")}
-              <span class="path">(${esc(t("group.copies_count", {count: groupTotals.get(key)}))})</span>
-              <button type="button" class="dupdismissbtn" data-dupdismiss="${key}">${
-                esc(t(allDismissed ? "group.dup_undismiss_button" : "group.dup_confirm_button"))}</button></td></tr>`;
-        } else if (groupMode === "album") {
-          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(r.al || "")} <span class="albumgroup-artist">— ${esc(r.aa || r.a || "")}</span>
-              <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>
-              <button type="button" class="genrerename" data-grouprename="album" data-value="${esc(r.al || "")}"
-                      data-groupartist="${esc(r.aa || r.a || "")}"
-                      title="${esc(fieldEditTitle("album"))}">${ICONS.edit}</button></td></tr>`;
-        } else if (groupMode === "genre") {
-          const label = r.ge || t("group.no_genre");
-          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(label)}
-              <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>${
-                r.ge ? `<button type="button" class="genrerename" data-grouprename="genre" data-value="${esc(r.ge)}"
-                      title="${esc(fieldEditTitle("genre"))}">${ICONS.edit}</button>` : ""}</td></tr>`;
-        } else if (groupMode === "artist") {
-          const label = r.a || t("group.no_artist");
-          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(label)}
-              <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>${
-                r.a ? `<button type="button" class="genrerename" data-grouprename="artist" data-value="${esc(r.a)}"
-                      title="${esc(fieldEditTitle("artist"))}">${ICONS.edit}</button>` : ""}</td></tr>`;
-        }
-      }
-      lastGroupKey = key;
-    }
-    const nowPlaying = queueState.current && queueState.current.i === r.i;
-    // Fremdzeilen (r.ext) nur aus Music-/Rekordbox-Listen; in Bearbeiten auch
-    // fehlende Dateien, damit sich ein toter Eintrag aus der Liste nehmen laesst.
-    const removeBtn = listRemove && (r.ext ? listRemove.kind !== "tracktab" : state.layout === "edit" || !r.gone)
-      ? `<button class="iconbtn plain" data-plremove="${r.i}" title="${esc(listRemove.title)}">${listRemove.icon}</button>` : "";
-    const moreBtn = state.layout !== "player" && rowMoreMenuItems(r).length
-      ? `<button class="iconbtn plain" data-more="${r.i}" title="${esc(t("action.more_options"))}">${ICONS.moreVert}</button>`
-      : state.layout === "player" ? removeBtn : "";
-    const editRemoveBtn = state.layout === "edit" ? removeBtn : "";
-    return groupHeader + `
-    <tr class="row${r.ig ? " ign" : ""}${r.mc ? " corr" : ""}${r.ext ? " extrow" : r.gone ? " gone" : ""}${state.selected.has(r.i) ? " picked" : ""}${r.i === cursorRowI ? " kbcursor" : ""}${freshFrom >= 0 && i >= freshFrom ? " fresh" : ""}" data-i="${r.i}" draggable="${r.ext && !rbReorderable ? "false" : "true"}">
-      <td class="sel"><input type="checkbox" class="selchk" data-sel="${r.i}" ${state.selected.has(r.i) ? "checked" : ""}>${
-        nowPlaying ? `<span class="nowplayingicon" title="${esc(t("player.now_playing_title"))}">${ICONS.audioLines}</span>` : ""}</td>
-      ${hid("v") ? "" : `<td><span class="badge ${verdictOf(r)}">${VERDICT_ICONS[verdictOf(r)]}${labels[verdictOf(r)]}</span></td>`}
-      ${state.colOrder.filter(k => !hid(k) && CELL_RENDERERS[k]).map(k => CELL_RENDERERS[k](r, true)).join("")}
-      <td class="filler">${state.layout === "dj" ? moreBtn : ""}</td>
-      <td class="links"><div class="actions">
+// ── Aktionsspalte ("Öffnen") einer Zeile ─────────────────────────────────
+// Eigene Funktion, weil die Spalte nicht mehr mit der Zeile zusammen gebaut
+// werden muss: sie macht rund drei Viertel der Elemente einer Zeile aus und
+// wird fuer Zeilen ausserhalb des Fensters erst gefuellt, wenn sie in die
+// Naehe des sichtbaren Bereichs kommen (rowLinksCellHtml()/actionObserver()).
+function rowRemoveBtnHtml(r) {
+  const listRemove = ROW_CTX.listRemove;
+  // Fremdzeilen (r.ext) nur aus Music-/Rekordbox-Listen; in Bearbeiten auch
+  // fehlende Dateien, damit sich ein toter Eintrag aus der Liste nehmen laesst.
+  return listRemove && (r.ext ? listRemove.kind !== "tracktab" : state.layout === "edit" || !r.gone)
+    ? `<button class="iconbtn plain" data-plremove="${r.i}" title="${esc(listRemove.title)}">${listRemove.icon}</button>` : "";
+}
+function rowMoreBtnHtml(r) {
+  return state.layout !== "player" && rowMoreMenuItems(r).length
+    ? `<button class="iconbtn plain" data-more="${r.i}" title="${esc(t("action.more_options"))}">${ICONS.moreVert}</button>`
+    : state.layout === "player" ? rowRemoveBtnHtml(r) : "";
+}
+function rowActionsHtml(r) {
+  const moreBtn = rowMoreBtnHtml(r);
+  const editRemoveBtn = state.layout === "edit" ? rowRemoveBtnHtml(r) : "";
+  return `<div class="actions">
         ${r.ext ? (moreBtn || editRemoveBtn ? `<div class="actiongroup top">${editRemoveBtn}${moreBtn}</div>` : "") : `<div class="actiongroup top">
           ${(!r.gone || r.ext || !apiMode) ? "" :
             `<button class="iconbtn plain" data-relink="${r.i}"
@@ -8487,7 +9206,560 @@ function render() {
             }).join("")}
           </div>
         </div>`}
-      </div></td>
+      </div>`;
+}
+// Zelle der Aktionsspalte. Die Haupttabelle der DJ-Ansicht blendet die Spalte
+// per CSS aus, dort bleibt die Zelle leer. Sonst: 'eager' = sofort gefuellt
+// (sichtbare Zeilen), andernfalls leerer Platzhalter mit reservierter Hoehe
+// (--lazy-rowh, app.css), den actionObserver() fuellt. Fehlende Dateien und
+// Ersatzzeilen haben nur ein, zwei Knoepfe und eine andere Zeilenhoehe -- die
+// werden immer sofort gebaut, sonst spraenge die Tabelle beim Fuellen.
+function rowLinksCellHtml(r, eager) {
+  if (state.layout === "dj") return `<td class="links"></td>`;
+  if (eager || r.ext || r.gone || !apiMode) return `<td class="links">${rowActionsHtml(r)}</td>`;
+  return `<td class="links" data-lazyact="${r.i}"></td>`;
+}
+function fillActionCell(td) {
+  if (!td.hasAttribute("data-lazyact")) return false;
+  const r = DATA[+td.dataset.lazyact];
+  td.removeAttribute("data-lazyact");
+  if (r) td.innerHTML = rowActionsHtml(r);
+  return true;
+}
+// Zeilen (r.i), deren Aktionszelle gerade im oder nahe am Fenster steht. Ein
+// Neuaufbau fuellt genau diese sofort wieder -- sonst waeren die Icons nach
+// jedem render() ein Bild lang weg, bis der Observer nachkommt. Der Observer
+// meldet nach jedem Neuaufbau den Stand aller Zellen; der erste Rueckruf
+// danach ersetzt die Menge deshalb komplett (actGen/actSeenGen).
+let ACT_VISIBLE = new Set();
+let actObserver = null, actGen = 0, actSeenGen = 0;
+let lazyRowH = 128;          // zuletzt gemessene Hoehe einer gefuellten Zeile
+function actionObserver() {
+  if (actObserver || typeof IntersectionObserver !== "function") return actObserver;
+  actObserver = new IntersectionObserver(entries => {
+    if (actSeenGen !== actGen) { actSeenGen = actGen; ACT_VISIBLE = new Set(); }
+    let filled = false;
+    for (const e of entries) {
+      const td = e.target, tr = td.parentElement;
+      if (!tr || !td.isConnected) continue;
+      const i = +tr.dataset.i;
+      if (e.isIntersecting) {
+        ACT_VISIBLE.add(i);
+        if (fillActionCell(td)) filled = true;
+      } else ACT_VISIBLE.delete(i);
+    }
+    // Eine spaeter gefuellte Zelle kann breiter sein als die bisher gemessenen.
+    if (filled) syncTableWidths();
+  }, {rootMargin: "600px 0px"});
+  return actObserver;
+}
+function observeActionCells(tb, lazy) {
+  const io = actionObserver();
+  if (!io) return;
+  io.disconnect();
+  actGen++;
+  if (!lazy) { ACT_VISIBLE = new Set(); return; }
+  tb.querySelectorAll("tr.row > td.links").forEach(td => io.observe(td));
+  // Hoehe einer normalen, gefuellten Zeile als Platzhalter-Hoehe merken. Das
+  // Layout steht hier schon (syncTableWidths() hat gerade gemessen).
+  const full = tb.querySelector("tr.row:not(.expanded):not(.gone):not(.extrow) > td.links:not([data-lazyact])");
+  const h = full ? full.offsetHeight : 0;
+  if (h > 0 && h !== lazyRowH) { lazyRowH = h; tb.style.setProperty("--lazy-rowh", h + "px"); }
+}
+
+// ── Tabellen-Ereignisse: EIN Satz Handler am <tbody> ─────────────────────
+// Frueher suchte render() nach jedem Aufbau rund 35 Arten von Knoepfen
+// einzeln zusammen und haengte jedem einen eigenen Handler an, dazu vier je
+// Zeile. Jetzt haengt je Ereignisart ein Handler an #tb und findet sein Ziel
+// ueber das data-Attribut -- das gilt damit auch fuer Aktionszellen, die erst
+// nach render() gefuellt werden. Was die Handler vom letzten Aufbau wissen
+// muessen, steht in ROW_CTX. Detailzeilen (tr.detail: Wellenform, DJ-Editor)
+// verdrahten sich selbst und sind hier ausgenommen.
+let ROW_CTX = {rows: [], slice: [], rbReorderable: false, listRemove: null, plNodeId: null};
+let tableWired = false;
+
+// Zeilen-Play: im Player der Balken, sonst Detailzeile aufklappen und deren
+// Player schalten. Auch fuer die Leertaste, die keinen Knopf braucht.
+function rowPlayToggle(cr, tr) {
+  if (!cr) return;
+  if (state.layout === "player") {
+    if (queueState.current && queueState.current.i === cr.i) {
+      if (queueAudio.paused) queueAudio.play().catch(err => playFailed(queueAudio, err));
+      else queueAudio.pause();
+      return;
+    }
+    startQueueFrom(cr); return;
+  }
+  tr = tr || document.querySelector(`#tb tr.row[data-i="${cr.i}"]`);
+  if (!tr) return;
+  let det = tr.nextElementSibling;
+  if (!det || !det.classList.contains("detail")) { tr.click(); det = tr.nextElementSibling; }
+  const pb = det && det.querySelector("[data-act=toggle]");
+  if (pb) pb.click();
+}
+
+// Schluessel = dataset-Name des Attributs (data-play-next -> playNext).
+const ROW_CLICK_ACTIONS = {
+  relink: b => relinkMissing([DATA[+b.dataset.relink].p], b),
+  play: b => rowPlayToggle(DATA[+b.dataset.play], b.closest("tr")),
+  playNext: b => playNext(DATA[+b.dataset.playNext], b),
+  queueAdd: b => addToQueue(DATA[+b.dataset.queueAdd], b),
+  reveal: b => { reveal(b.dataset.reveal, b); },
+  // DJ-Liste: Pfad kopieren (djMetaLine()). Rueckmeldung wie bei reveal().
+  djcopy: async b => {
+    try {
+      await copyPlainText(b.dataset.djcopy);
+      b.classList.add("done");
+      note(t("action.path_copied"));
+    } catch (err) {
+      b.classList.add("failed");
+      note(t("dj.copy_path_failed"), true);
+    }
+    setTimeout(() => b.classList.remove("done", "failed"), 1000);
+  },
+  copy: b => {
+    navigator.clipboard.writeText(b.dataset.copy);
+    b.textContent = t("action.path_copied");
+    b.classList.add("copied");
+    clearTimeout(b._copyTimer);
+    b._copyTimer = setTimeout(() => { b.textContent = shortPath(b.dataset.copy); b.classList.remove("copied"); }, 1100);
+  },
+  tagissues: b => {
+    const row = DATA.find(x => x.p === b.dataset.tagissues);
+    if (row) openTagIssuesPopup(row, false);
+  },
+  tagfixmanual: b => {
+    const row = DATA.find(x => x.p === b.dataset.tagfixmanual);
+    if (row) openTagsPopup(row, false);
+  },
+  tagfixauto: async b => {
+    const row = DATA.find(x => x.p === b.dataset.tagfixauto);
+    if (!row) return;
+    b.disabled = true;
+    try {
+      const fixed = await fixTagIssuesOne(row, false);
+      updateCards(); render();
+      note(t("toast.tag_issues_fixed", {name: baseName(row.p), count: fixed.length}));
+    } catch (err) {
+      note(t("error.failed", {error: err.message}), true);
+      b.disabled = false;
+    }
+  },
+  fl: b => {
+    const [listId, idx] = b.dataset.fl.split(":");
+    const r = DATA[+idx];
+    setFavorite(r, listId, !(PLAYLIST_SETS[listId] && PLAYLIST_SETS[listId].has(r.p)));
+  },
+  dupdismiss: b => toggleDupGroupDismissed(Number(b.dataset.dupdismiss)),
+  duptrash: b => trashDupRest(Number(b.dataset.duptrash)),
+  dupkeep: b => toggleDupKeep(DATA[+b.dataset.dupkeep]),
+  grouprename: b => renameGroupValue(b.dataset.grouprename, b.dataset.value, b.dataset.groupartist),
+  store: b => openStore(b.dataset.store, b),
+  rx: b => openInEditor(DATA[+b.dataset.rx], b),
+  rdaw: b => openInDaw(DATA[+b.dataset.rdaw], b),
+  mik: b => openInMik([DATA[+b.dataset.mik]], b),
+  music: b => openInMusic(DATA[+b.dataset.music], b),
+  playlistadd: b => openPlaylistPicker([DATA[+b.dataset.playlistadd].p]),
+  cover: b => openCoverPreview(DATA[+b.dataset.cover]),
+  tags: b => openTagsPopup(DATA[+b.dataset.tags]),
+  plremove: b => {
+    const target = playerRemoveTarget();
+    const r = DATA[+b.dataset.plremove];
+    if (target && r) target.run(r);
+  },
+  more: b => openRowMoreMenu(DATA[+b.dataset.more], b),
+  sel: (c, ev) => {
+    const selBoxes = [...document.querySelectorAll("#tb [data-sel]")];
+    const pos = selBoxes.indexOf(c);
+    // Anker wieder in der aktuellen Liste suchen (Nachladen/Neuzeichnen haben die Zeilen neu aufgebaut).
+    const anchor = lastSelPos === null ? -1 : selBoxes.findIndex(b => +b.dataset.sel === lastSelPos);
+    if (ev.shiftKey && anchor >= 0) {
+      const [a, b] = [anchor, pos].sort((x, y) => x - y);
+      const checked = c.checked;
+      for (let k = a; k <= b; k++) {
+        const box = selBoxes[k];
+        box.checked = checked;
+        checked ? state.selected.add(+box.dataset.sel) : state.selected.delete(+box.dataset.sel);
+        box.closest("tr").classList.toggle("picked", checked);
+      }
+    } else {
+      c.checked ? state.selected.add(+c.dataset.sel) : state.selected.delete(+c.dataset.sel);
+      c.closest("tr").classList.toggle("picked", c.checked);
+    }
+    lastSelPos = +c.dataset.sel;
+    syncSelectAll(ROW_CTX.slice);
+    renderBulkBar();
+  },
+};
+
+function onRowClick(tr) {
+  const tb = tr.parentElement;
+  const r = DATA[+tr.dataset.i];
+  // Gleiche visuelle Markierung wie bei Pfeiltasten-Navigation/Klick in der
+  // Player-Ansicht (siehe setCursorRow()) -- hier zusaetzlich zu dem
+  // startQueueFrom()-Aufruf unten (der sie fuer die Player-Ansicht ohnehin
+  // setzt), weil die Bearbeiten-Ansicht bei einem Zeilen-Klick nur die
+  // Wellenform aufklappt statt sofort abzuspielen (siehe naechster
+  // Kommentar) und den Aufruf dort sonst nie erreichen wuerde.
+  setCursorRow(r.i);
+  // Player-Ansicht: kein Aufklappen mit Wellenform mehr -- der Klick laedt
+  // den Track stattdessen in den fixen Mediaplayer-Balken (queueState
+  // weiter unten), inkl. neuer, an dieser Position eingefrorener
+  // Warteschlange. Siehe Architekturentscheidung im Plan zu Issue #13.
+  if (state.layout === "player") { if (!r.gone) startQueueFrom(r); return; }
+  // Ersatzzeile einer fremden Playlist: keine Datei, keine Messwerte --
+  // eine Detailzeile mit Wellenform waere leer und der Player liefe ins
+  // Nichts.
+  if (r.ext) return;
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("detail")) {
+    next.remove(); tr.classList.remove("expanded"); spanLinksIntoDetail(tr, false); return;
+  }
+  // DJ-Ansicht: immer nur EIN Editor offen -- er haelt die Tastatur, den
+  // Abspielkopf und seine eigene Wiedergabe.
+  const isDj = state.layout === "dj";
+  if (isDj) {
+    tb.querySelectorAll("tr.detail.expanded").forEach(open => {
+      if (open.previousElementSibling) open.previousElementSibling.classList.remove("expanded");
+      open.remove();
+    });
+  }
+  const det = document.createElement("tr");
+  det.className = "detail expanded";
+  // 3 feste Spalten (Checkbox, Fuellzelle, Öffnen) + aktuell sichtbare
+  // optionale Spalten (inkl. Status, seit der auch ausblendbar ist) --
+  // dynamisch statt fest verdrahtet, sonst faellt die Detailzeile (inkl.
+  // Player/Waveform) hinter der echten Tabellenbreite zurueck, sobald sich
+  // die Spaltenzahl aendert. Minus 1: "Öffnen" reicht per rowspan in die
+  // Detailzeile hinein (spanLinksIntoDetail()).
+  const visibleCols = 3 + (state.view === "duplicates" ? 1 : 0)
+    + OPTIONAL_COLUMNS.filter(c => !colHidden(c.key)).length;
+  det.innerHTML = `<td colspan="${visibleCols - 1}">${isDj ? djDetailHTML(r) : detailHTML(r)}</td>`;
+  spanLinksIntoDetail(tr, true);
+  // Die Aktionsspalte reicht aufgeklappt neben die Wellenform -- nicht warten,
+  // bis der Observer sie fuellt.
+  const links = tr.querySelector(":scope > td.links");
+  if (links && fillActionCell(links)) syncTableWidths();
+  tr.after(det);
+  tr.classList.add("expanded");
+  if (isDj) djMount(det, r); else mountLibraryPlayer(det, r);
+}
+
+function onTableClick(ev) {
+  const tb = ev.currentTarget;
+  const start = ev.target.nodeType === 1 ? ev.target : ev.target.parentElement;
+  if (!start || !tb.contains(start) || start.closest("tr.detail")) return;
+  for (let el = start; el && el !== tb; el = el.parentElement) {
+    if (el.dataset.duptoggle !== undefined) {
+      // Gruppenkopf der Duplikate auf-/zuklappen -- nicht ueber seine Knoepfe.
+      if (start.closest("button")) return;
+      const gid = Number(el.dataset.duptoggle);
+      DUP_OPEN_GROUPS.has(gid) ? DUP_OPEN_GROUPS.delete(gid) : DUP_OPEN_GROUPS.add(gid);
+      render();
+      return;
+    }
+    for (const key in el.dataset) {
+      const run = ROW_CLICK_ACTIONS[key];
+      if (!run) continue;
+      // Wie die frueheren Einzel-Handler: der Klick gehoert dem Knopf und geht
+      // weder an die Zeile noch an Listener weiter oben (Menues schliessen ...).
+      ev.stopPropagation();
+      run(el, ev);
+      return;
+    }
+  }
+  const tr = start.closest("tr.row");
+  if (!tr || tr.parentElement !== tb || start.closest("a, button, input")) return;
+  onRowClick(tr);
+}
+
+function dragRowOf(ev, tb) {
+  const el = ev.target && (ev.target.nodeType === 1 ? ev.target : ev.target.parentElement);
+  const tr = el && el.closest("tr.row");
+  return tr && tr.parentElement === tb ? tr : null;
+}
+function onTableDragStart(ev) {
+  const tr = dragRowOf(ev, ev.currentTarget);
+  if (!tr) return;
+  const rbReorderable = ROW_CTX.rbReorderable;
+  const r = DATA[+tr.dataset.i];
+  // Das Ende haengt an der gezogenen Zeile selbst, nicht an #tb: baut ein
+  // render() die Tabelle waehrend des Ziehens neu, ist die Zeile ausgehaengt
+  // und ihr dragend erreicht #tb nicht mehr.
+  tr.addEventListener("dragend", () => {
+    document.body.classList.remove("dragging-tracks");
+    clearTreeDropMarks();
+    clearRowDropMarks();
+  }, {once: true});
+  // Ist die gezogene Zeile Teil der Mehrfachauswahl, wandert die GANZE
+  // Auswahl mit -- sonst waere das Auswaehlen mehrerer Zeilen fuer den Baum
+  // wertlos. Sonst zaehlt nur die eine Zeile, unabhaengig von der Auswahl.
+  const dragRows = state.selected.has(r.i)
+    ? filtered().filter(x => state.selected.has(x.i))
+    : [r];
+  // Zeilen-Indizes fuer das Umsortieren in einer Rekordbox-Playlist --
+  // dort zaehlen auch Titel ohne lokale Datei (Ersatzzeilen, kein Pfad).
+  if (rbReorderable) ev.dataTransfer.setData(DND_ROWS, JSON.stringify(dragRows.map(x => x.i)));
+  // Titel ohne lokale Datei: ausserhalb einer Rekordbox-Playlist gar nicht
+  // ziehbar (draggable="false" im Markup), dort nur zum Umsortieren -- ohne
+  // Pfad gibt es nichts, was in eine Playlist oder den Finder wandern kann.
+  if (r.ext) {
+    if (!rbReorderable) { ev.preventDefault(); return; }
+    ev.dataTransfer.effectAllowed = "move";
+    refreshRbRunning();
+    ev.dataTransfer.setDragImage(buildDragBadge(r, dragRows.length - 1), 20, 20);
+    return;
+  }
+  const paths = dragRows.filter(x => !x.ext).map(x => x.p);
+  ev.dataTransfer.setData(DND_TRACKS, JSON.stringify(paths));
+  // "copy" ALLEIN reicht nicht: das Umsortieren innerhalb einer Playlist
+  // (weiter unten) setzt beim Ablegen dropEffect="move" -- ohne "move" in
+  // effectAllowed lehnt der Browser (v.a. Safari) die Ablage kommentarlos
+  // ab, ondrop feuert dann nie. "copyMove" deckt beide Faelle ab: Kopieren
+  // beim Ablegen auf eine Playlist im Baum, Verschieben beim Umsortieren.
+  ev.dataTransfer.effectAllowed = "copyMove";
+  // Zieht man Zeilen aus dem Browserfenster hinaus (z.B. auf den Finder),
+  // soll die eigentliche Audiodatei dorthin kopiert werden -- der von
+  // Chrome/Safari unterstuetzte "DownloadURL"-Mechanismus laesst den
+  // Browser die Datei beim Ablegen selbst herunterladen. Nur mit Server
+  // moeglich (/api/audio gibt es im localStorage-Fallback nicht). Der
+  // Mechanismus liefert pro Zug nur EINE Datei -- bei Mehrfachauswahl
+  // buendelt sie /api/download-zip serverseitig zu einem ZIP, sonst kaeme
+  // beim Ziehen mehrerer Zeilen (Browser-Grenze) immer nur die erste an.
+  if (apiMode) {
+    const downloadUrl = paths.length === 1
+      ? `application/octet-stream:${baseName(paths[0])}:${location.origin}/api/audio?path=${encodeURIComponent(paths[0])}`
+      : `application/zip:${t("dragout.zip_name", {count: paths.length})}:${location.origin}/api/download-zip?paths=${encodeURIComponent(JSON.stringify(paths))}&name=${encodeURIComponent(t("dragout.zip_name", {count: paths.length}))}`;
+    ev.dataTransfer.setData("DownloadURL", downloadUrl);
+  }
+  document.body.classList.add("dragging-tracks");
+  refreshRbRunning();
+  ev.dataTransfer.setDragImage(buildDragBadge(r, paths.length - 1), 20, 20);
+}
+// Umsortieren per Ablegen auf eine Zeile: in einer eigenen Playlist (DND_TRACKS,
+// unabhaengig von einer aktiven Spaltensortierung -- reorderInPlaylist()
+// schaltet auf die manuelle Reihenfolge zurueck) oder in einer Rekordbox-
+// Playlist (DND_ROWS, schreibt die Reihenfolge nach Rekordbox, nur wenn es
+// geschlossen ist). Die eigene Playlist hat Vorrang, wie bisher.
+function rowDropKind(ev) {
+  const kind = ROW_CTX.plNodeId && apiMode ? DND_TRACKS : ROW_CTX.rbReorderable ? DND_ROWS : null;
+  return kind && [...(ev.dataTransfer.types || [])].includes(kind) ? kind : null;
+}
+function onTableDragOver(ev) {
+  const tr = dragRowOf(ev, ev.currentTarget);
+  const kind = tr && rowDropKind(ev);
+  if (!kind) return;
+  if (kind === DND_ROWS && rbRunning) { ev.dataTransfer.dropEffect = "none"; clearRowDropMarks(); return; }
+  ev.preventDefault();
+  ev.dataTransfer.dropEffect = "move";
+  const rect = tr.getBoundingClientRect();
+  clearRowDropMarks();
+  tr.classList.add((ev.clientY - rect.top) / rect.height < 0.5 ? "dropbefore" : "dropafter");
+}
+function onTableDragLeave(ev) {
+  const tr = dragRowOf(ev, ev.currentTarget);
+  if (!tr || !(ROW_CTX.rbReorderable || (ROW_CTX.plNodeId && apiMode))) return;
+  if (!tr.contains(ev.relatedTarget)) clearRowDropMarks();
+}
+function onTableDrop(ev) {
+  const tr = dragRowOf(ev, ev.currentTarget);
+  const kind = tr && rowDropKind(ev);
+  if (!kind) return;
+  ev.preventDefault();
+  const rect = tr.getBoundingClientRect();
+  const where = (ev.clientY - rect.top) / rect.height < 0.5 ? "before" : "after";
+  clearRowDropMarks();
+  let items = [];
+  try { items = JSON.parse(ev.dataTransfer.getData(kind) || "[]"); }
+  catch (e) { items = []; }
+  if (kind === DND_ROWS) reorderRekordboxPlaylist(items, DATA[+tr.dataset.i], where);
+  else reorderInPlaylist(ROW_CTX.plNodeId, items, DATA[+tr.dataset.i].p, where);
+}
+function wireTableOnce(tb) {
+  if (tableWired) return;
+  tableWired = true;
+  tb.addEventListener("click", onTableClick);
+  tb.addEventListener("dragstart", onTableDragStart);
+  tb.addEventListener("dragover", onTableDragOver);
+  tb.addEventListener("dragleave", onTableDragLeave);
+  tb.addEventListener("drop", onTableDrop);
+}
+
+function render() {
+  document.body.classList.add("booted");
+  closeRowMoreMenu();
+  // Ein Playlist-Generator ersetzt die Tabelle (generator.js) -- dort gibt
+  // es nichts zu filtern oder zu zeichnen.
+  if (syncGeneratorPane()) return;
+  renderSearchChips();
+  renderPlaylistHeaderValueBox();
+  renderIssueBubbles();
+  renderTagBubbles();
+  if (dupGroupsDirty) { computeDuplicateGroups(); dupGroupsDirty = false; }
+  renderDupTabs();
+  const rows = filtered();
+  POS_MAP = listPositionMap(currentView());
+  // Geoeffnete normale Rekordbox-Playlist: Zeilen lassen sich dort
+  // umsortieren (inkl. Titel ohne lokale Datei).
+  const rbReorderable = !!currentRekordboxPlaylist();
+  // "Aus Playlist entfernen" steht in Bearbeiten und Player als Knopf in der
+  // Zeile (Bearbeiten: neben "Zur Playlist hinzufuegen", nicht im "…"-Menue;
+  // Player: statt des "…"-Menues). DJ hat keine Aktionsspalte -> Menue.
+  const listRemove = (state.layout === "player" || state.layout === "edit") && apiMode
+    ? playerRemoveTarget() : null;
+  state.totalFiltered = rows.length;
+  // Ergebniszahl direkt an der Suchleiste -- state.totalFiltered ist bereits
+  // NACH Liste/Verdikt-Chips/"nur harte Kante"/Suche gezaehlt (siehe
+  // filtered()), zeigt also wirklich das Suchergebnis, nicht die
+  // Bibliotheksgroesse. "weitere laden" (list.showing_count unten am Ende der
+  // Tabelle) zaehlt zusaetzlich die aktuell gerenderte Teilmenge dazu -- hier
+  // reicht die reine Trefferzahl.
+  const rc = document.getElementById("searchResultCount");
+  if (rc) rc.textContent = t("search.result_count", {count: rows.length.toLocaleString("de-DE")});
+  // Auswahl auf die aktuell gefilterte Ansicht begrenzen -- nach einem
+  // Wechsel von View/Verdikt-Chips/Suche/Schwellwerten sollen zuvor
+  // ausgewaehlte, jetzt nicht mehr sichtbare Zeilen nicht "geheim" in
+  // state.selected haengen bleiben (sonst wirken Bulk-Aktionen spaeter auf
+  // Zeilen aus einer laengst verlassenen Ansicht). "weitere laden" schneidet
+  // die Liste erst danach per state.shown, ist also hier nicht betroffen.
+  if (state.selected.size) {
+    const visible = new Set(rows.map(r => r.i));
+    for (const i of state.selected) if (!visible.has(i)) state.selected.delete(i);
+  }
+  const view = currentView();
+  // In der Duplikate-Ansicht ist die Gruppierung immer aktiv (siehe
+  // groupMode weiter unten) -- die Checkbox waere dort ohne Wirkung und
+  // wird deshalb gesperrt statt einen Zustand vorzutaeuschen, der nicht
+  // greift.
+  const gaToggle = document.getElementById("groupAlbums");
+  if (gaToggle) {
+    const forced = view.id === "duplicates" || view.id in GRP_VIEW_FIELD;
+    gaToggle.disabled = forced;
+    gaToggle.closest(".toggle").classList.toggle("disabled", forced);
+  }
+  const tb = document.getElementById("tb");
+  wireTableOnce(tb);
+  // Aktionsspalte: nur fuer Zeilen im Fenster sofort bauen, siehe
+  // rowLinksCellHtml(). Ohne Observer (oder in der DJ-Ansicht) alles sofort.
+  const lazyActions = state.layout !== "dj" && typeof IntersectionObserver === "function";
+  const eagerActions = Math.ceil(window.innerHeight / lazyRowH) + 1;
+  const plNodeNow = currentPlaylistNode();
+  ROW_CTX = {rows, slice: null, rbReorderable, listRemove, plNodeId: plNodeNow ? plNodeNow.id : null};
+  // Eine aufgeklappte Zeile traegt die Wellenform-Ansicht (siehe
+  // mountLibraryPlayer(), traegt bei den Einzelpruefungen zusaetzlich das
+  // eigene Audio-Objekt, siehe mountDropPlayer()) -- tb.innerHTML weiter
+  // unten wuerde sie sonst zerstoeren, auch wenn render() nur wegen einer
+  // ANDEREN Zeile aufgerufen wurde (z.B. Klick auf "Zu Rekordbox hinzufuegen"
+  // bei einem Nachbartrack). Die .detail-Knoten werden deshalb vor dem
+  // Neuaufbau beiseitegenommen und danach, falls ihre Zeile noch in der
+  // aktuellen Ansicht steht, an derselben Stelle wieder eingehaengt -- alles
+  // synchron, bevor der jeweilige MutationObserver ueberhaupt zum Zug kommt.
+  const expandedByIdx = new Map();
+  tb.querySelectorAll("tr.detail.expanded").forEach(det => {
+    const tr = det.previousElementSibling;
+    if (tr && tr.classList.contains("row")) {
+      expandedByIdx.set(+tr.dataset.i, det);
+      det.remove();
+    }
+  });
+  const slice = rows.slice(0, state.shown);
+  ROW_CTX.slice = slice;
+  const hid = colHidden;
+  // Gruppierung: Album-Checkbox ODER die Duplikate-Ansicht (dort immer aktiv,
+  // unabhaengig von der Checkbox -- filtered() sortiert dafuer bereits nach
+  // r.dg). Beide teilen sich dieselbe Header-/Zaehl-Logik, nur Schluessel-
+  // und Label-Funktion unterscheiden sich.
+  const groupMode = view.id === "duplicates" ? "dup"
+    : (view.id === "grp:album" || state.groupAlbums) ? "album"
+    : view.id === "grp:genre" ? "genre"
+    : view.id === "grp:artist" ? "artist"
+    : null;
+  // grp:album/grp:genre/grp:artist gruppieren EXAKT (Gross-/Kleinschreibung
+  // UND Leerzeichen zaehlen, kein trim()) -- sie sollen "Bootleg"/"BOOTLEG"
+  // bzw. "Bootleg"/"Bootleg " als je zwei Gruppen zeigen, genau wie
+  // Bubble-Leiste und Zusammenfuehrungs-Vorschlaege (groupCounts()/
+  // albumGroupCounts() trimmen ebenfalls nicht). Die Checkbox "nach Album
+  // gruppieren" (state.groupAlbums, in anderen Ansichten) behaelt ihr
+  // bisheriges, bewusst grosszuegigeres albumGroupKey() unveraendert bei.
+  const groupKeyOf = groupMode === "dup" ? (r => r.dg ?? null)
+    : groupMode === "album" ? (view.id === "grp:album" ? albumGroupKeyExact : albumGroupKey)
+    : groupMode === "genre" ? (r => r.ge || null)
+    : groupMode === "artist" ? (r => r.a || null)
+    : null;
+  // Gruppen-Gesamtzahl aus der VOLLSTAENDIGEN gefilterten/sortierten Liste,
+  // nicht nur dem geladenen Ausschnitt -- der Header zeigt sonst bei
+  // paginierten Gruppen eine falsche (zu niedrige) Anzahl.
+  // In der Duplikate-Ansicht faellt im selben Durchgang mit ab, ob JEDE Kopie
+  // einer Gruppe bestaetigt ist (faerbt den Gruppenkopf). Das stand frueher
+  // als rows.filter(...) IM Gruppenkopf, lief also einmal ueber alle Zeilen
+  // je gezeichnetem Kopf -- bei vielen kleinen Gruppen quadratisch.
+  const groupAllDismissed = groupMode === "dup" ? new Map() : null;
+  const groupTotals = groupMode ? (() => {
+    const m = new Map();
+    for (const gr of rows) {
+      const k = groupKeyOf(gr);
+      if (k === null) continue;
+      m.set(k, (m.get(k) || 0) + 1);
+      if (groupAllDismissed) groupAllDismissed.set(k, (groupAllDismissed.get(k) ?? true) && !!gr.dd);
+    }
+    return m;
+  })() : null;
+  // Gruppenkopf ueber genau so viele Spalten wie eine Zeile Zellen hat:
+  // Checkbox, Status, sichtbare Spalten, Fuellzelle, "Öffnen" (in der DJ-
+  // Ansicht ausgeblendet, zaehlt dort nicht). Frueher colspan="100" -- das
+  // legte bei table-layout:fixed rund 95 leere Spalten an. In Bearbeiten/
+  // Player fiel das nicht auf (alle Spalten mit fester Breite), in der DJ-
+  // Ansicht teilt sich "Track" (width:auto) den Rest mit ihnen und fiel auf
+  // Breite 0 zusammen.
+  const groupSpan = 1 + (groupMode === "dup" ? 1 : 0) + state.colOrder.filter(k => !hid(k) && CELL_RENDERERS[k]).length
+    + 1 + (state.layout === "dj" ? 0 : 1);
+  syncDupColumn(groupMode === "dup");
+  let lastGroupKey;   // Sentinel undefined -- erste Zeile bekommt so garantiert einen Header
+  tb.innerHTML = slice.map((r,i) => {
+    let groupHeader = "";
+    if (groupMode) {
+      const key = groupKeyOf(r);
+      if (key !== null && key !== lastGroupKey) {
+        if (groupMode === "dup") {
+          groupHeader = dupGroupHeaderHtml(key, groupSpan);
+        } else if (groupMode === "album") {
+          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(r.al || "")} <span class="albumgroup-artist">— ${esc(r.aa || r.a || "")}</span>
+              <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>
+              <button type="button" class="genrerename" data-grouprename="album" data-value="${esc(r.al || "")}"
+                      data-groupartist="${esc(r.aa || r.a || "")}"
+                      title="${esc(fieldEditTitle("album"))}">${ICONS.edit}</button></td></tr>`;
+        } else if (groupMode === "genre") {
+          const label = r.ge || t("group.no_genre");
+          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(label)}
+              <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>${
+                r.ge ? `<button type="button" class="genrerename" data-grouprename="genre" data-value="${esc(r.ge)}"
+                      title="${esc(fieldEditTitle("genre"))}">${ICONS.edit}</button>` : ""}</td></tr>`;
+        } else if (groupMode === "artist") {
+          const label = r.a || t("group.no_artist");
+          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(label)}
+              <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>${
+                r.a ? `<button type="button" class="genrerename" data-grouprename="artist" data-value="${esc(r.a)}"
+                      title="${esc(fieldEditTitle("artist"))}">${ICONS.edit}</button>` : ""}</td></tr>`;
+        }
+      }
+      lastGroupKey = key;
+    }
+    // Reiter "Kein Duplikat": Gruppen eingeklappt, nur der Kopf bleibt stehen.
+    if (groupMode === "dup" && state.dupTab === "dismissed" && !DUP_OPEN_GROUPS.has(r.dg)) return groupHeader;
+    const dupCls = groupMode === "dup"
+      ? " dupmember" + (dupIsKept(r) ? " dupkept" : "") + (slice[i + 1] && slice[i + 1].dg === r.dg ? "" : " duplast") : "";
+    const nowPlaying = queueState.current && queueState.current.i === r.i;
+    // Fremdzeilen (r.ext) nur aus Music-/Rekordbox-Listen; in Bearbeiten auch
+    // fehlende Dateien, damit sich ein toter Eintrag aus der Liste nehmen laesst.
+    return groupHeader + `
+    <tr class="row${dupCls}${r.ig ? " ign" : ""}${r.mc ? " corr" : ""}${r.ext ? " extrow" : r.gone ? " gone" : ""}${state.selected.has(r.i) ? " picked" : ""}${r.i === cursorRowI ? " kbcursor" : ""}${freshFrom >= 0 && i >= freshFrom ? " fresh" : ""}" data-i="${r.i}" draggable="${r.ext && !rbReorderable ? "false" : "true"}">
+      <td class="sel"><input type="checkbox" class="selchk" data-sel="${r.i}" ${state.selected.has(r.i) ? "checked" : ""}>${
+        nowPlaying ? `<span class="nowplayingicon" title="${esc(t("player.now_playing_title"))}">${ICONS.audioLines}</span>` : ""}</td>
+      ${groupMode === "dup" ? `<td class="dupcol">${dupKeepBtnHtml(r)}</td>` : ""}
+      ${state.colOrder.filter(k => !hid(k) && CELL_RENDERERS[k]).map(k => dupCls
+        ? dupMarkCell(CELL_RENDERERS[k](r, true), k, r.dg) : CELL_RENDERERS[k](r, true)).join("")}
+      <td class="filler">${state.layout === "dj" ? rowMoreBtnHtml(r) : ""}</td>
+      ${rowLinksCellHtml(r, !lazyActions || i < eagerActions || ACT_VISIBLE.has(r.i))}
     </tr>`;
   }).join("");
   freshFrom = -1;
@@ -8500,6 +9772,7 @@ function render() {
     });
   }
   syncTableWidths();
+  observeActionCells(tb, lazyActions);
   syncToTopButton();
 
   document.getElementById("more").innerHTML =
@@ -8515,347 +9788,6 @@ function render() {
   const la = document.getElementById("loadall");
   if (la) la.onclick = e => { e.preventDefault(); beginLoadMore(rows, rows.length); };
 
-  tb.querySelectorAll("tr.row").forEach(tr => tr.ondragstart = ev => {
-    const r = DATA[+tr.dataset.i];
-    // Ist die gezogene Zeile Teil der Mehrfachauswahl, wandert die GANZE
-    // Auswahl mit -- sonst waere das Auswaehlen mehrerer Zeilen fuer den Baum
-    // wertlos. Sonst zaehlt nur die eine Zeile, unabhaengig von der Auswahl.
-    const dragRows = state.selected.has(r.i)
-      ? filtered().filter(x => state.selected.has(x.i))
-      : [r];
-    // Zeilen-Indizes fuer das Umsortieren in einer Rekordbox-Playlist --
-    // dort zaehlen auch Titel ohne lokale Datei (Ersatzzeilen, kein Pfad).
-    if (rbReorderable) ev.dataTransfer.setData(DND_ROWS, JSON.stringify(dragRows.map(x => x.i)));
-    // Titel ohne lokale Datei: ausserhalb einer Rekordbox-Playlist gar nicht
-    // ziehbar (draggable="false" im Markup), dort nur zum Umsortieren -- ohne
-    // Pfad gibt es nichts, was in eine Playlist oder den Finder wandern kann.
-    if (r.ext) {
-      if (!rbReorderable) { ev.preventDefault(); return; }
-      ev.dataTransfer.effectAllowed = "move";
-      refreshRbRunning();
-      ev.dataTransfer.setDragImage(buildDragBadge(r, dragRows.length - 1), 20, 20);
-      return;
-    }
-    const paths = dragRows.filter(x => !x.ext).map(x => x.p);
-    ev.dataTransfer.setData(DND_TRACKS, JSON.stringify(paths));
-    // "copy" ALLEIN reicht nicht: das Umsortieren innerhalb einer Playlist
-    // (weiter unten) setzt beim Ablegen dropEffect="move" -- ohne "move" in
-    // effectAllowed lehnt der Browser (v.a. Safari) die Ablage kommentarlos
-    // ab, ondrop feuert dann nie. "copyMove" deckt beide Faelle ab: Kopieren
-    // beim Ablegen auf eine Playlist im Baum, Verschieben beim Umsortieren.
-    ev.dataTransfer.effectAllowed = "copyMove";
-    // Zieht man Zeilen aus dem Browserfenster hinaus (z.B. auf den Finder),
-    // soll die eigentliche Audiodatei dorthin kopiert werden -- der von
-    // Chrome/Safari unterstuetzte "DownloadURL"-Mechanismus laesst den
-    // Browser die Datei beim Ablegen selbst herunterladen. Nur mit Server
-    // moeglich (/api/audio gibt es im localStorage-Fallback nicht). Der
-    // Mechanismus liefert pro Zug nur EINE Datei -- bei Mehrfachauswahl
-    // buendelt sie /api/download-zip serverseitig zu einem ZIP, sonst kaeme
-    // beim Ziehen mehrerer Zeilen (Browser-Grenze) immer nur die erste an.
-    if (apiMode) {
-      const downloadUrl = paths.length === 1
-        ? `application/octet-stream:${baseName(paths[0])}:${location.origin}/api/audio?path=${encodeURIComponent(paths[0])}`
-        : `application/zip:${t("dragout.zip_name", {count: paths.length})}:${location.origin}/api/download-zip?paths=${encodeURIComponent(JSON.stringify(paths))}&name=${encodeURIComponent(t("dragout.zip_name", {count: paths.length}))}`;
-      ev.dataTransfer.setData("DownloadURL", downloadUrl);
-    }
-    document.body.classList.add("dragging-tracks");
-    refreshRbRunning();
-    ev.dataTransfer.setDragImage(buildDragBadge(r, paths.length - 1), 20, 20);
-  });
-  tb.querySelectorAll("tr.row").forEach(tr => tr.ondragend = () => {
-    document.body.classList.remove("dragging-tracks");
-    clearTreeDropMarks();
-    clearRowDropMarks();
-  });
-
-  // Umsortieren innerhalb einer eigenen Playlist -- unabhaengig davon, ob
-  // gerade eine Spaltensortierung aktiv ist. Frueher hingen die Handler an
-  // "state.sort ist leer"; wer einmal auf einen Spaltenkopf geklickt hatte,
-  // konnte danach nichts mehr ziehen und bekam dafuer keine Erklaerung. Jetzt
-  // wird beim Ablegen auf die manuelle Reihenfolge zurueckgeschaltet (siehe
-  // reorderInPlaylist), sodass das Ergebnis auch sichtbar wird.
-  if (rbReorderable) {
-    // Umsortieren in einer Rekordbox-Playlist: schreibt die neue
-    // Zahlenreihenfolge nach Rekordbox (geschlossen, siehe rbRunning).
-    tb.querySelectorAll("tr.row").forEach(tr => {
-      tr.ondragover = ev => {
-        if (![...(ev.dataTransfer.types || [])].includes(DND_ROWS)) return;
-        if (rbRunning) { ev.dataTransfer.dropEffect = "none"; clearRowDropMarks(); return; }
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = "move";
-        const rect = tr.getBoundingClientRect();
-        clearRowDropMarks();
-        tr.classList.add((ev.clientY - rect.top) / rect.height < 0.5 ? "dropbefore" : "dropafter");
-      };
-      tr.ondragleave = ev => {
-        if (!tr.contains(ev.relatedTarget)) clearRowDropMarks();
-      };
-      tr.ondrop = ev => {
-        if (![...(ev.dataTransfer.types || [])].includes(DND_ROWS)) return;
-        ev.preventDefault();
-        const rect = tr.getBoundingClientRect();
-        const where = (ev.clientY - rect.top) / rect.height < 0.5 ? "before" : "after";
-        clearRowDropMarks();
-        let idxs = [];
-        try { idxs = JSON.parse(ev.dataTransfer.getData(DND_ROWS) || "[]"); }
-        catch (e) { idxs = []; }
-        reorderRekordboxPlaylist(idxs, DATA[+tr.dataset.i], where);
-      };
-    });
-  }
-
-  const plNode = currentPlaylistNode();
-  if (plNode && apiMode) {
-    tb.querySelectorAll("tr.row").forEach(tr => {
-      tr.ondragover = ev => {
-        if (![...(ev.dataTransfer.types || [])].includes(DND_TRACKS)) return;
-        ev.preventDefault();
-        ev.dataTransfer.dropEffect = "move";
-        const rect = tr.getBoundingClientRect();
-        clearRowDropMarks();
-        tr.classList.add((ev.clientY - rect.top) / rect.height < 0.5
-          ? "dropbefore" : "dropafter");
-      };
-      tr.ondragleave = ev => {
-        if (!tr.contains(ev.relatedTarget)) clearRowDropMarks();
-      };
-      tr.ondrop = ev => {
-        if (![...(ev.dataTransfer.types || [])].includes(DND_TRACKS)) return;
-        ev.preventDefault();
-        const rect = tr.getBoundingClientRect();
-        const where = (ev.clientY - rect.top) / rect.height < 0.5 ? "before" : "after";
-        clearRowDropMarks();
-        let paths = [];
-        try { paths = JSON.parse(ev.dataTransfer.getData(DND_TRACKS) || "[]"); }
-        catch (e) { paths = []; }
-        reorderInPlaylist(plNode.id, paths, DATA[+tr.dataset.i].p, where);
-      };
-    });
-  }
-
-  tb.querySelectorAll("tr.row").forEach(tr => tr.onclick = ev => {
-    if (ev.target.closest("a") || ev.target.closest("button") || ev.target.closest("input")) return;
-    const r = DATA[+tr.dataset.i];
-    // Gleiche visuelle Markierung wie bei Pfeiltasten-Navigation/Klick in der
-    // Player-Ansicht (siehe setCursorRow()) -- hier zusaetzlich zu dem
-    // startQueueFrom()-Aufruf unten (der sie fuer die Player-Ansicht ohnehin
-    // setzt), weil die Bearbeiten-Ansicht bei einem Zeilen-Klick nur die
-    // Wellenform aufklappt statt sofort abzuspielen (siehe naechster
-    // Kommentar) und den Aufruf dort sonst nie erreichen wuerde.
-    setCursorRow(r.i);
-    // Player-Ansicht: kein Aufklappen mit Wellenform mehr -- der Klick laedt
-    // den Track stattdessen in den fixen Mediaplayer-Balken (queueState
-    // weiter unten), inkl. neuer, an dieser Position eingefrorener
-    // Warteschlange. Siehe Architekturentscheidung im Plan zu Issue #13.
-    if (state.layout === "player") { if (!r.gone) startQueueFrom(r); return; }
-    // Ersatzzeile einer fremden Playlist: keine Datei, keine Messwerte --
-    // eine Detailzeile mit Wellenform waere leer und der Player liefe ins
-    // Nichts.
-    if (r.ext) return;
-    const next = tr.nextElementSibling;
-    if (next && next.classList.contains("detail")) {
-      next.remove(); tr.classList.remove("expanded"); spanLinksIntoDetail(tr, false); return;
-    }
-    // DJ-Ansicht: immer nur EIN Editor offen -- er haelt die Tastatur, den
-    // Abspielkopf und seine eigene Wiedergabe.
-    const isDj = state.layout === "dj";
-    if (isDj) {
-      tb.querySelectorAll("tr.detail.expanded").forEach(open => {
-        if (open.previousElementSibling) open.previousElementSibling.classList.remove("expanded");
-        open.remove();
-      });
-    }
-    const det = document.createElement("tr");
-    det.className = "detail expanded";
-    // 3 feste Spalten (Checkbox, Fuellzelle, Öffnen) + aktuell sichtbare
-    // optionale Spalten (inkl. Status, seit der auch ausblendbar ist) --
-    // dynamisch statt fest verdrahtet, sonst faellt die Detailzeile (inkl.
-    // Player/Waveform) hinter der echten Tabellenbreite zurueck, sobald sich
-    // die Spaltenzahl aendert. Minus 1: "Öffnen" reicht per rowspan in die
-    // Detailzeile hinein (spanLinksIntoDetail()).
-    const visibleCols = 3 + OPTIONAL_COLUMNS.length - state.hiddenCols.length;
-    det.innerHTML = `<td colspan="${visibleCols - 1}">${isDj ? djDetailHTML(r) : detailHTML(r)}</td>`;
-    spanLinksIntoDetail(tr, true);
-    tr.after(det);
-    tr.classList.add("expanded");
-    if (isDj) djMount(det, r); else mountLibraryPlayer(det, r);
-  });
-
-  tb.querySelectorAll("[data-relink]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    relinkMissing([DATA[+b.dataset.relink].p], b);
-  });
-
-  tb.querySelectorAll("[data-play]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    if (state.layout === "player") {
-      const cr = DATA[+b.dataset.play];
-      if (queueState.current && queueState.current.i === cr.i) {
-        if (queueAudio.paused) queueAudio.play().catch(err => playFailed(queueAudio, err));
-        else queueAudio.pause();
-        return;
-      }
-      startQueueFrom(cr); return;
-    }
-    const tr = b.closest("tr");
-    let det = tr.nextElementSibling;
-    if (!det || !det.classList.contains("detail")) { tr.click(); det = tr.nextElementSibling; }
-    const pb = det && det.querySelector("[data-act=toggle]");
-    if (pb) pb.click();
-  });
-
-  tb.querySelectorAll("[data-play-next]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    playNext(DATA[+b.dataset.playNext], b);
-  });
-
-  tb.querySelectorAll("[data-queue-add]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    addToQueue(DATA[+b.dataset.queueAdd], b);
-  });
-
-  tb.querySelectorAll("[data-reveal]").forEach(b => b.onclick = async ev => {
-    ev.stopPropagation();
-    await reveal(b.dataset.reveal, b);
-  });
-
-  // DJ-Liste: Pfad kopieren (djMetaLine()). Rueckmeldung wie bei reveal().
-  tb.querySelectorAll("[data-djcopy]").forEach(b => b.onclick = async ev => {
-    ev.stopPropagation();
-    try {
-      await copyPlainText(b.dataset.djcopy);
-      b.classList.add("done");
-      note(t("action.path_copied"));
-    } catch (err) {
-      b.classList.add("failed");
-      note(t("dj.copy_path_failed"), true);
-    }
-    setTimeout(() => b.classList.remove("done", "failed"), 1000);
-  });
-
-  tb.querySelectorAll("[data-copy]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    navigator.clipboard.writeText(b.dataset.copy);
-    b.textContent = t("action.path_copied");
-    b.classList.add("copied");
-    clearTimeout(b._copyTimer);
-    b._copyTimer = setTimeout(() => { b.textContent = b.dataset.copy; b.classList.remove("copied"); }, 1100);
-  });
-
-  tb.querySelectorAll("[data-tagissues]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    const row = DATA.find(x => x.p === b.dataset.tagissues);
-    if (row) openTagIssuesPopup(row, false);
-  });
-  tb.querySelectorAll("[data-tagfixmanual]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    const row = DATA.find(x => x.p === b.dataset.tagfixmanual);
-    if (row) openTagsPopup(row, false);
-  });
-  tb.querySelectorAll("[data-tagfixauto]").forEach(b => b.onclick = async ev => {
-    ev.stopPropagation();
-    const row = DATA.find(x => x.p === b.dataset.tagfixauto);
-    if (!row) return;
-    b.disabled = true;
-    try {
-      const fixed = await fixTagIssuesOne(row, false);
-      updateCards(); render();
-      note(t("toast.tag_issues_fixed", {name: baseName(row.p), count: fixed.length}));
-    } catch (err) {
-      note(t("error.failed", {error: err.message}), true);
-      b.disabled = false;
-    }
-  });
-
-  tb.querySelectorAll("[data-fl]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    const [listId, idx] = b.dataset.fl.split(":");
-    const r = DATA[+idx];
-    setFavorite(r, listId, !(PLAYLIST_SETS[listId] && PLAYLIST_SETS[listId].has(r.p)));
-  });
-
-  tb.querySelectorAll("[data-dupdismiss]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    toggleDupGroupDismissed(Number(b.dataset.dupdismiss));
-  });
-
-  tb.querySelectorAll("[data-grouprename]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    renameGroupValue(b.dataset.grouprename, b.dataset.value, b.dataset.groupartist);
-  });
-
-  tb.querySelectorAll("[data-store]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openStore(b.dataset.store, b);
-  });
-
-  tb.querySelectorAll("[data-rx]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openInEditor(DATA[+b.dataset.rx], b);
-  });
-
-  tb.querySelectorAll("[data-rdaw]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openInDaw(DATA[+b.dataset.rdaw], b);
-  });
-
-  tb.querySelectorAll("[data-mik]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openInMik([DATA[+b.dataset.mik]], b);
-  });
-
-  tb.querySelectorAll("[data-music]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openInMusic(DATA[+b.dataset.music], b);
-  });
-
-  tb.querySelectorAll("[data-playlistadd]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openPlaylistPicker([DATA[+b.dataset.playlistadd].p]);
-  });
-
-  tb.querySelectorAll("[data-cover]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openCoverPreview(DATA[+b.dataset.cover]);
-  });
-
-  tb.querySelectorAll("[data-tags]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openTagsPopup(DATA[+b.dataset.tags]);
-  });
-
-  tb.querySelectorAll("[data-plremove]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    const target = playerRemoveTarget();
-    const r = DATA[+b.dataset.plremove];
-    if (target && r) target.run(r);
-  });
-
-  tb.querySelectorAll("[data-more]").forEach(b => b.onclick = ev => {
-    ev.stopPropagation();
-    openRowMoreMenu(DATA[+b.dataset.more], b);
-  });
-
-  const selBoxes = [...tb.querySelectorAll("[data-sel]")];
-  selBoxes.forEach((c, pos) => c.onclick = ev => {
-    ev.stopPropagation();
-    if (ev.shiftKey && lastSelPos !== null) {
-      const [a, b] = [lastSelPos, pos].sort((x, y) => x - y);
-      const checked = c.checked;
-      for (let k = a; k <= b; k++) {
-        const box = selBoxes[k];
-        box.checked = checked;
-        checked ? state.selected.add(+box.dataset.sel) : state.selected.delete(+box.dataset.sel);
-        box.closest("tr").classList.toggle("picked", checked);
-      }
-    } else {
-      c.checked ? state.selected.add(+c.dataset.sel) : state.selected.delete(+c.dataset.sel);
-      c.closest("tr").classList.toggle("picked", c.checked);
-    }
-    lastSelPos = pos;
-    syncSelectAll(slice);
-    renderBulkBar();
-  });
   syncSelectAll(slice);
   renderBulkBar();
 }
@@ -9595,8 +10527,15 @@ function stemsWireWave(kind) {
     ctx.globalCompositeOperation = "source-over";
     ctx.fillRect(Math.max(0, x - 1), 0, 2, h);
     timeEl.textContent = fmtTime(Math.floor(audio.currentTime)) + " / " + fmtTime(Math.round(d));
-    playBtn.innerHTML = audio.paused ? ICONS.stemPlay : ICONS.stemPause;
-    playBtn.title = t(audio.paused ? "stems.play" : "stems.pause");
+    // Nur bei Zustandswechsel neu setzen: paint() laeuft waehrend der Wiedergabe
+    // mehrfach pro Sekunde, und ein ausgetauschtes Icon unter der Maus verschluckt
+    // den Klick (mousedown-Ziel ist dann entfernt) -- Pause kam dadurch nie an.
+    const playing = !audio.paused;
+    if (playBtn.dataset.state !== (playing ? "1" : "0")) {
+      playBtn.dataset.state = playing ? "1" : "0";
+      playBtn.innerHTML = playing ? ICONS.stemPause : ICONS.stemPlay;
+      playBtn.title = t(playing ? "stems.pause" : "stems.play");
+    }
     if (!audio.paused && !audio.ended) raf = requestAnimationFrame(paint);
   };
   const kick = () => { cancelAnimationFrame(raf); paint(); };
@@ -9932,13 +10871,7 @@ async function bulkApply(kind) {
           r.mc = 0;
           await persistCorrected(r.p, false);
         } else if (kind === "trash") {
-          const res = await fetch("/api/trash", {method: "POST",
-            headers: {"Content-Type": "application/json"},
-            body: JSON.stringify({path: r.p})});
-          const data = await res.json();
-          if (!data.ok) throw new Error(data.error || t("error.unknown"));
-          r.removed = 1;
-          dupGroupsDirty = true;
+          const data = await trashRowApi(r);
           if (data.music_error) musicErrors++;
           if (data.music_cloud_note) cloudNotes++;
         } else if (kind === "fix") {
@@ -10103,7 +11036,20 @@ function openFixPopup(r, isDrop) {
 // der Server fuer beide dasselbe kompakte Format liefert (report.py und
 // fromServerRow() teilen sich dieselben Kurzschluessel a/t/al/...).
 async function fixTagIssuesOne(r, isDrop) {
+  const albumCover = isDrop ? null : albumCoverIssueOf(r);
   const fixed = (r.ti || []).some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code)) ? await fixFileTagIssues(r, isDrop) : [];
+  // Album-Cover: das Bild, das die meisten Tracks des Albums tragen, in diese Datei kopieren.
+  if (albumCover && albumCover.source) {
+    stopPlayerFor(r.p);
+    const res = await fetch("/api/cover-copy", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({from: albumCover.source, to: [r.p]})});
+    const data = await res.json();
+    const one = data.ok && data.results && data.results[r.p];
+    if (!one || !one.ok) throw new Error((one && one.error) || data.error || t("error.unknown"));
+    bumpCoverRev(r.p);
+    applyRowUpdate(r.i, one.row);
+    fixed.push(albumCover.code);
+  }
   // Titel (Tempowechsel) und Tonart-Schreibweise laufen ueber den normalen
   // Tags-Weg (Datei + DB + key_raw), beide in einem Aufruf. Einzelpruefungen
   // nur mit echtem Pfad (wie writeKeyToFiles()), den Tempowechsel kennen sie nicht.
@@ -10165,7 +11111,7 @@ function openTagIssuesPopup(r, isDrop) {
   const renderList = () => {
     const issues = rowIssues(r);
     list.innerHTML = issues.length ? issues.map(i => {
-      const auto = AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code);
+      const auto = isAutoFixIssue(i);
       const fieldLabel = i.field ? t("field." + i.field) : "";
       const suggestion = i.suggestion
         ? `<div class="dim">${esc(t("fixtag.mojibake_preview_label"))}: „${esc(i.suggestion)}“</div>` : "";
@@ -10458,7 +11404,8 @@ function addDropConvertResult(r, freshRow) {
 // vollstaendig geladen -- kein eigener Server-Endpunkt noetig.
 let fieldValueCache = {};
 let groupCountsCache = {};
-function invalidateFieldValueCache() { fieldValueCache = {}; groupCountsCache = {}; }
+const ALBUM_COUNTS_KEY = "\u0000album";   // kein Zeilenfeld, siehe albumGroupCounts()
+function invalidateFieldValueCache() { fieldValueCache = {}; groupCountsCache = {}; coverDupCache = null; albumCoverCache = null; }
 
 // Alle vorkommenden Werte eines Feldes MIT Trackzahl -- Grundlage der
 // Genre-/Album-/Interpret-Bubbleleiste und der Zusammenfuehrungs-Vorschlaege
@@ -10549,6 +11496,7 @@ function attachAutocomplete(el, key, {openOnFocus = true, extra = null} = {}) {
   let items = [], active = -1;
 
   const close = () => { list.style.display = "none"; list.innerHTML = ""; items = []; active = -1; };
+  el._acClose = close;       // von aussen schliessbar, z. B. beim Blaettern im Tags-Dialog
   // In einer eigenen Scrollflaeche (Tags-Dialog, .tagsbody) wuerde die absolut
   // positionierte Liste am Rand der Flaeche abgeschnitten. Dort schwebt sie fest
   // ueber allem, am Feld ausgerichtet, und klappt nach oben, wenn unten kein Platz
@@ -10608,7 +11556,9 @@ function attachAutocomplete(el, key, {openOnFocus = true, extra = null} = {}) {
 
   // Getipptes filtert per Praefix wie bisher.
   const openFiltered = () => {
-    if (!cfg.key) return;
+    // Nur fuer das Feld, in dem gerade getippt wird: ein per Skript ausgeloestes "input" (Wert
+    // gesetzt, Vorschlag uebernommen, Blaettern) darf die Liste eines fokuslosen Felds nicht oeffnen.
+    if (!cfg.key || document.activeElement !== el) return;
     const q = el.value.trim().toLowerCase();
     if (!q) { render(withMore(fieldValues(cfg.key), "", 600), openAll); return; }
     const base = fieldValues(cfg.key).filter(v => v.toLowerCase().startsWith(q) && v.toLowerCase() !== q);
@@ -10950,6 +11900,34 @@ function setTagsFieldReset(field, original, onReset) {
   if (btn.dataset.orig !== title) { btn.dataset.orig = title; btn.title = title; }
   btn.onclick = ev => { ev.preventDefault(); ev.stopPropagation(); onReset(); };
 }
+// Vorschlag unter dem Titel (gleiche Darstellung wie die Bereinigungsvorschlaege): Tempowechsel
+// aus dem Beatgrid in den Titel schreiben (wie der Quick Fix der Auffaelligkeit
+// tempo_change_title, titleWithTempoFor()), vorhandene Tempo-Angaben fallen dabei weg. Ein
+// zweiter Klick nimmt es zurueck -- auf den Stand VOR dem Klick (entry.tempoPrev), nicht auf
+// den Dateistand wie der Zuruecksetzen-Knopf am Label. Nur in der Einzelbearbeitung mit
+// bekanntem Tempowechsel; ausgeblendet, wenn der Titel schon so lautet.
+function syncTagsTempoBtn() {
+  const input = document.getElementById("tagsTitle");
+  const btn = document.getElementById("tagsTempoSuggest");
+  if (!input || !btn) return;
+  const e = TAGS_ENTRY;
+  const seq = e && !e.isDrop && !e.blocked ? tempoSequence(e.r) : null;
+  const cur = input.value;
+  const applied = !!seq && e.tempoPrev != null && cur === e.tempoApplied;
+  const proposal = seq && !applied ? titleWithTempoFor(cur || titleStem(e.r), seq) : "";
+  if (!seq || (!applied && cur === proposal)) { btn.hidden = true; return; }
+  btn.hidden = false;
+  btn.classList.toggle("on", applied);
+  btn.innerHTML = `${applied ? ICONS.fieldReset : ICONS.sparkles}<span>${esc(t(applied ? "tags.suggest_undo" : "tags.suggest_apply"))}</span> <span class="tsval">${esc(applied ? (e.tempoPrev || t("tags.original_empty")) : proposal)}</span>`;
+  btn.title = applied ? t("tags.title_tempo_undo", {title: e.tempoPrev || t("tags.original_empty")})
+    : t("tags.title_tempo", {title: proposal});
+  btn.onclick = ev => {
+    ev.preventDefault(); ev.stopPropagation();
+    if (applied) { input.value = e.tempoPrev; e.tempoPrev = null; }
+    else { e.tempoPrev = cur; e.tempoApplied = proposal; input.value = proposal; }
+    refreshTagsChanged();
+  };
+}
 function refreshTagsChanged() {
   const base = TAGS_CHANGE_BASE;
   // Felder je .setfield buendeln: "Track" haelt Nr. und Gesamt in einem Feld --
@@ -11002,6 +11980,7 @@ function refreshTagsChanged() {
     const tracks = tagsPendingTracks();
     saveLabel.textContent = tracks ? t("tags.save_count", {count: tracks}) : t("action.save");
   }
+  syncTagsTempoBtn();
 }
 
 // ── Vorgemerkte Aenderungen beim Blaettern (Einzelbearbeitung) ──────────
@@ -11023,7 +12002,7 @@ function tagsRowValues(r) {
   const v = {
     tagsTitle: r.t, tagsArtist: r.a, tagsAlbum: r.al, tagsTrackNo: r.tn, tagsTrackTotal: r.tt,
     tagsAlbumArtist: r.aa, tagsComposer: r.cp, tagsGenre: r.ge, tagsYear: r.yr, tagsBpm: r.bp,
-    tagsKey: keyLabel(r.ky), tagsComment: r.cm,
+    tagsKey: keyLabel(r.ky), tagsComment: r.cm, tagsCompilation: r.cl,
   };
   // Durch ein Eingabefeld geschickt: Zahlen werden zu Text, 0/leer zu "".
   for (const k in v) v[k] = v[k] ? String(v[k]) : "";
@@ -11131,6 +12110,7 @@ async function saveTagsEntry(e) {
     if (payloadKey === "year") fields.year = raw ? parseInt(raw, 10) : 0;
     else if (payloadKey === "bpm") fields.bpm = raw ? parseFloat(raw) : 0;
     else if (payloadKey === "track_no" || payloadKey === "track_total") fields[payloadKey] = raw ? parseInt(raw, 10) : 0;
+    else if (payloadKey === "compilation") fields.compilation = raw === "1" ? 1 : 0;
     else fields[payloadKey] = raw;
   }
   if (e.artistFallback && !("artist" in fields) && e.initial.tagsArtist) fields.artist = e.initial.tagsArtist;
@@ -11192,11 +12172,51 @@ function initTagsChangeTracking() {
 function setTagsHead(name, dir, fullPath) {
   document.getElementById("tagsName").textContent = name;
   const pathEl = document.getElementById("tagsPath");
-  pathEl.textContent = dir;
+  // Anzeige ab dem Bibliotheksordner, Tooltip und Kopieren (data-copy) voller Pfad.
+  pathEl.textContent = fullPath ? shortPath(dir) : dir;
   if (fullPath) pathEl.title = fullPath; else pathEl.removeAttribute("title");
 }
 
+// Vorschlaege der Titel-Bereinigung (Auffaelligkeiten) unter Titel/Interpret/
+// Album: die LETZTE Meldung je Feld traegt den vollstaendig bereinigten Wert
+// (taganomaly._check_cleanup()). Ein Klick setzt ihn ins Feld; der Knopf
+// verschwindet, sobald das Feld dem Vorschlag entspricht.
+const TAGS_SUGGEST_IDS = {title: "tagsTitle", artist: "tagsArtist", album: "tagsAlbum"};
+function renderTagsSuggestions(r) {
+  const last = {};
+  for (const i of rowIssues(r)) {
+    if (i.suggestion && TAGS_SUGGEST_IDS[i.field]) last[i.field] = i.suggestion;
+  }
+  const sync = () => {
+    for (const [field, id] of Object.entries(TAGS_SUGGEST_IDS)) {
+      const btn = document.getElementById("tagsSuggest" + field[0].toUpperCase() + field.slice(1));
+      const input = document.getElementById(id);
+      input._sugSync = sync;
+      if (!input.dataset.sugBound) {
+        input.dataset.sugBound = "1";
+        input.addEventListener("input", () => { if (input._sugSync) input._sugSync(); });
+      }
+      const sug = last[field];
+      if (!sug || input.value === sug) { btn.hidden = true; continue; }
+      btn.hidden = false;
+      btn.innerHTML = `${esc(t("tags.suggest_apply"))} <span class="tsval">${esc(sug)}</span>`;
+      btn.onclick = () => {
+        input.value = sug;
+        input.dispatchEvent(new Event("input", {bubbles: true}));
+      };
+    }
+  };
+  sync();
+}
+
+// Alle offenen Vorschlagslisten des Tags-Dialogs schliessen (Blaettern, Neuaufbau): sonst bleibt
+// die Liste des zuletzt bearbeiteten Felds ueber dem naechsten Track stehen.
+function closeTagsAutocompletes() {
+  document.querySelectorAll("#tagsOverlay input, #tagsOverlay textarea").forEach(e => { if (e._acClose) e._acClose(); });
+}
+
 function openTagsPopup(r, isDrop) {
+  closeTagsAutocompletes();
   // Einmalig pro Element verdrahtet, ueber ein Dataset-Flag abgesichert --
   // openTagsPopup laeuft bei "Vorheriger"/"Nächster" fuer denselben Dialog
   // mehrfach, ohne den Guard haeuften sich Dropdowns und Listener an. Kann
@@ -11263,6 +12283,7 @@ function openTagsPopup(r, isDrop) {
     setTagsWriteLock(entry.blocked || "");
     renameBtn.style.display = entry.blocked || r.gone || r.ext || (isDrop && !r.nativePath) ? "none" : "";
     document.querySelector(".tagslookup").style.display = entry.blocked ? "none" : "";
+    syncTagsTempoBtn();
   };
   renameBtn.onclick = async () => {
     if (tagsChangedCount() || entry.cover || userTagChangesPending()) {
@@ -11297,6 +12318,7 @@ function openTagsPopup(r, isDrop) {
   }
   // Fuer den Vorschlags-Kopf im Genre-Dropdown (GENRE_AC_EXTRA).
   GENRE_AC_ROW = {r, isDrop};
+  renderTagsSuggestions(r);
   document.getElementById("tagsUserTagInput").placeholder = t("tags.user_tags_placeholder");
   document.getElementById("tagsArtistHint").hidden = !entry.artistFallback;
 
@@ -11611,6 +12633,7 @@ const TAGS_BULK_FIELD_MAP = [
   ["tagsYear", "yr", "year"], ["tagsBpm", "bp", "bpm"],
   ["tagsKey", "ky", "key"],
   ["tagsComment", "cm", "comment"],
+  ["tagsCompilation", "cl", "compilation"],
 ];
 
 // Uebersetzt das an /api/tags geschickte Feld-Objekt zurueck in die kompakten
@@ -11631,6 +12654,7 @@ function fieldsToDropRow(fields) {
 // Einzelprüfungen (drops) statt aus DATA -- sie haben keinen DATA-Index,
 // das Ergebnis wandert deshalb direkt in den Eintrag und nach renderDrops().
 function openTagsPopupBulk(rows, isDrop) {
+  closeTagsAutocompletes();
   const ov = document.getElementById("tagsOverlay");
   // Kein Blaettern im Mehrfach-Modus -- Vormerkungen der Einzelbearbeitung verwerfen.
   discardTagsPending();
@@ -11640,8 +12664,9 @@ function openTagsPopupBulk(rows, isDrop) {
 
   const initial = {};
   for (const [id, key] of TAGS_BULK_FIELD_MAP) {
-    const values = new Set(rows.map(r => key === "ky" ? keyLabel(r.ky) : String(r[key] ?? "")));
-    const common = values.size === 1 ? [...values][0] : "";
+    const values = new Set(rows.map(r => key === "ky" ? keyLabel(r.ky) : key === "cl" ? (r.cl ? "1" : "") : String(r[key] ?? "")));
+    // Das Sampler-Feld ist eine Auswahl: gemischte Werte zeigt die Option "~" (nicht waehlbar).
+    const common = values.size === 1 ? [...values][0] : (key === "cl" && values.size > 1 ? "~" : "");
     const el = document.getElementById(id);
     el.value = common;
     el.placeholder = values.size > 1 ? t("tags.multiple_values_placeholder") : "";
@@ -11654,6 +12679,7 @@ function openTagsPopupBulk(rows, isDrop) {
   document.querySelector(".tagslookup").style.display = "none";
   // Genre-Vorschlaege gelten je Track -- im Mehrfach-Modus gibt es keine.
   GENRE_AC_ROW = null;
+  renderTagsSuggestions({});          // keine Bereinigungsvorschlaege im Mehrfach-Modus
   // Chips = Tags, die ALLE gewaehlten Tracks tragen (siehe setupUserTagEditor()).
   const tagSets = rows.map(x => new Set((USER_TAGS.get(x.p) || []).map(utKey)));
   const common = (USER_TAGS.get(rows[0].p) || []).filter(tag => tagSets.every(set => set.has(utKey(tag))));
@@ -11799,6 +12825,7 @@ function openTagsPopupBulk(rows, isDrop) {
       if (payloadKey === "year") fields.year = raw ? parseInt(raw, 10) : 0;
       else if (payloadKey === "bpm") fields.bpm = raw ? parseFloat(raw) : 0;
       else if (payloadKey === "track_no" || payloadKey === "track_total") fields[payloadKey] = raw ? parseInt(raw, 10) : 0;
+      else if (payloadKey === "compilation") fields.compilation = raw === "1" ? 1 : 0;
       else fields[payloadKey] = raw;
     }
     const utChanges = userTagChanges();
@@ -12241,7 +13268,7 @@ function askRekordboxOverwrite(rows, title) {
         <input type="checkbox" data-rbpush="${i}"${differs(r) ? " checked" : ""}>
         <span class="rbpushname" title="${esc(r.p)}">${esc(label(r))}</span>
         ${differs(r)
-          ? `<small>${esc(r.rbDiff.map(f => t("dj.field_" + f)).join(", "))}</small>`
+          ? `<small>${esc(r.rbDiff.map(f => rbFieldLabel(r, f)).join(", "))}</small>`
           : `<small class="same">${esc(t("rbpush.same"))}</small>`}
       </label>`).join("");
     const boxes = [...list.querySelectorAll("[data-rbpush]")];
@@ -12586,7 +13613,7 @@ function askTrash(r) {
       (r.a || r.t) ? (r.a + (r.t ? " — " + r.t : "")) : baseName(r.p);
     document.getElementById("confirmPath").textContent = r.p;
     document.getElementById("confirmFacts").innerHTML = `
-      <span class="badge ${verdictOf(r)}">${VERDICT_ICONS[verdictOf(r)]}${labels[verdictOf(r)]}</span>
+      ${statusBadgeHtml(r)}
       <span>Cutoff <b>${r.co.toFixed(2).replace(".",",")} kHz</b></span>
       <span>${r.fam === "lossless" ? esc(t("field.lossless")) : t("confirm.declared_kbps", {kbps: r.kb})}</span>
       <span>${esc(t("field.confidence"))} <b>${r.cf.toFixed(2).replace(".",",")}</b></span>
@@ -12618,6 +13645,7 @@ async function trashTrack(r) {
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
     r.removed = 1;
     dupGroupsDirty = true;
+    invalidateFieldValueCache();
     updateCards(); render();
     // Hat Music.app die Datei beim Entfernen selbst in den Papierkorb gelegt,
     // stimmt der normale Hinweis; "schon weg" nur, wenn niemand sie bewegt hat.
@@ -12976,8 +14004,8 @@ function showKeyNotationIssues() {
 // sind kein eigener Block mehr -- eine Playlist wird ueber ihren eigenen
 // Bearbeiten-Dialog markiert (askPlaylistProps()).
 const SETTINGS_LAYOUT = [
-  "library", "search", "display", "bpmkey", "stems", "columnviews",
-  "music", "rekordbox", "tools", "shops", "rename", "djview", "autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue",
+  "library", "search", "display", "bpmkey", "stems", "columnviewstd", "columnviews",
+  "music", "rekordbox", "tools", "shops", "rename", "tagclean", "tagclean_video", "tagclean_spaces", "tagclean_trackno", "tagclean_remix", "tagclean_feat", "tagclean_case", "tagclean_quotes", "djview", "autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue",
   "analysis", "loudness",
   "backup", "logs",
 ];
@@ -12998,6 +14026,7 @@ function renderSettings() {
     groupHtmlById[g.id] = groupHTML(g, v, d, false, extra);
   });
   const dynamicBlocks = {
+    columnviewstd: renderColumnStandardsBlock,
     columnviews: renderColumnViewsBlock,
     shops: renderShopsBlock, backup: renderBackupBlock, logs: renderLogsBlock,
     autocuehot: renderAutocueHotBlock, autocuemem: renderAutocueMemoryBlock, autocuemodel: renderAutocueModelBlock,
@@ -13031,7 +14060,11 @@ function renderSettings() {
     applyShowIf();
     applyRequires();
   });
-  document.getElementById("settingsBody").oninput = () => { applyShowIf(); applyRequires(); updateSettingsNavDots(); };
+  document.getElementById("settingsBody").oninput = ev => {
+    applyShowIf(); applyRequires(); updateSettingsNavDots();
+    // Metronom-Klang beim Umschalten kurz vorspielen (djMetroPreview() in dj.js).
+    if (ev.target && ev.target.dataset && ev.target.dataset.key === "dj_metronome_sound") djMetroPreview(ev.target.value);
+  };
   applyShowIf();
   applyRequires();
 
@@ -13069,8 +14102,8 @@ function renderSettings() {
 const SETTINGS_PAGES = [
   {id: "general", icon: "library-big", nav: "settings.nav_general", label: "settings.page_general",
    groups: ["library", "display", "search"]},
-  {id: "views", icon: "table-properties", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviews"]},
-  {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename"]},
+  {id: "views", icon: "table-properties", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviewstd", "columnviews"]},
+  {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename", "tagclean", "tagclean_video", "tagclean_spaces", "tagclean_trackno", "tagclean_remix", "tagclean_feat", "tagclean_case", "tagclean_quotes"]},
   {id: "djview", icon: "turntable", nav: "settings.nav_general", label: "settings.page_djview", groups: ["djview"]},
   {id: "autocue", icon: "square-sparkles", nav: "settings.nav_general", label: "settings.page_autocue",
    groups: ["autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue"]},
@@ -13279,111 +14312,379 @@ async function runOrphanCleanup(btn) {
 }
 
 // ── Spaltenansichten verwalten ──────────────────────────────────────────
-// Wie die Merklisten und Shops ein eigener Block mit eigenem Speichern-Knopf
-// statt Teil des generischen Schemas: variable Zeilenzahl, und angelegt
-// werden die Ansichten nicht hier, sondern im Spalten-Menue der Tabelle
-// ("Ansicht speichern"). Hier steht nur, was danach kommt -- umbenennen,
-// loeschen und die Vorgaben fuer Apple-Music-Playlisten und Einzelpruefungen.
-// Die Standards selbst ("Standard – Bearbeiten"/"Standard – Player") sind die
-// Spalten der jeweiligen Ansicht ohne eigene Zuordnung (Spalten-Menue).
+// Zwei Karten auf der Seite "Spaltenansichten", beide auf EINEM Entwurf und mit
+// EINEM Speichern-Knopf (unten in "Ansichten"):
+//   Standards -- welche Ansicht in Bearbeiten/Player ohne Zuordnung gilt, welche
+//                der Ordner "Pruefliste" vererbt (Zuordnung fd:sys_verdicts) und
+//                welche die Einzelpruefung nutzt.
+//   Ansichten -- jede Ansicht aufklappbar: sichtbare Spalten als ziehbare Chips,
+//                ausgeblendete darunter (Klick = einblenden), Name, Loeschen.
+// Feste Ansichten (Bearbeiten/Player/Pruefliste) haben keinen Papierkorb und
+// keinen editierbaren Namen. Zuordnungen einzelner Listen/Ordner gibt es hier
+// nicht -- nur im Seitenbaum (Nutzervorgabe), sie vererben sich nach unten.
 let colViewDraft = [];
-let colViewMusicDefaultDraft = "";
-let colViewDropDraft = "";
+let colViewStdDraft = {edit: "", player: "", check: "", drop: ""};
+// Aufgeklappte Ansichten bzw. ganz gezeigte Ausgeblendet-Reihen (ids) --
+// ueberleben das Neuzeichnen nach jeder Aenderung.
+let colViewOpen = new Set();
+let colViewHiddenAll = new Set();
+const COLVIEW_HIDDEN_PREVIEW = 8;
+const CHECK_FOLDER_KEY = "fd:sys_verdicts";
+// Standards, die eigentlich Zuordnungen sind: Zeile -> Zuordnungs-Schluessel.
+// Erste Option "Keine" = erben (vom Ordner bzw. Standard), nicht Pflicht.
+const STD_ASSIGN_KEYS = {check: CHECK_FOLDER_KEY, issues: "tag_issues"};
+
+// Gespeicherter Stand der Standards in der Form des Entwurfs.
+const savedColumnStandards = () => ({edit: COLUMN_VIEW_EDIT || STD_COLUMN_VIEWS.edit,
+                                     player: COLUMN_VIEW_PLAYER || STD_COLUMN_VIEWS.player,
+                                     check: COLUMN_ASSIGN[CHECK_FOLDER_KEY] || "",
+                                     issues: COLUMN_ASSIGN[STD_ASSIGN_KEYS.issues] || "",
+                                     drop: COLUMN_VIEW_DROP || STD_COLUMN_VIEWS.drop});
+
+function resetColumnViewDrafts() {
+  colViewDraft = COLUMN_VIEWS.map(v => ({...v, order: [...v.order], hidden: [...v.hidden]}));
+  colViewStdDraft = savedColumnStandards();
+}
+
+// Ungespeicherte Aenderungen im Entwurf? Der allgemeine "Speichern"-Knopf des
+// Dialogs speichert sie dann mit -- vorher ging der Entwurf dort stumm verloren.
+function columnViewDraftDirty() {
+  if (!document.getElementById("cvRows")) return false;
+  const sig = list => JSON.stringify(list.map(v => [v.id, v.name, v.order, v.hidden]));
+  return sig(colViewDraft) !== sig(COLUMN_VIEWS)
+    || JSON.stringify(colViewStdDraft) !== JSON.stringify(savedColumnStandards());
+}
+
+function renderColumnStandardsBlock() {
+  resetColumnViewDrafts();
+  const row = (key, icon, label, help) => `<div class="setrow"><div class="setfield inline cvstd">
+      <label for="cvStd_${key}"><span class="cvstdicon">${SVG(LUCIDE_ICONS[icon])}</span>${esc(t(label))}</label>
+      <select id="cvStd_${key}" data-cvstd="${key}"></select>
+      ${help ? `<div class="sethelp">${esc(t(help))}</div>` : ""}
+    </div></div>`;
+  return `<div class="setgroup collapsed" data-sg="columnviewstd">
+    <div class="sethead">
+      <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.column_std_title"))}</b></div>
+    </div>
+    <div class="setbody">
+      <div class="sethint">${esc(t("settings.column_views_note"))}</div>
+      <div class="setrows">
+        ${row("edit", "pencil", "settings.column_std_edit", "")}
+        ${row("player", "play", "settings.column_std_player", "")}
+        ${row("check", "list-checks", "settings.column_std_check", "settings.column_std_check_help")}
+        ${row("issues", "file-exclamation-point", "settings.column_std_issues", "settings.column_std_issues_help")}
+        ${row("drop", "file-search", "settings.column_std_drop", "settings.column_view_drop_help")}
+      </div>
+    </div>
+  </div>`;
+}
 
 function renderColumnViewsBlock() {
-  colViewDraft = COLUMN_VIEWS.map(v => ({...v}));
-  colViewMusicDefaultDraft = COLUMN_VIEW_MUSIC_DEFAULT;
-  colViewDropDraft = COLUMN_VIEW_DROP;
   return `<div class="setgroup collapsed" data-sg="columnviews">
     <div class="sethead">
       <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.column_views_title"))}</b></div>
     </div>
     <div class="setbody">
-      <div class="sethint">${esc(t("settings.column_views_note"))}</div>
-      <div class="setrows">
-        <div class="setrow"><div class="setfield">
-          <label for="cvMusicDefault">${esc(t("settings.column_view_music_default_label"))}</label>
-          <select id="cvMusicDefault"></select>
-          <div class="sethelp">${esc(t("settings.column_view_music_default_help"))}</div>
-        </div></div>
-        <div class="setrow"><div class="setfield">
-          <label for="cvDrop">${esc(t("settings.column_view_drop_label"))}</label>
-          <select id="cvDrop"></select>
-          <div class="sethelp">${esc(t("settings.column_view_drop_help"))}</div>
-        </div></div>
+      <div id="cvRows"></div>
+      <div class="cvfoot">
+        <button class="act" id="btnNewCv"><span class="btnicon">${SVG(LUCIDE_ICONS.plus)}</span> ${esc(t("settings.column_view_new"))}</button>
+        <button class="act" id="btnSaveCv"><span class="btnicon">${ICONS.save}</span> ${esc(t("settings.column_views_save"))}</button>
+        <span id="cvStatus"></span>
       </div>
-      <div id="cvRows" style="margin-top:10px"></div>
-      <div id="cvStatus"></div>
-      <button class="act" id="btnSaveCv" style="margin-top:10px"><span class="btnicon">${
-        ICONS.save}</span> ${esc(t("settings.column_views_save"))}</button>
     </div>
   </div>`;
 }
 
-// Auswahlfeld und Zeilen haengen aneinander (eine geloeschte Ansicht darf
-// nicht mehr als Standard waehlbar sein), deshalb werden beide zusammen
-// gezeichnet.
+// Wo eine Ansicht direkt zugewiesen ist (Listen, Ordner, Wurzeln; ohne die, die
+// sie nur erben) -- dazu die Standards aus dem Entwurf (Bearbeiten/Player/
+// Pruefliste/Einzelpruefung), die hier gerade eingestellt werden.
+function columnViewUses(id) {
+  const uses = Object.entries(COLUMN_ASSIGN)
+    .filter(([key, v]) => v === id && !Object.values(STD_ASSIGN_KEYS).includes(key))
+    .map(([key]) => columnAssignSourceLabel(key));
+  if (colViewStdDraft.drop === id) uses.unshift(t("settings.column_std_drop"));
+  if (colViewStdDraft.issues === id) uses.unshift(t("settings.column_std_issues"));
+  if (colViewStdDraft.check === id) uses.unshift(t("settings.column_std_check"));
+  if (colViewStdDraft.player === id) uses.unshift(t("settings.column_std_player"));
+  if (colViewStdDraft.edit === id) uses.unshift(t("settings.column_std_edit"));
+  return uses;
+}
+
+// Gilt die Ansicht in einer Pruef-Liste? Dort ist Status Pflicht (requiredCols()),
+// der Chip bekommt ein Schloss und laesst sich nicht ausblenden.
+function columnViewInCheckLists(id) {
+  return PLAYLISTS.some(n => /^sys_v_/.test(n.id) && resolveColumnView(`sm:${n.id}`).view?.id === id)
+    || colViewStdDraft.check === id;
+}
+
+const columnLabelOf = k => (OPTIONAL_COLUMNS.find(c => c.key === k) || {label: k}).label;
+
+function columnViewEditorHtml(v, i) {
+  const visible = v.order.filter(k => !v.hidden.includes(k));
+  const hidden = OPTIONAL_COLUMNS.filter(c => v.hidden.includes(c.key) || !v.order.includes(c.key))
+    .sort((a, b) => cmpText(a.label, b.label));
+  const lockStatus = columnViewInCheckLists(v.id);
+  const showAll = colViewHiddenAll.has(v.id) || hidden.length <= COLVIEW_HIDDEN_PREVIEW + 1;
+  const shownHidden = showAll ? hidden : hidden.slice(0, COLVIEW_HIDDEN_PREVIEW);
+  return `<div class="cvedit" data-cvedit="${i}">
+    <div class="cvlbl">${esc(t("cols.chips_visible"))}</div>
+    <div class="cvchips" data-cvzone="visible">${visible.length ? visible.map(k => {
+      const locked = k === "v" && lockStatus;
+      return `<span class="cvchip" draggable="true" data-cvchip="${esc(k)}"${locked ? ` title="${esc(t("cols.chip_locked"))}"` : ""}>
+        <span class="cvgrip">${ICONS.gripVertical}</span>${esc(columnLabelOf(k))}${locked
+          ? `<span class="cvlock">${ICONS.lock}</span>`
+          : `<button class="cvchipx" data-cvremove="${esc(k)}" title="${esc(t("cols.chip_remove"))}">×</button>`}
+      </span>`;
+    }).join("") : `<span class="sethelp">${esc(t("cols.chips_empty"))}</span>`}</div>
+    ${hidden.length ? `<div class="cvlbl">${esc(t("cols.chips_hidden"))}</div>
+    <div class="cvchips" data-cvzone="hidden">${shownHidden.map(c =>
+      `<button class="cvchip off" draggable="true" data-cvchip="${esc(c.key)}" data-cvshow="${esc(c.key)}" title="${
+        esc(t("cols.chip_show"))}">${esc(c.label)}</button>`).join("")}${showAll ? ""
+      : `<button class="cvchip off more" data-cvmore="${esc(v.id)}" title="${
+          esc(t("cols.chips_more", {n: hidden.length - shownHidden.length}))}">…</button>`}</div>` : ""}
+  </div>`;
+}
+
+// Auswahlfelder und Zeilen haengen aneinander (eine geloeschte Ansicht darf
+// nirgends mehr waehlbar sein), deshalb werden beide zusammen gezeichnet.
 function redrawColumnViewsBlock() {
-  const selMusic = document.getElementById("cvMusicDefault");
-  if (!selMusic) return;
-  if (!colViewDraft.some(v => v.id === colViewMusicDefaultDraft)) colViewMusicDefaultDraft = "";
-  selMusic.innerHTML = `<option value="">${esc(t("cols.view_standard"))}</option>` +
-    colViewDraft.map(v => `<option value="${esc(v.id)}"` +
-      `${v.id === colViewMusicDefaultDraft ? " selected" : ""}>${esc(v.name)}</option>`).join("");
-  selMusic.onchange = () => { colViewMusicDefaultDraft = selMusic.value; };
-
-  const selDrop = document.getElementById("cvDrop");
-  if (!colViewDraft.some(v => v.id === colViewDropDraft)) colViewDropDraft = "";
-  selDrop.innerHTML = `<option value="">${esc(t("cols.view_own"))}</option>` +
-    colViewDraft.map(v => `<option value="${esc(v.id)}"` +
-      `${v.id === colViewDropDraft ? " selected" : ""}>${esc(v.name)}</option>`).join("");
-  selDrop.onchange = () => { colViewDropDraft = selDrop.value; };
-
   const host = document.getElementById("cvRows");
-  host.innerHTML = colViewDraft.length
-    ? colViewDraft.map((v, i) => `<div class="cvrow" data-cv="${i}">
-        <input type="text" data-cvf="name" maxlength="40" value="${esc(v.name)}"
-               placeholder="${esc(t("settings.column_view_name_placeholder"))}">
-        <button class="iconbtn del" data-cvdel="${i}" title="${
-          esc(t("cols.view_delete"))}">${ICONS.trash}</button>
-      </div>`).join("")
-    : `<div class="sethelp">${esc(t("settings.column_views_empty"))}</div>`;
+  if (!host) return;
+  redrawColumnStandards();
+
+  // Feste zuerst, in fester Reihenfolge; eigene dahinter wie gespeichert.
+  const fixedOrder = Object.values(STD_COLUMN_VIEWS);
+  const rows = colViewDraft.map((v, i) => ({v, i}))
+    .sort((a, b) => {
+      const fa = fixedOrder.indexOf(a.v.id), fb = fixedOrder.indexOf(b.v.id);
+      return (fa < 0 ? 99 : fa) - (fb < 0 ? 99 : fb) || a.i - b.i;
+    });
+  host.innerHTML = rows.map(({v, i}) => {
+    const fixed = isFixedColumnView(v.id);
+    const open = colViewOpen.has(v.id);
+    const uses = columnViewUses(v.id);
+    return `<div class="cvrow${open ? " open" : ""}${fixed ? " fixed" : ""}" data-cv="${i}">
+        <button class="iconbtn plain cvtoggle" data-cvtoggle="${i}" title="${
+          esc(t(open ? "cols.editor_close" : "cols.editor_open"))}">${open ? ICONS.chevronDown : ICONS.chevronRight}</button>
+        ${fixed
+          ? `<span class="cvname">${esc(columnViewLabel(v))}<span class="cvbadge" title="${
+              esc(t("cols.std_badge_title"))}">${esc(t("cols.std_badge"))}</span></span>`
+          : `<input type="text" data-cvf="name" maxlength="40" value="${esc(v.name)}"
+               placeholder="${esc(t("settings.column_view_name_placeholder"))}">`}
+        <span class="cvpill${uses.length ? "" : " none"}" title="${esc(uses.length ? uses.join("\n") : t("cols.uses_none"))}">${
+          esc(uses.length === 1 ? t("cols.uses_one") : t("cols.uses_count", {n: uses.length}))}</span>
+        ${fixed ? `<span class="cvdelspace"></span>` : `<button class="iconbtn del" data-cvdel="${i}" title="${
+          esc(t("cols.view_delete"))}">${ICONS.trash}</button>`}
+      </div>${open ? columnViewEditorHtml(v, i) : ""}`;
+  }).join("");
+  wireColumnViewRows(host);
+}
+
+function redrawColumnStandards() {
+  const opts = (selected, first) => (first ? `<option value="">${esc(first)}</option>` : "") +
+    colViewDraft.map(v => `<option value="${esc(v.id)}"${v.id === selected ? " selected" : ""}>${
+      esc(columnViewLabel(v))}</option>`).join("");
+  const ids = new Set(colViewDraft.map(v => v.id));
+  for (const key of ["edit", "player", "check", "drop", "issues"]) {
+    if (colViewStdDraft[key] && !ids.has(colViewStdDraft[key])) {
+      colViewStdDraft[key] = STD_ASSIGN_KEYS[key] ? "" : STD_COLUMN_VIEWS[key];
+    }
+  }
+  const inheritLabel = key => {
+    const inherit = resolveColumnView(columnViewParentKey(key));
+    return inherit.from
+      ? t("cols.view_none_inherit", {view: columnViewLabel(inherit.view), from: columnAssignSourceLabel(inherit.from)})
+      : t("cols.view_none_standard");
+  };
+  const firsts = {
+    edit: "", player: "",
+    check: inheritLabel(CHECK_FOLDER_KEY),
+    issues: inheritLabel(STD_ASSIGN_KEYS.issues),
+    drop: "",
+  };
+  for (const key of Object.keys(firsts)) {
+    const sel = document.querySelector(`[data-cvstd="${key}"]`);
+    if (!sel) continue;
+    sel.innerHTML = opts(colViewStdDraft[key], firsts[key]);
+    sel.onchange = () => { colViewStdDraft[key] = sel.value; redrawColumnViewsBlock(); };
+  }
+}
+
+function addColumnViewFromSettings() {
+  if (colViewDraft.filter(v => !isFixedColumnView(v.id)).length >= MAX_COLUMN_VIEWS) {
+    note(t("cols.view_limit", {max: MAX_COLUMN_VIEWS}), "soft");
+    return;
+  }
+  // Startet mit den Spalten des Bearbeiten-Standards -- leer waere nutzlos.
+  const base = colViewDraft.find(v => v.id === colViewStdDraft.edit)
+    || colViewDraft.find(v => v.id === STD_COLUMN_VIEWS.edit);
+  const v = normalizeColumnStore({id: newColumnViewId(), name: t("settings.column_view_new_name"),
+    order: base ? [...base.order] : OPTIONAL_COLUMNS.map(c => c.key),
+    hidden: base ? [...base.hidden] : [], widths: base ? {...base.widths} : {}});
+  colViewDraft.push(v);
+  colViewOpen.add(v.id);
+  redrawColumnViewsBlock();
+  const input = document.querySelector(`.cvrow[data-cv="${colViewDraft.length - 1}"] [data-cvf=name]`);
+  if (input) { input.focus(); input.select(); }
+}
+
+function wireColumnViewRows(host) {
   host.querySelectorAll(".cvrow").forEach(row => {
     const i = +row.dataset.cv;
-    row.querySelector("[data-cvf=name]").oninput = ev => { colViewDraft[i].name = ev.target.value; };
-    row.querySelector("[data-cvdel]").onclick = () => {
-      colViewDraft.splice(i, 1);
+    const name = row.querySelector("[data-cvf=name]");
+    if (name) name.oninput = ev => { colViewDraft[i].name = ev.target.value; };
+    const del = row.querySelector("[data-cvdel]");
+    if (del) del.onclick = () => deleteColumnViewFromSettings(colViewDraft[i].id);
+    row.querySelector("[data-cvtoggle]").onclick = () => {
+      const id = colViewDraft[i].id;
+      if (colViewOpen.has(id)) colViewOpen.delete(id); else colViewOpen.add(id);
       redrawColumnViewsBlock();
     };
   });
+  host.querySelectorAll(".cvedit").forEach(ed => {
+    const v = colViewDraft[+ed.dataset.cvedit];
+    const hide = k => { if (!v.hidden.includes(k)) v.hidden.push(k); };
+    // Einblenden hinter die letzte sichtbare (beforeKey = vor diese Spalte).
+    const show = (k, beforeKey = null, after = false) => {
+      v.hidden = v.hidden.filter(x => x !== k);
+      const order = v.order.filter(x => x !== k);
+      let at;
+      if (beforeKey && order.includes(beforeKey)) at = order.indexOf(beforeKey) + (after ? 1 : 0);
+      else { at = 0; order.forEach((x, n) => { if (!v.hidden.includes(x)) at = n + 1; }); }
+      order.splice(at, 0, k);
+      v.order = order;
+    };
+    ed.querySelectorAll("[data-cvremove]").forEach(b => b.onclick = () => {
+      hide(b.dataset.cvremove); redrawColumnViewsBlock();
+    });
+    ed.querySelectorAll("[data-cvshow]").forEach(b => b.onclick = () => {
+      show(b.dataset.cvshow); redrawColumnViewsBlock();
+    });
+    const more = ed.querySelector("[data-cvmore]");
+    if (more) more.onclick = () => { colViewHiddenAll.add(more.dataset.cvmore); redrawColumnViewsBlock(); };
+    // Ziehen: innerhalb "Sichtbar" umsortieren, aus "Ausgeblendet" an eine Stelle
+    // einblenden, auf "Ausgeblendet" ablegen = ausblenden (nicht bei Pflicht-Status).
+    let dragKey = null;
+    ed.querySelectorAll("[data-cvchip]").forEach(chip => {
+      chip.ondragstart = ev => {
+        dragKey = chip.dataset.cvchip;
+        ev.dataTransfer.effectAllowed = "move";
+        try { ev.dataTransfer.setData("text/plain", dragKey); } catch (_) {}
+        chip.classList.add("dragging");
+      };
+      chip.ondragend = () => { chip.classList.remove("dragging"); dragKey = null; };
+    });
+    ed.querySelectorAll('[data-cvzone="visible"] [data-cvchip]').forEach(chip => {
+      chip.ondragover = ev => { if (dragKey) { ev.preventDefault(); chip.classList.add("dropover"); } };
+      chip.ondragleave = () => chip.classList.remove("dropover");
+      chip.ondrop = ev => {
+        ev.preventDefault(); ev.stopPropagation();
+        const target = chip.dataset.cvchip;
+        if (!dragKey || dragKey === target) return;
+        const box = chip.getBoundingClientRect();
+        show(dragKey, target, ev.clientX > box.left + box.width / 2);
+        redrawColumnViewsBlock();
+      };
+    });
+    const zones = ed.querySelectorAll("[data-cvzone]");
+    zones.forEach(zone => {
+      zone.ondragover = ev => { if (dragKey) { ev.preventDefault(); zone.classList.add("dropzone"); } };
+      zone.ondragleave = ev => { if (!zone.contains(ev.relatedTarget)) zone.classList.remove("dropzone"); };
+      zone.ondrop = ev => {
+        ev.preventDefault();
+        zone.classList.remove("dropzone");
+        if (!dragKey) return;
+        if (zone.dataset.cvzone === "hidden") {
+          if (dragKey === "v" && columnViewInCheckLists(v.id)) return;
+          hide(dragKey);
+        } else show(dragKey);
+        redrawColumnViewsBlock();
+      };
+    });
+  });
+}
+
+// Loeschen wirkt sofort (nach Rueckfrage), nicht erst mit "Speichern" -- sonst
+// blieb die Ansicht bestehen, wenn man den Dialog anders verliess. Geschickt
+// wird die GESPEICHERTE Liste ohne diese Ansicht, nicht der Entwurf: andere,
+// noch offene Aenderungen bleiben Entwurf. Der Server nimmt alle Zuordnungen
+// darauf mit (save_column_views()), die Listen stehen danach auf "Keine".
+async function deleteColumnViewFromSettings(id) {
+  const view = colViewDraft.find(v => v.id === id);
+  if (!view || isFixedColumnView(id)) return;
+  const uses = columnViewUses(id);
+  const ok = await askConfirmSimple(t("cols.delete_title", {name: columnViewLabel(view)}),
+    uses.length ? t("cols.delete_note_uses", {n: uses.length}) : t("cols.delete_note"));
+  if (!ok) return;
+  const drop = () => {
+    colViewDraft = colViewDraft.filter(v => v.id !== id);
+    colViewOpen.delete(id);
+  };
+  if (!apiMode) {
+    COLUMN_VIEWS = COLUMN_VIEWS.filter(v => v.id !== id);
+    for (const [key, v] of Object.entries(COLUMN_ASSIGN)) if (v === id) delete COLUMN_ASSIGN[key];
+    drop(); saveFilters(); redrawColumnViewsBlock(); repaintColumns();
+    return;
+  }
+  const st = document.getElementById("cvStatus");
+  try {
+    const res = await fetch("/api/column-views", {method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({column_views: COLUMN_VIEWS.filter(v => v.id !== id)})});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    adoptColumnViewsFromServer(data);
+    drop();
+    redrawColumnViewsBlock();
+    if (st) { st.textContent = t("cols.deleted", {name: columnViewLabel(view)}); st.className = ""; }
+    repaintColumns();
+    renderDropColsMenu();
+    renderDrops();
+  } catch (err) {
+    if (st) { st.textContent = t("error.generic", {error: err.message}); st.className = "warn"; }
+  }
 }
 
 function wireColumnViewsBlock() {
   redrawColumnViewsBlock();
   document.getElementById("btnSaveCv").onclick = saveColumnViewsFromSettings;
+  document.getElementById("btnNewCv").onclick = addColumnViewFromSettings;
 }
 
+// true = gespeichert (der allgemeine "Speichern"-Knopf wartet darauf).
 async function saveColumnViewsFromSettings() {
   const st = document.getElementById("cvStatus");
   st.textContent = t("settings.column_views_saving"); st.className = "";
   try {
+    const std = colViewStdDraft;
     const res = await fetch("/api/column-views", {method: "POST",
       headers: {"Content-Type": "application/json"},
       body: JSON.stringify({column_views: colViewDraft,
-                            music_default: colViewMusicDefaultDraft,
-                            drop_view: colViewDropDraft})});
+        drop_view: std.drop === STD_COLUMN_VIEWS.drop ? "" : std.drop,
+        // Die feste Ansicht des Layouts heisst serverseitig "leer" -- dann
+        // folgt sie auch einer spaeteren Aenderung der Vorgabe.
+        edit_view: std.edit === STD_COLUMN_VIEWS.edit ? "" : std.edit,
+        player_view: std.player === STD_COLUMN_VIEWS.player ? "" : std.player})});
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
     adoptColumnViewsFromServer(data);
+    // Pruefliste = Zuordnung des Ordners, erst NACH den Ansichten senden (der
+    // Server weist eine Zuordnung auf eine ihm unbekannte Ansicht ab).
+    for (const [k, key] of Object.entries(STD_ASSIGN_KEYS)) {
+      if ((COLUMN_ASSIGN[key] || "") !== (std[k] || "")) setColumnAssign(key, std[k]);
+    }
+    resetColumnViewDrafts();
     redrawColumnViewsBlock();
     st.textContent = t("settings.column_views_saved");
-    // Eine geloeschte oder umbenannte Ansicht schlaegt sofort auf die
-    // Tabelle durch -- der Server hat verwaiste Zuordnungen mit entfernt.
+    // Eine geloeschte oder geaenderte Ansicht schlaegt sofort auf die Tabelle
+    // durch -- der Server hat verwaiste Zuordnungen mit entfernt.
     repaintColumns();
     renderDropColsMenu();
     renderDrops();
+    return true;
   } catch (err) {
     st.textContent = t("error.generic", {error: err.message}); st.className = "warn";
+    return false;
   }
 }
 
@@ -13394,17 +14695,19 @@ function adoptColumnViewsFromServer(data) {
   COLUMN_VIEWS = (data.column_views || [])
     .filter(v => v && v.id && v.name)
     .map(v => normalizeColumnStore({id: String(v.id), name: String(v.name),
-                                    order: v.order, hidden: v.hidden, widths: v.widths}));
+                                    order: v.order, hidden: v.hidden, widths: v.widths},
+                                   {trackFirst: v.id === STD_COLUMN_VIEWS.player}));
   COLUMN_ASSIGN = {};
   const assign = (data.column_view_assign && typeof data.column_view_assign === "object")
     ? data.column_view_assign : {};
   for (const [viewId, id] of Object.entries(assign)) {
     if (COLUMN_VIEWS.some(v => v.id === id)) COLUMN_ASSIGN[viewId] = id;
   }
-  COLUMN_VIEW_MUSIC_DEFAULT = COLUMN_VIEWS.some(v => v.id === data.column_view_music_default)
-    ? data.column_view_music_default : "";
   COLUMN_VIEW_DROP = COLUMN_VIEWS.some(v => v.id === data.column_view_drop)
     ? data.column_view_drop : "";
+  const known = id => (COLUMN_VIEWS.some(v => v.id === id) ? id : "");
+  COLUMN_VIEW_EDIT = known(data.column_view_edit);
+  COLUMN_VIEW_PLAYER = known(data.column_view_player);
   saveFilters();
 }
 
@@ -14199,12 +15502,13 @@ async function pollAcTrain() {
 // (Backup jetzt / wiederherstellen), keine Einstellungswerte zum Editieren.
 function renderBackupBlock() {
   const keep = schema.backup_keep || 10;
+  const days = schema.backup_keep_days ?? 7;
   return `<div class="setgroup collapsed" data-sg="backup">
     <div class="sethead">
       <div class="sethead-top"><span class="setchevron">${ICONS.chevronDown}</span><b>${esc(t("settings.backup_title"))}</b></div>
     </div>
     <div class="setbody">
-      <div class="sethint">${esc(t("settings.backup_note", {keep}))}</div>
+      <div class="sethint">${esc(t(days > 0 ? "settings.backup_note_days" : "settings.backup_note", {keep, days}))}</div>
       <div id="backupList" class="path">${esc(t("settings.backup_loading"))}</div>
       <div style="margin-top:10px; display:flex; gap:10px; flex-wrap:wrap">
         <button class="act" id="btnBackupCreate"><span class="btnicon">${ICONS.databaseArrowDown}</span> ${esc(t("settings.backup_create"))}</button>
@@ -14845,6 +16149,7 @@ async function postSettings(url, body) {
     applyTheme(data.values.theme);
     applyAccentColor(data.values.accent_color);
     applyDjSurface(data.values.dj_waveform_surface);
+    DJ_METRO_SOUND = data.values.dj_metronome_sound || "beep";
     refreshWaveColors();
     if (DJ) djLoadDetail(DJ);
     setKeyNotation(data.values.key_notation);
@@ -14946,6 +16251,8 @@ async function pollScan() {
     scanLine(`${esc(f.cancelled ? t("scan.cancelled_after") : t("scan.finished"))} ` +
       `${esc(t("scan.progress_of", {done: f.done.toLocaleString("de-DE"), total: f.todo.toLocaleString("de-DE")}))}` +
       (f.removed ? esc(t("scan.removed_suffix", {count: f.removed})) : "") +
+      (f.prune_kept ? esc(t("scan.prune_kept_suffix", {count: f.prune_kept})) : "") +
+      (f.replaced ? esc(t("scan.replaced_suffix", {count: f.replaced})) : "") +
       (f.covers_filled ? esc(t("scan.covers_filled_suffix", {count: f.covers_filled})) : "") +
       (f.tag_issues_rechecked ? esc(t("scan.tag_issues_rechecked_suffix", {count: f.tag_issues_rechecked})) : "") +
       (f.genremood_done ? esc(t("scan.genremood_suffix", {count: f.genremood_done})) : "") +
@@ -15048,7 +16355,7 @@ function readThemeTokens() {
       screen: v("--dj-screen"), beat: v("--dj-beat"), beatEdit: v("--dj-beat-edit"),
       bar: v("--dj-bar"), barEdit: v("--dj-bar-edit"), text: v("--dj-text"), head: v("--dj-head"),
       shade: v("--dj-shade"), labelBg: v("--dj-label-bg"), labelFg: v("--dj-label-fg"), tempo: v("--dj-tempo"),
-      tempoBg: v("--dj-tempo-bg"), tempoFg: v("--dj-tempo-fg"),
+      tempoBg: v("--dj-tempo-bg"), tempoFg: v("--dj-tempo-fg"), ramp: v("--dj-ramp"), anchor: v("--dj-anchor"),
       loop: v("--dj-loop"), loopFaint: v("--dj-loop-faint"), loopLine: v("--dj-loop-line"),
       window: v("--dj-window"), selected: v("--dj-selected"),
     },
@@ -17201,7 +18508,6 @@ function renderDrops() {
     return;
   }
   const cols = dropVisibleCols();
-  const statusHidden = dropColumnStore().hidden.includes("v");
   const colHead = cols.map(k => {
     const c = OPTIONAL_COLUMNS.find(c => c.key === k);
     const w = dropColumnStore().widths[k] || DEFAULT_COL_WIDTHS[k];
@@ -17213,7 +18519,6 @@ function renderDrops() {
     <thead><tr>
       <th class="sel" style="width:36px">${selectable.length
         ? `<input type="checkbox" id="dropSelAll" title="${esc(t("drop.select_all_title"))}">` : ""}</th>
-      ${statusHidden ? "" : `<th style="width:90px">${esc(t("col.status"))}</th>`}
       ${colHead}
       <th class="filler"></th>
       <th class="links" style="width:220px">${esc(t("col.open"))}</th>
@@ -17223,7 +18528,6 @@ function renderDrops() {
         <td class="sel">${r.nativePath ? `<input type="checkbox" class="dropchk" data-dropsel="${r._id}"
               ${dropSelected.has(r._id) ? "checked" : ""}
               title="${esc(t("drop.select_row_title"))}">` : ""}</td>
-        ${statusHidden ? "" : `<td><span class="badge ${r.v}">${VERDICT_ICONS[r.v] || ""}${labels[r.v]}</span></td>`}
         ${cols.map(k => dropCellHtml(k, r)).join("")}
         <td class="filler"></td>
         <td class="links"><div class="actions">
@@ -17273,7 +18577,7 @@ function renderDrops() {
     const det = document.createElement("tr");
     det.className = "detail expanded";
     // Minus 1 wie in der Haupttabelle: "Öffnen" reicht per rowspan hinein.
-    det.innerHTML = `<td colspan="${2 + (statusHidden ? 0 : 1) + cols.length}">${detailHTML(r)}</td>`;
+    det.innerHTML = `<td colspan="${2 + cols.length}">${detailHTML(r)}</td>`;
     spanLinksIntoDetail(tr, true);
     tr.after(det);
     tr.classList.add("expanded");
@@ -17972,8 +19276,7 @@ document.addEventListener("keydown", ev => {
   if (dialog && dialog.style.display === "flex") return;
   ev.preventDefault();
   if (state.layout === "player") { startQueueFrom(r); return; }
-  const btn = document.querySelector(`[data-play="${r.i}"]`);
-  if (btn) btn.click();
+  rowPlayToggle(r);
 });
 
 // ── Cmd+Löschen: ausgewählte Tracks in den Papierkorb ────────────────────
@@ -18227,6 +19530,12 @@ document.getElementById("btnSave").onclick = async () => {
       return;
     }
   }
+  // Offene Aenderungen an den Spaltenansichten (Karten "Standards"/"Ansichten")
+  // gehen mit -- sonst verwarf der Neuaufbau nach dem Speichern den Entwurf.
+  if (columnViewDraftDirty() && !await saveColumnViewsFromSettings()) {
+    document.getElementById("cvStatus").scrollIntoView({block: "center"});
+    return;
+  }
   postSettings("/api/settings", collectSettings());
 };
 
@@ -18288,9 +19597,12 @@ const STATS_ACTION_GROUPS = [
   ["analyse", ["scan-analyse", "bpmkey", "genremood"]],
   ["file", ["reencode", "convert", "umbenannt", "papierkorb", "stems", "verschoben", "automatisch verschoben"]],
   ["tags", ["tags", "cover", "cover-loeschen", "genre-rename", "artist-rename", "album-rename", "auffaelligkeiten-fix"]],
-  ["music", ["import", "music-cover", "music-cover-loeschen", "music-entfernt", "papierkorb-durch-music"]],
+  ["music", ["import", "music", "music-cover", "music-cover-loeschen", "music-entfernt", "papierkorb-durch-music"]],
   ["rekordbox", ["rekordbox", "rekordbox-korrigiert", "rekordbox-pfad-korrigiert", "rekordbox-genre",
-                 "rekordbox-artist", "rekordbox-album", "rekordbox-tags", "rekordbox-stem"]],
+                 "rekordbox-artist", "rekordbox-album", "rekordbox-tags", "rekordbox-tags-sync", "rekordbox-stem",
+                 "rekordbox-dj-add", "rekordbox-dj-update", "rekordbox-dj-keep", "rekordbox-dj-load"]],
+  ["playlists", ["playlist-link", "playlist-sync"]],
+  ["autocue", ["autocue-train", "autocue-model-import", "autocue-model-delete"]],
 ];
 
 function statsActionLabel(action) {
@@ -18788,18 +20100,17 @@ async function renameGroupValue(field, oldValue, groupArtist) {
   await performValueRename(field, oldValue, props.name, groupArtist);
 }
 
-async function dismissMergeSuggestion(field, a, b, hostId, flag = true) {
+// flag = true blendet aus, false holt einen ausgeblendeten Vorschlag zurueck (Reiter "Ausgeblendet").
+async function dismissMergeSuggestion(field, a, b, flag = true) {
   MERGE_DISMISSED[field][flag ? "add" : "delete"](mergePairKey(a, b));
   // Vorschau auf genau dieses (jetzt ausgeblendete) Paar waere sonst eine
-  // Einschraenkung ohne sichtbaren Vorschlag dazu -- render() baut in diesem
-  // Fall auch die Vorschlagsflaeche neu, ein zusaetzlicher Aufruf waere
-  // doppelte Arbeit.
+  // Einschraenkung ohne sichtbaren Vorschlag dazu.
   if (flag && state.mergePreview && state.mergePreview.field === field &&
       mergePairKey(state.mergePreview.a.value, state.mergePreview.b.value) === mergePairKey(a, b)) {
     state.mergePreview = null;
     render();
   } else {
-    renderMergeSuggestions(field, hostId);
+    renderPlaylistHeaderValueBox();
   }
   try {
     await fetch("/api/merge-dismiss", {
@@ -18818,16 +20129,14 @@ async function dismissMergeSuggestion(field, a, b, hostId, flag = true) {
 // nur zusaetzlich Bubble-Reihe + Zusammenfuehrungs-Vorschlaege dazu, wenn
 // eine der drei "Aufraeumen"-Listen aktiv ist. EIN gemeinsamer Satz Elemente
 // reicht, weil immer nur eines der drei Felder gleichzeitig aktiv sein kann.
-// Zwei unabhaengige Zustaende je Feld: 'expanded' vergroessert nur die
-// Bubble-Reihe (200px Standard-/550px Maximalhoehe ueber
-// #plHeadBubblesExpand), 'mergeOpen' blendet die Zusammenfuehrungs-
-// Vorschlaege separat ein/aus (#plHeadMergeToggle) -- kein gemeinsamer
-// "ganze Box zuklappen"-Schalter mehr (Feedback: der fruehere Knopf links
-// neben "Vorschläge" entfaellt, Vorschläge steuert sich nur noch selbst).
+// 'expanded' vergroessert nur die Bubble-Reihe (200px Standard-/550px Maximalhoehe ueber
+// #plHeadBubblesExpand). 'mode' schaltet ueber den Umschalter im Listenkopf (#plHeadValueMode,
+// wie Player/DJ/Bearbeiten) zwischen der A-Z-Leiste ("values") und den Zusammenfuehrungs-
+// Vorschlaegen ("suggestions") bzw. den ausgeblendeten Vorschlaegen ("dismissed") an derselben Stelle um.
 const valueBoxState = {
-  genre:  {expanded: false, mergeOpen: false},
-  album:  {expanded: false, mergeOpen: false},
-  artist: {expanded: false, mergeOpen: false},
+  genre:  {expanded: false, mode: "values"},
+  album:  {expanded: false, mode: "values"},
+  artist: {expanded: false, mode: "values"},
 };
 let valueBoxWired = false;
 
@@ -18853,18 +20162,23 @@ function wireValueBoxOnce() {
   if (valueBoxWired) return;
   valueBoxWired = true;
   document.getElementById("plHeadBubblesExpandIcon").innerHTML = SVG(LUCIDE_ICONS["chevron-down"]);
-  document.getElementById("plHeadMergeToggleIcon").innerHTML = SVG(LUCIDE_ICONS.merge);
+  document.getElementById("plHeadBubblesRow").onclick = onValueBubblesClick;
   document.getElementById("plHeadBubblesExpand").onclick = () => {
     const field = GRP_VIEW_FIELD[state.view];
     if (!field) return;
     valueBoxState[field].expanded = !valueBoxState[field].expanded;
     renderPlaylistHeaderValueBox();
   };
-  document.getElementById("plHeadMergeToggle").onclick = () => {
+  document.getElementById("plHeadValueMode").onclick = ev => {
+    const b = ev.target.closest("[data-valuemode]");
     const field = GRP_VIEW_FIELD[state.view];
-    if (!field) return;
-    valueBoxState[field].mergeOpen = !valueBoxState[field].mergeOpen;
-    renderPlaylistHeaderValueBox();
+    if (!b || !field || valueBoxState[field].mode === b.dataset.valuemode) return;
+    valueBoxState[field].mode = b.dataset.valuemode;
+    // Beide Filter gehoeren je zu einer Ansicht: Bubble-Filter zu A-Z, Vorschau zu den Vorschlaegen.
+    if (state.mergePreview && state.mergePreview.field === field) state.mergePreview = null;
+    if (state.valueFilter && state.valueFilter.field === field) state.valueFilter = null;
+    state.shown = PAGE;
+    render();
   };
 }
 
@@ -18877,85 +20191,174 @@ function valueInitial(value) {
   return c >= "A" && c <= "Z" ? c : "#";
 }
 
-function renderPlaylistHeaderValueBox() {
-  wireValueBoxOnce();
-  const field = GRP_VIEW_FIELD[state.view];
-  const expandBtn = document.getElementById("plHeadBubblesExpand");
-  const mergeBtn = document.getElementById("plHeadMergeToggle");
-  const bubblesRow = document.getElementById("plHeadBubblesRow");
-  const mergeHost = document.getElementById("plHeadMergeSuggestions");
-  if (!field) {
-    expandBtn.hidden = true;
-    mergeBtn.hidden = true;
-    bubblesRow.hidden = true;
-    mergeHost.hidden = true;
-    return;
-  }
-  expandBtn.hidden = false;
-  mergeBtn.hidden = false;
-  bubblesRow.hidden = false;
-  const st = valueBoxState[field];
-  expandBtn.classList.toggle("expanded", st.expanded);
-  document.getElementById("plHeadBubblesExpandLabel").textContent =
-    t(st.expanded ? "genres.bubbles_collapse_label" : "genres.bubbles_expand_label");
-  bubblesRow.classList.toggle("expanded", st.expanded);
-  mergeBtn.classList.toggle("active", st.mergeOpen);
-  mergeHost.hidden = !st.mergeOpen;
+// Schluessel eines Werte-Eintrags (Album: Gruppen-Interpret zaehlt mit).
+function valueEntryKey(field, entry) {
+  return field === "album" ? (entry.groupArtist || "") + "\u0000" + entry.value : entry.value;
+}
 
-  const values = valueEntriesFor(field);
-  const vf = state.valueFilter;
+// Was gerade in #plHeadBubblesRow steht: {field, values, title, index, lazy,
+// expanded}. render() laeuft bei jedem Klick -- neu aufgebaut wird die Leiste
+// nur, wenn sich Feld, Werteliste (Identitaet, siehe groupCountsCache) oder
+// Beschriftung aendern, sonst wird nur die aktive Bubble umgesetzt. Bei
+// tausenden Alben hing vorher jeder Klick an einem kompletten Neuaufbau.
+let valueBoxBuilt = null;
+// Ab dieser Zahl Eintraege rendert der Browser nur sichtbare Buchstaben-
+// Abschnitte (.azlazy -> content-visibility, app.css); kleine Listen bleiben
+// wie bisher, dort stimmt auch die gemessene Hoehe fuers Aufklappen exakt.
+const AZ_LAZY_MIN = 300;
+// Geschaetzte Abschnittshoehe fuer noch nicht gezeichnete Abschnitte: Zeilen
+// zu AZ_CHIP_ROW_PX im 260-px-Raster mit 6 px Abstand (.azchips), dazu Rand
+// und Innenabstand von .azsec. Nur Schaetzung -- einmal gezeichnet, merkt
+// sich der Browser die echte Hoehe (contain-intrinsic-size: auto).
+const AZ_CHIP_ROW_PX = 34;
+function azSectionEstimate(count, rowWidth) {
+  const cols = Math.max(1, Math.floor((rowWidth - 50 + 6) / 266));
+  const rows = Math.ceil(count / cols);
+  return Math.max(46, rows * AZ_CHIP_ROW_PX + (rows - 1) * 6 + 13);
+}
+
+function buildValueBubbles(bubblesRow, field, values, title) {
   // Buchstaben-Index: Gruppen nach Anfangsbuchstabe (values ist schon sortiert,
-  // data-i bleibt die Originalposition fuer die Handler weiter unten).
+  // data-i bleibt die Originalposition fuer den Klick-Handler).
   const groups = new Map();
+  const index = new Map();
   values.forEach((v, i) => {
+    index.set(valueEntryKey(field, v), i);
     const L = valueInitial(v.value);
     if (!groups.has(L)) groups.set(L, []);
     groups.get(L).push({v, i});
   });
-  const bubbleHtml = ({v, i}) => {
-    const active = vf && vf.field === field && vf.entry.value === v.value &&
-      (field !== "album" || vf.entry.groupArtist === v.groupArtist);
-    return `<span class="genrebubble${active ? " active" : ""}" data-i="${i}">
+  const lazy = values.length >= AZ_LAZY_MIN;
+  const rowWidth = lazy ? (bubblesRow.clientWidth || 1000) : 0;   // 0 = Fenster noch ohne Layout
+  const titleAttr = esc(title);
+  const bubbleHtml = ({v, i}) => `<span class="genrebubble" data-i="${i}">
       <span>${valueBubbleLabelHtml(field, v)}</span>
       <span class="genrecount">${v.count}</span>
       <button type="button" class="genrerename" data-bubbleedit="${i}"
-              title="${esc(fieldEditTitle(field))}">${ICONS.edit}</button>
+              title="${titleAttr}">${ICONS.edit}</button>
     </span>`;
-  };
   const bar = AZ_LETTERS.map(L => groups.has(L)
     ? `<button type="button" class="azbtn" data-azletter="${L}">${L}</button>`
     : `<span class="azbtn off">${L}</span>`).join("");
+  const secStyle = L => lazy
+    ? ` style="contain-intrinsic-size:auto ${azSectionEstimate(groups.get(L).length, rowWidth)}px"` : "";
+  bubblesRow.classList.toggle("azlazy", lazy);
   bubblesRow.innerHTML = `<div class="azbar" title="${esc(t("genres.az_bar_title"))}">${bar}</div>` +
     AZ_LETTERS.filter(L => groups.has(L)).map(L =>
-      `<div class="azsec" data-azsec="${L}"><div class="azletter">${L}</div>
+      `<div class="azsec" data-azsec="${L}"${secStyle(L)}><div class="azletter">${L}</div>
         <div class="azchips">${groups.get(L).map(bubbleHtml).join("")}</div></div>`).join("");
-  bubblesRow.querySelectorAll("[data-azletter]").forEach(b => b.onclick = () => {
-    const sec = bubblesRow.querySelector(`[data-azsec="${b.dataset.azletter}"]`);
+  return {field, values, title, index, lazy, expanded: null};
+}
+
+// EIN Klick-Handler fuer die ganze Leiste (Buchstabe, Stift, Bubble) statt
+// zwei je Bubble -- gelesen wird immer der zuletzt gebaute Stand.
+function onValueBubblesClick(ev) {
+  const built = valueBoxBuilt;
+  if (!built) return;
+  const bubblesRow = ev.currentTarget;
+  const letter = ev.target.closest("[data-azletter]");
+  if (letter) {
+    const sec = bubblesRow.querySelector(`[data-azsec="${letter.dataset.azletter}"]`);
     if (!sec) return;
     const bar = bubblesRow.querySelector(".azbar");
-    bubblesRow.scrollTo({top: sec.offsetTop - (bar ? bar.offsetHeight : 0),
-                         behavior: "auto"});
-  });
+    // Bei .azlazy zeichnet der Browser nach dem Sprung die Abschnitte um das
+    // Ziel herum erstmals, ihre echte Hoehe weicht von der Schaetzung ab und
+    // das Ziel verrutscht -- deshalb ein paar Bilder lang nachfuehren.
+    const jump = left => {
+      const top = sec.offsetTop - (bar ? bar.offsetHeight : 0);
+      if (Math.abs(bubblesRow.scrollTop - top) > 1) bubblesRow.scrollTo({top, behavior: "auto"});
+      if (left > 0 && built.lazy && valueBoxBuilt === built) requestAnimationFrame(() => jump(left - 1));
+    };
+    jump(4);
+    return;
+  }
+  const {field, values} = built;
+  const edit = ev.target.closest("[data-bubbleedit]");
+  if (edit) {
+    const entry = values[+edit.dataset.bubbleedit];
+    renameGroupValue(field, entry.value, entry.groupArtist || null);
+    return;
+  }
+  const el = ev.target.closest(".genrebubble[data-i]");
+  if (!el) return;
+  const entry = values[+el.dataset.i];
+  const vf = state.valueFilter;
+  const already = vf && vf.field === field &&
+    valueEntryKey(field, vf.entry) === valueEntryKey(field, entry);
+  state.valueFilter = already ? null : {field, entry};
+  state.shown = PAGE;
+  render();
+}
+
+function renderPlaylistHeaderValueBox() {
+  wireValueBoxOnce();
+  const field = GRP_VIEW_FIELD[state.view];
+  const expandBtn = document.getElementById("plHeadBubblesExpand");
+  const modeSwitch = document.getElementById("plHeadValueMode");
+  const bubblesRow = document.getElementById("plHeadBubblesRow");
+  const mergeHost = document.getElementById("plHeadMergeSuggestions");
+  if (!field) {
+    expandBtn.hidden = true;
+    modeSwitch.hidden = true;
+    bubblesRow.hidden = true;
+    mergeHost.hidden = true;
+    return;
+  }
+  const st = valueBoxState[field];
+  // Umschalter A-Z | Vorschlaege (n), Zahl = offene Vorschlaege (Liste je Werteliste gecacht).
+  const allSugg = mergeSuggestionsFor(field);
+  const openCount = allSugg.filter(sg => !MERGE_DISMISSED[field].has(mergePairKey(sg.a.value, sg.b.value))).length;
+  const hiddenCount = allSugg.length - openCount;
+  const modeSig = [st.mode, openCount, hiddenCount, t("genres.mode_values"), t("genres.merge_toggle_label")].join("\u0001");
+  modeSwitch.hidden = false;
+  if (modeSwitch._sig !== modeSig) {
+    modeSwitch._sig = modeSig;
+    const mbtn = (id, label, n) => `<button type="button" class="lsbtn${st.mode === id ? " on" : ""}" data-valuemode="${id}">${
+      esc(label)}${n != null ? ` <span class="duptabcount">${n.toLocaleString("de-DE")}</span>` : ""}</button>`;
+    modeSwitch.innerHTML = mbtn("values", t("genres.mode_values")) + mbtn("suggestions", t("genres.merge_toggle_label"), openCount)
+      + mbtn("dismissed", t("genres.merge_tab_dismissed"), hiddenCount);
+  }
+  // Player/DJ haben kein Zusammenfuehren (Umschalter per CSS ausgeblendet): dort immer A-Z.
+  if (st.mode !== "values" && state.layout === "edit") {
+    expandBtn.hidden = true;
+    bubblesRow.hidden = true;
+    mergeHost.hidden = false;
+    renderMergeSuggestions(field, mergeHost, st.mode);
+    return;
+  }
+  mergeHost.hidden = true;
+  expandBtn.hidden = false;
+  bubblesRow.hidden = false;
+  expandBtn.classList.toggle("expanded", st.expanded);
+  document.getElementById("plHeadBubblesExpandLabel").textContent =
+    t(st.expanded ? "genres.bubbles_collapse_label" : "genres.bubbles_expand_label");
+  bubblesRow.classList.toggle("expanded", st.expanded);
+
+  const values = valueEntriesFor(field);
+  const title = fieldEditTitle(field);
+  let built = valueBoxBuilt;
+  if (!built || built.field !== field || built.values !== values || built.title !== title) {
+    built = valueBoxBuilt = buildValueBubbles(bubblesRow, field, values, title);
+  }
+  // Aktive Bubble umsetzen statt neu bauen.
+  const vf = state.valueFilter;
+  const activeIdx = vf && vf.field === field ? built.index.get(valueEntryKey(field, vf.entry)) : undefined;
+  const prev = bubblesRow.querySelector(".genrebubble.active");
+  const next = activeIdx === undefined ? null
+    : bubblesRow.querySelector(`.genrebubble[data-i="${activeIdx}"]`);
+  if (prev !== next) {
+    if (prev) prev.classList.remove("active");
+    if (next) next.classList.add("active");
+  }
   // 550px bleibt Obergrenze (app.css .genrebox-bubbles.expanded), oeffnet
   // aber nur so weit wie der tatsaechliche Inhalt -- statt immer bis 550px.
-  bubblesRow.style.maxHeight = st.expanded ? Math.min(bubblesRow.scrollHeight, 550) + "px" : "";
-  bubblesRow.querySelectorAll("[data-i]").forEach(el => el.onclick = ev => {
-    if (ev.target.closest("[data-bubbleedit]")) return;
-    const entry = values[+el.dataset.i];
-    const already = state.valueFilter && state.valueFilter.field === field &&
-      state.valueFilter.entry.value === entry.value &&
-      (field !== "album" || state.valueFilter.entry.groupArtist === entry.groupArtist);
-    state.valueFilter = already ? null : {field, entry};
-    state.shown = PAGE;
-    render();
-  });
-  bubblesRow.querySelectorAll("[data-bubbleedit]").forEach(btn => btn.onclick = ev => {
-    ev.stopPropagation();
-    const entry = values[+btn.dataset.bubbleedit];
-    renameGroupValue(field, entry.value, entry.groupArtist || null);
-  });
-
-  if (st.mergeOpen) renderMergeSuggestions(field, "plHeadMergeSuggestions");
+  // Grosse Listen (lazy) sind immer hoeher, dort reicht die CSS-Grenze; das
+  // Lesen von scrollHeight erzwingt sonst ein Layout der ganzen Leiste.
+  if (built.expanded !== st.expanded) {
+    built.expanded = st.expanded;
+    bubblesRow.style.maxHeight = st.expanded && !built.lazy
+      ? Math.min(bubblesRow.scrollHeight, 550) + "px" : "";
+  }
 }
 
 // ── Auffaelligkeiten-Bubbles im Playlist-Kopf ────────────────────────────
@@ -19036,7 +20439,7 @@ function renderIssueBubbles() {
   row.hidden = false;
   row.innerHTML = codes.map(code => {
     const active = state.tagIssueFilter === code;
-    const auto = AUTO_FIXABLE_TAG_ISSUE_CODES.has(code);
+    const auto = AUTO_FIXABLE_TAG_ISSUE_CODES.has(code) || ALBUM_COVER_CODES.has(code);
     return `<span class="genrebubble${active ? " active" : ""}" data-code="${esc(code)}">
       <span>${esc(t("tagissue." + code))}</span>
       <span class="genrecount">(${counts.get(code)})</span>
@@ -19066,9 +20469,14 @@ function renderIssueBubbles() {
 // Sammel-Tags-Dialog fuer genau diese Zeilen, weil es dort kein
 // automatisierbares "richtig" gibt.
 async function editAllWithIssueCode(code) {
-  const rows = live().filter(r => rowIssues(r).some(i => i.code === code));
+  let rows = live().filter(r => rowIssues(r).some(i => i.code === code));
   if (!rows.length) return;
-  if (!AUTO_FIXABLE_TAG_ISSUE_CODES.has(code)) {
+  if (ALBUM_COVER_CODES.has(code)) {
+    // Nur Alben mit eindeutiger Mehrheit sind per Quick Fix behebbar, Gleichstaende bleiben manuell.
+    const fixable = rows.filter(r => albumCoverIssueOf(r)?.source);
+    if (!fixable.length) { openTagsPopupBulk(rows, false); return; }
+    rows = fixable;
+  } else if (!AUTO_FIXABLE_TAG_ISSUE_CODES.has(code)) {
     openTagsPopupBulk(rows, false);
     return;
   }
@@ -19106,6 +20514,19 @@ function stripVariantSuffix(s) {
   let out = s;
   for (const re of MERGE_VARIANT_SUFFIXES) out = out.replace(re, "");
   return out.replace(/^!+|!+$/g, "").trim();
+}
+
+// Welche Zeichen ein Text enthaelt, als 32-Bit-Maske (Zeichencode modulo 32)
+// -- Vorfilter des Tippfehler-Vergleichs in findMergeSuggestions().
+function charMask(s) {
+  let m = 0;
+  for (let i = 0; i < s.length; i++) m |= 1 << (s.charCodeAt(i) & 31);
+  return m;
+}
+function popcount32(x) {
+  x -= (x >>> 1) & 0x55555555;
+  x = (x & 0x33333333) + ((x >>> 2) & 0x33333333);
+  return Math.imul((x + (x >>> 4)) & 0x0F0F0F0F, 0x01010101) >>> 24;
 }
 
 // 'sameGroup(a,b)' grenzt bei Album auf denselben Interpreten ein -- zwei
@@ -19151,15 +20572,25 @@ function findMergeSuggestions(values, dismissedSet, sameGroup = () => true) {
     const norm = normalizeMergeValue(entry.value).toLowerCase();
     const bucket = Math.floor(norm.length / 2);
     if (!byLenBucket.has(bucket)) byLenBucket.set(bucket, []);
-    byLenBucket.get(bucket).push({entry, norm});
+    byLenBucket.get(bucket).push({entry, norm, mask: charMask(norm)});
   }
   for (const bucket of byLenBucket.keys()) {
     const candidates = [...byLenBucket.get(bucket), ...(byLenBucket.get(bucket - 1) || [])];
     for (let i = 0; i < candidates.length; i++) {
       for (let j = i + 1; j < candidates.length; j++) {
-        const {entry: ea, norm: na} = candidates[i], {entry: eb, norm: nb} = candidates[j];
+        const {entry: ea, norm: na, mask: ma} = candidates[i];
+        const {entry: eb, norm: nb, mask: mb} = candidates[j];
         if (na === nb) continue;   // schon als Leerzeichen/Gross-Klein erfasst
+        // Zwei billige Ausschluesse VOR dem Levenshtein-Vergleich, beide ohne
+        // Einfluss aufs Ergebnis: ein Paar aus verschiedenen Gruppen verwirft
+        // addSuggestion() ohnehin, und jede einzelne Aenderung (einfuegen,
+        // loeschen, ersetzen) kippt hoechstens zwei Bits der Zeichenmaske --
+        // mehr als 2 * maxDist verschiedene Bits heisst sicher "zu weit weg".
+        // Gemessen an 7.043 Alben: 6,0 s -> 0,1 s, an 5.567 Interpreten
+        // 3,9 s -> 0,15 s, jeweils mit identischer Vorschlagsliste.
+        if (!sameGroup(ea, eb)) continue;
         const maxDist = na.length > 6 ? 2 : 1;
+        if (popcount32(ma ^ mb) > 2 * maxDist) continue;
         if (levenshteinWithin(na, nb, maxDist) <= maxDist) addSuggestion(ea, eb, "typo");
       }
     }
@@ -19183,6 +20614,10 @@ function findMergeSuggestions(values, dismissedSet, sameGroup = () => true) {
 // als Zusammenfuehrung vorgeschlagen. 'groupArtist' haengt am Eintrag, damit
 // mergeGroupValues() den Rename-Aufruf korrekt scopen kann.
 function albumGroupCounts() {
+  // Gleicher Cache wie groupCounts() (geleert von invalidateFieldValueCache()):
+  // render() und der Seitenbaum fragen die Liste bei jedem Durchlauf ab, bei
+  // tausenden Alben waere Zaehlen + Sortieren je Klick spuerbar.
+  if (groupCountsCache[ALBUM_COUNTS_KEY]) return groupCountsCache[ALBUM_COUNTS_KEY];
   const m = new Map();
   for (const r of DATA) {
     if (r.removed || !r.al) continue;
@@ -19191,7 +20626,9 @@ function albumGroupCounts() {
     if (!m.has(key)) m.set(key, {value: r.al, groupArtist, count: 0});
     m.get(key).count++;
   }
-  return [...m.values()].sort((a, b) => cmpText(a.value, b.value));
+  const list = [...m.values()].sort((a, b) => cmpText(a.value, b.value));
+  groupCountsCache[ALBUM_COUNTS_KEY] = list;
+  return list;
 }
 
 const GRP_VIEW_FIELD = {"grp:genre": "genre", "grp:album": "album", "grp:artist": "artist"};
@@ -19273,44 +20710,86 @@ function askMergeTarget(field, a, b, kind) {
   });
 }
 
-function renderMergeSuggestions(field, hostId) {
-  const host = document.getElementById(hostId);
-  if (!host) return;
-  const {rowKey} = VALUE_FIELDS[field];
-  const values = field === "album" ? albumGroupCounts() : groupCounts(rowKey);
+// Alle Vorschlaege eines Feldes OHNE die ausgeblendeten -- der Tippfehler-
+// Vergleich ist bei tausenden Alben teuer und haengt nur an der Werteliste.
+// Die ist selbst gecacht (groupCounts()/albumGroupCounts()), ihre Identitaet
+// reicht deshalb als Schluessel. Ausgeblendete filtert der Aufrufer danach.
+const mergeSuggestCache = {};
+function mergeSuggestionsFor(field) {
+  const values = valueEntriesFor(field);
+  const hit = mergeSuggestCache[field];
+  if (hit && hit.values === values) return hit.list;
   const sameGroup = field === "album" ? (a, b) => a.groupArtist === b.groupArtist : undefined;
-  const suggestions = findMergeSuggestions(values, MERGE_DISMISSED[field], sameGroup);
-  const heading = `<div class="mergehint-heading">${esc(t("genres.merge_heading", {count: suggestions.length}))}</div>`;
-  if (!suggestions.length) {
-    host.innerHTML = heading + `<div class="mergehint-empty">${esc(t("genres.merge_none"))}</div>`;
+  const list = findMergeSuggestions(values, new Set(), sameGroup);
+  mergeSuggestCache[field] = {values, list};
+  return list;
+}
+
+// Zusammenfuehrungs-Vorschlaege an der Stelle der A-Z-Leiste, gewaehlt ueber den Umschalter im
+// Listenkopf: "Vorschlaege" (offen) bzw. "Ausgeblendet" (MERGE_DISMISSED, wieder einblendbar).
+// Ein Klick auf eine Karte schaltet zuerst die Vorschau ein (Tabelle darunter auf beide Werte
+// gefiltert, state.mergePreview); auch "Zusammenfuehren zu ..." aktiviert bei einer Karte ohne
+// Vorschau erst die Vorschau und fuehrt erst beim naechsten Klick zusammen -- man sieht also
+// immer, welche Tracks betroffen sind, bevor geschrieben wird. render() kommt bei jedem Klick
+// hier vorbei: neu gebaut wird nur bei geaenderter Liste, Ansicht, Ausblendung oder Vorschau.
+function renderMergeSuggestions(field, host, tab) {
+  const all = mergeSuggestionsFor(field);
+  const dismissed = MERGE_DISMISSED[field];
+  const mp = state.mergePreview && state.mergePreview.field === field ? state.mergePreview : null;
+  const previewKey = mp ? mergePairKey(mp.a.value, mp.b.value) : "";
+  const sig = [field, tab, dismissed.size, previewKey, t("genres.merge_button")].join("\u0001");
+  if (host._mergeSig && host._mergeSig.all === all && host._mergeSig.sig === sig) return;
+  host._mergeSig = {all, sig};
+  const isHidden = sg => dismissed.has(mergePairKey(sg.a.value, sg.b.value));
+  const list = all.filter(sg => tab === "dismissed" ? isHidden(sg) : !isHidden(sg));
+  if (!list.length) {
+    host.innerHTML = `<div class="mergehint-empty">${esc(t(tab === "dismissed" ? "genres.merge_none_dismissed" : "genres.merge_none"))}</div>`;
     return;
   }
-  const mp = state.mergePreview;
-  host.innerHTML = heading + suggestions.map((s, i) => {
-    const previewing = mp && mp.field === field &&
-      mergePairKey(mp.a.value, mp.b.value) === mergePairKey(s.a.value, s.b.value);
-    return `<div class="mergehint${previewing ? " previewing" : ""}" data-i="${i}">
-      <span class="mergehint-text" data-mergeaction="preview" title="${esc(t("genres.merge_preview_title"))}">
-        <span class="mergehint-eye">${previewing ? ICONS.eyeOff : ICONS.eye}</span>
-        ${t("genres.merge_hint", {a: valueBubbleLabelHtml(field, s.a), b: valueBubbleLabelHtml(field, s.b)})}
-      </span>
-      <button type="button" class="act small mergebtn" data-mergeaction="merge">
-        <span class="btnicon">${ICONS.merge}</span> <span>${esc(t("genres.merge_button"))}</span>
-      </button>
-      <button type="button" class="mergedismiss" data-mergeaction="dismiss" title="${esc(t("genres.merge_dismiss_title"))}">×</button>
+  host.innerHTML = list.map((sg, i) => {
+    const reason = t(MERGE_REASON_KEY[sg.kind] || "genres.merge_reason_typo");
+    const previewing = previewKey && previewKey === mergePairKey(sg.a.value, sg.b.value);
+    const side = tab === "dismissed"
+      ? `<button type="button" class="act small" data-mergeaction="restore" title="${esc(t("genres.merge_restore_title"))}">${
+          ICONS.eye} <span>${esc(t("genres.merge_restore"))}</span></button>`
+      : `<button type="button" class="act small" data-mergeaction="dismiss" title="${esc(t("genres.merge_dismiss_title"))}">${
+          ICONS.eyeOff} <span>${esc(t("genres.merge_dismiss"))}</span></button>`;
+    const opt = (v, k) => `<button type="button" class="act mergechoose-opt" data-keep="${k}"
+        title="${esc(t(previewing ? "genres.merge_into_title" : "genres.merge_into_preview_first", {value: v.value}))}">
+        <span class="mergeopt-main"><span class="mergeopt-icon">${ICONS.merge}</span>
+          <span>${esc(t("genres.merge_into"))} ${valueBubbleLabelHtml(field, v, visualizeMergeValue)}</span></span>
+        <span class="path">${esc(t("group.tracks_count", {count: v.count}))}</span>
+      </button>`;
+    return `<div class="mergecard${previewing ? " previewing" : ""}" data-i="${i}" title="${previewing ? "" : esc(t("genres.merge_preview_title"))}">
+      <div class="mergecard-head">
+        <span class="mergecard-reason">${esc(reason)}</span>
+        ${previewing ? `<button type="button" class="act small on" data-mergeaction="preview">${
+          ICONS.eyeOff} <span>${esc(t("genres.merge_preview_end"))}</span></button>` : ""}
+        ${side}
+      </div>
+      <div class="mergecard-opts">${opt(sg.a, 0)}${opt(sg.b, 1)}</div>
     </div>`;
   }).join("");
-  host.querySelectorAll("[data-i]").forEach(row => {
-    const s = suggestions[+row.dataset.i];
-    row.querySelector('[data-mergeaction="preview"]').onclick = () => toggleMergePreview(field, s.a, s.b);
-    row.querySelector('[data-mergeaction="merge"]').onclick = async () => {
-      const keep = await askMergeTarget(field, s.a, s.b, s.kind);
-      if (!keep) return;
-      const drop = keep === s.a ? s.b : s.a;
-      performValueRename(field, drop.value, keep.value, keep.groupArtist);
-    };
-    row.querySelector('[data-mergeaction="dismiss"]').onclick =
-      () => dismissMergeSuggestion(field, s.a.value, s.b.value, hostId);
+  host.querySelectorAll(".mergecard").forEach(card => {
+    const sg = list[+card.dataset.i];
+    const isPreviewing = () => card.classList.contains("previewing");
+    // Klick auf die Karte (nicht auf einen Knopf): Vorschau einschalten.
+    card.onclick = ev => { if (!ev.target.closest("button") && !isPreviewing()) toggleMergePreview(field, sg.a, sg.b); };
+    const pv = card.querySelector('[data-mergeaction="preview"]');
+    if (pv) pv.onclick = () => toggleMergePreview(field, sg.a, sg.b);
+    card.querySelectorAll("[data-keep]").forEach(btn => btn.onclick = () => {
+      if (!isPreviewing()) { toggleMergePreview(field, sg.a, sg.b); return; }
+      const keep = btn.dataset.keep === "0" ? sg.a : sg.b, drop = keep === sg.a ? sg.b : sg.a;
+      card.querySelectorAll("button").forEach(x => { x.disabled = true; });
+      if (state.mergePreview && state.mergePreview.field === field) state.mergePreview = null;
+      // Bei einem Fehler bleibt die Karte stehen -- dann wieder bedienbar machen.
+      performValueRename(field, drop.value, keep.value, keep.groupArtist)
+        .finally(() => { if (card.isConnected) card.querySelectorAll("button").forEach(x => { x.disabled = false; }); });
+    });
+    const d = card.querySelector('[data-mergeaction="dismiss"]');
+    if (d) d.onclick = () => dismissMergeSuggestion(field, sg.a.value, sg.b.value, true);
+    const r = card.querySelector('[data-mergeaction="restore"]');
+    if (r) r.onclick = () => dismissMergeSuggestion(field, sg.a.value, sg.b.value, false);
   });
 }
 
@@ -19372,17 +20851,19 @@ function askRekordboxSyncOptions() {
     const presenceEl = document.getElementById("rbSyncPresence");
     const fixEl = document.getElementById("rbSyncFixPaths");
     const pendEl = document.getElementById("rbSyncPending");
+    const tagsEl = document.getElementById("rbSyncTags"), loadEl = document.getElementById("rbSyncLoad");
     document.getElementById("rbSyncPendingLabel").textContent =
       t("rbsync.pending_label", {count: RB_PENDING});
-    pendEl.checked = RB_PENDING > 0;
+    // Nutzervorgabe: jeder Abgleich beginnt mit allen Schaltern aus, auch beim
+    // zweiten Oeffnen in derselben Sitzung (das DOM behaelt sonst den letzten Stand).
+    for (const el of [pendEl, presenceEl, tagsEl, loadEl, fixEl]) el.checked = false;
     pendEl.disabled = RB_PENDING === 0;
     ov.style.display = "flex";
     const done = answer => { ov.style.display = "none"; resolve(answer); };
     document.getElementById("rbSyncCancel").onclick = () => done(null);
     document.getElementById("rbSyncStart").onclick = () =>
-      done({presence: presenceEl.checked, fixPaths: fixEl.checked,
-            load: document.getElementById("rbSyncLoad").checked,
-            pending: pendEl.checked});
+      done({presence: presenceEl.checked, fixPaths: fixEl.checked, load: loadEl.checked,
+            tags: tagsEl.checked, pending: pendEl.checked});
   });
 }
 
@@ -19399,6 +20880,25 @@ async function runRekordboxPresenceSync() {
     pt.done(t("sync.rekordbox.done", {matched: data.matched, checked: data.checked}));
   } catch (err) {
     pt.fail(t("sync.rekordbox.failed", {error: err.message}));
+  }
+}
+
+// Schalter "Metadaten nach Rekordbox": nur Metadaten, nie Beatgrid/Phrasen/Cues
+// (server._post_rekordbox_tags_sync()). Danach die Spalte Rekordbox neu einlesen.
+async function runRekordboxTagsSync() {
+  const pt = progressToast(t("sync.rekordbox_tags.running"), {indeterminate: true});
+  try {
+    const res = await fetch("/api/rekordbox-tags-sync", {method: "POST"});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    await syncMarks();
+    render();
+    const failed = Object.keys(data.errors || {}).length;
+    if (data.stopped) pt.fail(t("sync.rekordbox_tags.stopped", {count: data.updated, error: data.stopped}));
+    else if (failed) pt.fail(t("sync.rekordbox_tags.partial", {count: data.updated, failed}));
+    else pt.done(t("sync.rekordbox_tags.done", {count: data.updated}));
+  } catch (err) {
+    pt.fail(t("sync.rekordbox_tags.failed", {error: err.message}));
   }
 }
 
@@ -19614,13 +21114,14 @@ async function runGridSeed() {
 
 async function openRekordboxSyncFlow() {
   const choice = await askRekordboxSyncOptions();
-  if (!choice || (!choice.presence && !choice.fixPaths && !choice.pending && !choice.load)) return;
+  if (!choice || (!choice.presence && !choice.fixPaths && !choice.pending && !choice.load && !choice.tags)) return;
   const btn = document.getElementById("btnRekordboxSync");
   btn.disabled = true;
   sourceBusy(t("sync.rekordbox.running"));
   try {
     if (choice.pending) await runRekordboxPendingApply();
     if (choice.presence) await runRekordboxPresenceSync();
+    if (choice.tags) await runRekordboxTagsSync();
     if (choice.load) { await runRekordboxImport(); runGridSeed(); }
     if (choice.fixPaths) await runRekordboxFixPathsFlow();
   } finally {

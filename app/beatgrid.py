@@ -4,6 +4,12 @@ rbl-analysis aus rbxport (github.com/chrisle/rbxport, GPL-2.0-oder-spaeter):
 onset.rs, attack.rs, downbeat.rs, tempo.rs, lib.rs. Die Schwellwerte sind
 unveraendert uebernommen, die Begruendungen stehen dort im Quelltext.
 
+Original: Copyright der rbxport-Autoren, GPL-2.0-oder-spaeter. Diese Datei ist
+eine veraenderte Fassung (2026, Sebastian Gabler: Uebertragung nach Python,
+Filter ueber ffmpeg, Modus "auto", Transition-Tracks und Rampen) und wird nach
+der "oder spaeter"-Klausel unter GPL-3.0-oder-spaeter weitergegeben (LICENSE,
+NOTICE.md, THIRD_PARTY_LICENSES.md).
+
 Drei Modi (Einstellung phrase_grid_mode):
   - "normal": ein festes Tempo ueber den ganzen Track.
   - "flex":   folgt Tempowechseln, Rampen und versetzten Wiedereinstiegen
@@ -18,6 +24,7 @@ Musikstruktur. Liest nur, schreibt weder Datei noch DB.
 from __future__ import annotations
 
 import math
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -1290,9 +1297,11 @@ def _finish(segs: list, frames, x, sr: int) -> list:
     return beats_of(segs, phase if anchored is None else anchored)
 
 
-def analyse(path: str, mode: str = "auto") -> dict | None:
+def analyse(path: str, mode: str = "auto", use_title: bool = True) -> dict | None:
     """Beatgrid einer Datei. None, wenn sich kein Tempo finden laesst.
-    used = tatsaechlich verwendeter Modus ("normal"/"flex", bei "auto" das Ergebnis)."""
+    used = tatsaechlich verwendeter Modus ("normal"/"flex", bei "auto" das Ergebnis;
+    "transition" bei zwei Tempi im Dateinamen, siehe _segment_transition()).
+    use_title=False schaltet das ab (Vergleichsmessungen)."""
     if mode not in MODES:
         mode = "auto"
     sr, x, band, klp = _decode(path)
@@ -1309,7 +1318,20 @@ def analyse(path: str, mode: str = "auto") -> dict | None:
     rd = _Reader(v, rate, origin, _AttackMap(band, sr), _kick_envelope(klp, sr))
     frames = _band_frames(x, sr)
     used, segs = "normal", None
-    if mode in ("flex", "auto"):
+    hint = title_bpms(path) if use_title and mode in ("flex", "auto") else None
+    down = None
+    if hint:
+        # Transition-Track mit beiden Tempi im Namen: Tempo A, Rampe bzw. harter
+        # Wechsel, Tempo B. Klappt das nicht oder trifft Flex klar besser, wie bisher Flex.
+        found = _segment_transition(rd, frames, sr, *hint)
+        if found:
+            flex = _segment_flex(rd, best["bpm"])
+            if not flex or _grid_support(rd, found[0]) * _TRANS_KEEP >= _grid_support(rd, flex):
+                segs, down = found
+                used = "transition"
+            else:
+                segs, used = flex, "flex"
+    if segs is None and mode in ("flex", "auto"):
         segs = _segment_flex(rd, best["bpm"])
         used = "flex"
         if mode == "auto" and segs and not has_tempo_change(beats_of(segs, 0)):
@@ -1319,10 +1341,272 @@ def analyse(path: str, mode: str = "auto") -> dict | None:
         used = "normal"
     if not segs:
         return None
-    beats = _finish(segs, frames, x, sr)
+    if down is not None:
+        # Die Geraden liegen schon auf den Anschlaegen, Takt 1 kennt _segment_transition().
+        plain = beats_of(segs, 0)
+        idx = min(range(len(plain)), key=lambda i: abs(plain[i][0] - down)) if plain else 0
+        beats = beats_of(segs, (4 - idx % 4) % 4)
+    else:
+        beats = _finish(segs, frames, x, sr)
     if not beats:
         return None
     return {"mode": mode, "used": used, "bpm": segs[0].bpm(), "confidence": confidence,
             "first_beat": beats[0][0],
             "downbeat": next((b[0] for b in beats if b[1] == 1), beats[0][0]),
             "beats": beats, "changes": tempo_changes(beats), "duration": len(x) / sr}
+
+
+# ---------------------------------------------------------------- Rampe einpassen
+# Eigene Ergaenzung, nicht aus rbxport: die Schlaege einer Tempo-Rampe (DJ-Editor,
+# dj.js djRampTimes()) an die Anschlaege im Audio legen, und Transition-Tracks
+# ("100-128 Transition") mit Rampe messen.
+
+_FIT_REACH = 0.3       # Suchfenster um den erwarteten Schlag, Anteil am Schlagabstand
+_FIT_SMOOTH = 20.0     # Gewicht gegen Spruenge im Schlagabstand (relativ zur Vorgabe)
+_FIT_FLOOR = 0.05      # schwaechere Spitzen der Huellkurve zaehlen nicht
+_LINE_TOL = 0.025      # so nah (s) muss ein Anschlag an einem Schlag der Geraden liegen
+_TRANS_HEAD = 24.0     # Anfangstempo aus den ersten Sekunden
+_TRANS_TAIL = 0.45     # Endtempo ab diesem Anteil des Tracks
+_TRANS_BACK = 8        # Rampenbeginn bis so viele Schlaege vor dem Ende der A-Unterstuetzung
+_TRANS_MAX_BEATS = 96  # laengste Rampe
+_TRANS_CONTEXT = 32    # Schlaege der Geraden vor/nach der Rampe, die in die Bewertung eingehen
+_TRANS_KEEP = 1.05     # Flex gewinnt nur, wenn es mehr als 5 % mehr Anschlaege trifft
+
+
+def ramp_prior(t0: float, t1: float, beats: int, p0: float, p1: float, pins=None) -> list:
+    """Schlagzeiten 0..beats wie djRampTimes(): stueckweise kubische Hermite-Kurve ueber
+    der Schlagnummer durch Anfang, feste Anker (pins = [(k, Sekunde)]) und Ende, Steigung
+    an den Raendern = Schlagabstand der Tempi davor/danach, an den Ankern das Mittel der
+    beiden Nachbarstrecken, begrenzt nach Fritsch-Carlson."""
+    pts = [(0, t0)]
+    for k, sec in sorted(pins or []):
+        if pts[-1][0] < k < beats and pts[-1][1] < sec < t1:
+            pts.append((int(k), float(sec)))
+    pts.append((beats, t1))
+    m = len(pts)
+    d = [(pts[j + 1][1] - pts[j][1]) / (pts[j + 1][0] - pts[j][0]) for j in range(m - 1)]
+    slope = [0.0] * m
+    slope[0], slope[-1] = p0, p1
+    for j in range(1, m - 1):
+        slope[j] = (d[j - 1] + d[j]) / 2
+    for j in range(m - 1):
+        a, b = slope[j] / d[j], slope[j + 1] / d[j]
+        if a * a + b * b > 9:
+            tau = 3 / math.sqrt(a * a + b * b)
+            slope[j], slope[j + 1] = tau * a * d[j], tau * b * d[j]
+    out = [0.0] * (beats + 1)
+    for j in range(m - 1):
+        (ka, ta), (kb, tb) = pts[j], pts[j + 1]
+        h = kb - ka
+        for k in range(ka, kb + 1):
+            u = (k - ka) / h
+            u2, u3 = u * u, u * u * u
+            out[k] = ((2 * u3 - 3 * u2 + 1) * ta + (u3 - 2 * u2 + u) * h * slope[j]
+                      + (-2 * u3 + 3 * u2) * tb + (u3 - u2) * h * slope[j + 1])
+    return out
+
+
+def _ramp_core(rd: _Reader, t0: float, t1: float, p0: float, p1: float, beats: int,
+               fixed=None) -> tuple:
+    """([(k, Sekunde, Staerke)] fuer k = 1..beats-1, Kosten). Je Schlag sind die
+    Kandidaten die Spitzen der Onset-Huellkurve im Fenster um die Vorgabe (Zeit vom
+    Anschlag-Band wie beim Messen des Grids) plus die Vorgabe selbst (Staerke 0).
+    Viterbi minimiert -Staerke + Glaette des Schlagabstands relativ zur Vorgabe.
+    fixed = {k: Sekunde}: von Hand gesetzte Anker, dort ist die Zeit der einzige
+    Kandidat (Staerke 0) und die Vorgabe laeuft durch sie hindurch."""
+    vl, rate, origin = rd.vl, rd.rate, rd.origin
+    fixed = fixed or {}
+    prior = ramp_prior(t0, t1, beats, p0, p1, list(fixed.items()))
+    cands = [[(t0, 0.0)]]
+    for k in range(1, beats):
+        if k in fixed:
+            cands.append([(fixed[k], 0.0)])
+            continue
+        per = (prior[k + 1] - prior[k - 1]) / 2
+        lo, hi = prior[k] - _FIT_REACH * per, prior[k] + _FIT_REACH * per
+        found = [(prior[k], 0.0)]
+        for xi, h in _peaks_in(vl, (lo - origin) * rate, (hi - origin) * rate, _FIT_FLOOR):
+            sec = origin + xi / rate
+            hit = rd.attacks.within(sec, _ATT_REACH)
+            found.append((hit[0] if hit and lo <= hit[0] <= hi else sec, h))
+        cands.append(found)
+    cands.append([(t1, 0.0)])
+    cost, back = [0.0], [[0]]
+    for k in range(1, beats + 1):
+        want = prior[k] - prior[k - 1]
+        row, ptr = [], []
+        for t, h in cands[k]:
+            best, arg = math.inf, 0
+            for j, (tp, _) in enumerate(cands[k - 1]):
+                if t > tp:
+                    c = cost[j] + _FIT_SMOOTH * ((t - tp) / want - 1.0) ** 2
+                    if c < best:
+                        best, arg = c, j
+            row.append(best - h)
+            ptr.append(arg)
+        cost, back = row, back + [ptr]
+    total, j, out = cost[0], 0, []
+    for k in range(beats, 0, -1):
+        j = back[k][j]
+        if k > 1:
+            t, h = cands[k - 1][j]
+            out.append((k - 1, round(t, 4), round(h, 3)))
+    return out[::-1], total
+
+
+def _reader(path: str, decoded: tuple | None = None) -> tuple:
+    sr, x, band, klp = decoded or _decode(path)
+    v, rate, origin = _onset_envelope(x, sr)
+    return _Reader(v, rate, origin, _AttackMap(band, sr), _kick_envelope(klp, sr)), sr, x
+
+
+def fit_ramp(path: str, t0: float, t1: float, bpm0: float, bpm1: float, beats: int,
+             decoded: tuple | None = None, fixed=None) -> list:
+    """Schlaege 1..beats-1 einer Rampe an die Anschlaege legen: [(k, Sekunde, Staerke)],
+    Staerke 0 = kein Anschlag gefunden (Schlag bleibt auf der Vorgabe) bzw. fester Anker.
+    fixed = {k: Sekunde}: eigene Anker des Nutzers, bleiben unveraendert stehen.
+    decoded: Ergebnis von _decode() zum Wiederverwenden."""
+    if beats < 2 or t1 <= t0:
+        return []
+    rd = _reader(path, decoded)[0]
+    return _ramp_core(rd, t0, t1, 60.0 / bpm0, 60.0 / bpm1, beats, fixed)[0]
+
+
+# Zwei Tempi im Dateinamen, etwa "Tall Boys 100-128 Transition" oder "(126 To 70 BPM)".
+_TITLE_PAIR = re.compile(r"(?<![\d.])(\d{2,3}(?:\.\d+)?)\s*(?:-|–|—|>|→|\bto\b|\s)\s*(\d{2,3})(?:\.\d+)?(?!\d)", re.I)
+
+
+def title_bpms(path: str) -> tuple | None:
+    """(Tempo davor, Tempo danach) aus dem Dateinamen eines Transition-Tracks, sonst None.
+    Nur mit "Transition" oder "BPM" im Namen, beide Werte 60-200 und verschieden."""
+    name = Path(path).stem
+    if not re.search(r"transition|bpm", name, re.I):
+        return None
+    for m in _TITLE_PAIR.finditer(name):
+        a, b = float(m.group(1)), float(m.group(2))
+        # "150-170-150 BPM": drei Tempi, Anfang und Ende gleich -- passt nicht ins Schema.
+        if re.match(r"\s*(?:-|–|—|>|→)\s*\d{2,3}", name[m.end():]):
+            return None
+        if 60 <= a <= 200 and 60 <= b <= 200 and abs(a - b) >= 3:
+            return a, b
+    return None
+
+
+def _grid_support(rd: _Reader, segs: list) -> float:
+    """Mittlere Hoehe der Onset-Huellkurve (+-20 ms) auf den Schlaegen eines Grids."""
+    reach, vals = 0.02 * rd.rate, []
+    for t, _, _ in beats_of(segs, 0):
+        x = (t - rd.origin) * rd.rate
+        lo, hi = max(int(x - reach), 0), min(int(x + reach) + 1, len(rd.vl))
+        if hi > lo:
+            vals.append(max(rd.vl[lo:hi]))
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def _line_hits(rd: _Reader, f: tuple) -> list:
+    """[(Sekunde, Staerke)] fuer jeden Schlag der Geraden f; Staerke 0, wenn kein
+    Anschlag naeher als _LINE_TOL liegt."""
+    tol = _LINE_TOL * rd.rate
+    return [(rd.origin + at / rd.rate, h if abs(peak - at) <= tol else 0.0)
+            for at, peak, h in _beat_hits(rd.vl, f, 0, len(rd.vl))]
+
+
+def _line_sum(hits: list, lo: float, hi: float) -> float:
+    return sum(h for t, h in hits if lo <= t < hi)
+
+
+def _change_point(ha: list, hb: list) -> float | None:
+    """Zeit T, vor der die Gerade A und ab der die Gerade B die meisten Anschlaege traegt."""
+    ev = sorted([(t, h) for t, h in ha] + [(t, -h) for t, h in hb])
+    best, at, acc = 0.0, None, 0.0
+    for t, d in ev:
+        if acc > best or at is None:
+            best, at = acc, t
+        acc += d
+    return at
+
+
+def _support_runs(hits: list, floor: float, min_run: int = 4) -> list:
+    """Laeufe von mindestens min_run Schlaegen mit Anschlag: [(erste, letzte Sekunde)]."""
+    out, i = [], 0
+    while i < len(hits):
+        if hits[i][1] < floor:
+            i += 1
+            continue
+        s = i
+        while i < len(hits) and hits[i][1] >= floor:
+            i += 1
+        if i - s >= min_run:
+            out.append((hits[s][0], hits[i - 1][0]))
+    return out
+
+
+def _segment_transition(rd: _Reader, frames, sr: int, a_bpm: float, b_bpm: float) -> tuple | None:
+    """Transition-Track: Tempo A am Anfang, Tempo B am Ende, dazwischen eine Rampe (je
+    Schlag ein Abschnitt) oder ein harter Wechsel. Rampenbeginn, -ende und Schlagzahl
+    werden gemeinsam so gewaehlt, dass Gerade A davor, die Rampe und Gerade B danach
+    zusammen die meisten Anschlaege treffen. Gezaehlt wird durchgehend ab Takt 1 von A
+    (_grid_phase()); die Schlagzahl richtet sich bewusst NICHT nach der Zaehlung: an
+    Transition-Tracks lag _grid_phase() oft einen halben Takt daneben, daran gebundene
+    Rampen trafen deutlich schlechter. (Abschnitte, Takt 1 von A) oder None, wenn sich
+    die beiden Tempi nicht finden lassen."""
+    rate, origin, n = rd.rate, rd.origin, len(rd.v)
+    fa = _fit(rd, a_bpm, 0, min(n, int(_TRANS_HEAD * rate)))
+    fb = _fit(rd, b_bpm, int(n * _TRANS_TAIL), n)
+    if not fa or not fb:
+        return None
+    ha, hb = _line_hits(rd, fa), _line_hits(rd, fb)
+    cp = _change_point(ha, hb)
+    hs = sorted(h for _, h in ha if h > 0)
+    floor = max(hs[len(hs) // 2] * 0.25, _HIT_FLOOR) if hs else _HIT_FLOOR
+    ra = [r for r in _support_runs(ha, floor) if cp is not None and r[1] <= cp + 2]
+    rb = [r for r in _support_runs(hb, floor) if cp is not None and r[0] >= cp - 2]
+    if not ra or not rb:
+        return None
+    end_a, start_b = max(r[1] for r in ra), min(r[0] for r in rb)
+    if start_b < end_a:
+        end_a, start_b = start_b, end_a
+    # Beide Tempi genau ueber ihren eigenen Bereich nachmessen.
+    fa = _fit(rd, 60 * rate / fa[1], 0, int((end_a - origin) * rate) + 1) or fa
+    fb = _fit(rd, 60 * rate / fb[1], int((start_b - origin) * rate), n) or fb
+    pa, pb = fa[1] / rate, fb[1] / rate
+    ha, hb = _line_hits(rd, fa), _line_hits(rd, fb)
+    at = lambda f, k: origin + (f[0] + k * f[1]) / rate
+    index = lambda f, t: round(((t - origin) * rate - f[0]) / f[1])
+    end = origin + n / rate
+    a_beats = [at(fa, k) for k in range(index(fa, origin) + 1, index(fa, end_a) + 1)]
+    down_a = _grid_phase(frames, sr, a_beats)[1] if len(a_beats) >= 8 else a_beats[0] if a_beats else origin
+    ka = index(fa, end_a)
+    t0s = [at(fa, ka - j) for j in range(_TRANS_BACK + 1) if at(fa, ka - j) > origin]
+    t1s = [at(fb, k) for k in range(index(fb, end_a), index(fb, start_b) + 1)]
+    lo, hi = end_a - _TRANS_CONTEXT * pa, start_b + _TRANS_CONTEXT * pb
+    best = None
+    # Harter Wechsel: A bis vor tc, B ab tc.
+    for tc in t1s:
+        score = _line_sum(ha, lo, tc - 0.5 * pa) + _line_sum(hb, tc, hi)
+        if best is None or score > best[0]:
+            best = (score, tc, tc, 0)
+    for t0 in t0s:
+        before = _line_sum(ha, lo, t0 + 0.5 * pa)
+        for t1 in t1s:
+            if t1 - t0 < 1.5 * min(pa, pb):
+                continue
+            est = (t1 - t0) / ((pa + pb) / 2)
+            if est > _TRANS_MAX_BEATS:
+                continue
+            after = _line_sum(hb, t1, hi)
+            for beats in {max(2, int(round(est)) + d) for d in (-1, 0, 1)}:
+                if not min(pa, pb) * 0.8 <= (t1 - t0) / beats <= max(pa, pb) * 1.25:
+                    continue
+                score = before + after - _ramp_core(rd, t0, t1, pa, pb, beats)[1]
+                if best is None or score > best[0]:
+                    best = (score, t0, t1, beats)
+    if best is None:
+        return None
+    _, t0, t1, beats = best
+    segs = [Segment(0.0, t0, pa, at(fa, 0))]
+    if beats:
+        times = [t0] + [t for _, t, _ in _ramp_core(rd, t0, t1, pa, pb, beats)[0]] + [t1]
+        segs += [Segment(a, b, b - a, a) for a, b in zip(times[:-1], times[1:])]
+    segs.append(Segment(t1, end, pb, at(fb, 0)))
+    return segs, down_a

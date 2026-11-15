@@ -28,6 +28,7 @@ from typing import Iterator
 from . import audit_log
 from . import config as cfgmod
 from . import rekordbox as rekordbox_mod
+from . import taganomaly as taganomaly_mod
 
 # Die UI zeigt nur die ersten 10 Top-Tracks als Kacheln, aber alle 50 werden
 # fuer "Playlist aus Top 50 erstellen" gebraucht -- ein Datensatz, zwei
@@ -456,7 +457,7 @@ def library(cfg: dict, conn: sqlite3.Connection) -> dict:
         if r["file_hash"] and not r["dup_ok"]:
             _bucket(hashes, r["file_hash"])
         try:
-            if r["tag_issues"] and json.loads(r["tag_issues"]):
+            if r["tag_issues"] and taganomaly_mod.enabled_issues(json.loads(r["tag_issues"]), cfg):
                 tag_issue_tracks += 1
         except ValueError:
             pass
