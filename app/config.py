@@ -636,6 +636,10 @@ def defaults() -> dict:
         # zurueck, wenn die Browsersprache nicht vorliegt.
         "ui_language": "auto",
 
+        # Tastaturlayout fuer die Kuerzel der DJ-Ansicht: auto (aus der
+        # Sprache abgeleitet) | qwertz | qwerty | azerty.
+        "keyboard_layout": "auto",
+
         # Toleranz fuer Tippfehler in der Suche: 0 = aus (nur exakte Treffer),
         # 1 = sehr tolerant. Wirkt wortweise, siehe fuzzyIncludes() in app.js.
         "search_typo_tolerance": 0.8,

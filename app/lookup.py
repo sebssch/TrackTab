@@ -271,27 +271,34 @@ _CHANGELOG_MAX_BYTES = 400_000
 _CHANGELOG_HEAD = re.compile(r"^## \[(\d+\.\d+\.\d+)\](?:\s*-\s*(\S+))?\s*$")
 
 
-def fetch_changes(current_version: str, latest_version: str) -> list[dict]:
+def fetch_changes(current_version: str, latest_version: str,
+                  lang: str = "en") -> list[dict]:
     """Aenderungen aller Versionen ueber current_version bis latest_version aus
     changelog.md des Repositories (neueste zuerst):
     [{"version", "date", "groups": [{"title", "items": [str]}]}].
 
     Bevorzugt die Datei am Release-Tag (v<latest>), sonst vom Hauptzweig.
+    lang "de": zuerst changelog.de.md, sonst (z. B. aeltere Tags ohne diese
+    Datei) changelog.md. Alle anderen Sprachen lesen changelog.md (Englisch).
     Leere Liste bei jedem Fehler -- der Hinweis zeigt dann nur den Link."""
     cur = _version_tuple(current_version)
     lat = _version_tuple(latest_version)
     if cur is None or lat is None:
         return []
     text = ""
+    names = ("changelog.de.md", "changelog.md") if lang == "de" else ("changelog.md",)
     for ref in (f"v{latest_version}", "main"):
-        req = urllib.request.Request(f"{_RAW_BASE}/{ref}/changelog.md",
-                                     headers={"User-Agent": _USER_AGENT})
-        try:
-            with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
-                text = resp.read(_CHANGELOG_MAX_BYTES).decode("utf-8", "replace")
+        for name in names:
+            req = urllib.request.Request(f"{_RAW_BASE}/{ref}/{name}",
+                                         headers={"User-Agent": _USER_AGENT})
+            try:
+                with urllib.request.urlopen(req, timeout=_TIMEOUT_S) as resp:
+                    text = resp.read(_CHANGELOG_MAX_BYTES).decode("utf-8", "replace")
+                break
+            except (urllib.error.URLError, TimeoutError, OSError):
+                continue
+        if text:
             break
-        except (urllib.error.URLError, TimeoutError, OSError):
-            continue
     out: list[dict] = []
     entry = group = None
     for line in text.splitlines():

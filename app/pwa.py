@@ -13,7 +13,7 @@ Icons haengen als ECHTE Datei-Routen im Manifest (/icon-192.png, ...), NICHT
 als data:-URI direkt im JSON -- Safaris "Zum Dock hinzufuegen" ignoriert
 data:-URI-Icons in Manifest UND apple-touch-icon nachweislich unzuverlaessig
 und faellt sonst auf ein generisches Buchstaben-Icon zurueck (siehe
-technische_funktionen.md, PWA-Abschnitt). apple-touch-icon.png steht
+technical_functions.de.md, PWA-Abschnitt). apple-touch-icon.png steht
 zusaetzlich bereit, weil es laut Apple-Dokumentation Vorrang vor den
 Manifest-Icons hat.
 

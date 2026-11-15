@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="docs/app-icon.png" alt="TrackTab App-Icon" width="128">
+  <img src="docs/app-icon.png" alt="TrackTab app icon" width="128">
 </div>
 
 <h1 align="center">
@@ -7,386 +7,389 @@
 </h1>
 
 <p align="center">
-  <a href="https://github.com/sebssch/TrackTab/releases/latest"><img src="https://img.shields.io/github/v/release/sebssch/TrackTab?label=aktuelles%20Release" alt="Aktuelles Release"></a>
+  <a href="https://github.com/sebssch/TrackTab/releases/latest"><img src="https://img.shields.io/github/v/release/sebssch/TrackTab?label=latest%20release" alt="Latest release"></a>
   <a href="https://github.com/sebssch/TrackTab/releases"><img src="https://img.shields.io/github/downloads/sebssch/TrackTab/total?label=Downloads" alt="Downloads"></a>
-  <img src="https://img.shields.io/badge/Sprache-DE_%7C_EN-blue" alt="Sprache: Deutsch und Englisch">
-  <img src="https://komarev.com/ghpvc/?username=sebssch&repo=TrackTab&label=Aufrufe&color=blue&style=flat" alt="README-Aufrufe">
+  <a href="readme.md"><img src="https://img.shields.io/badge/Language-English-blue" alt="English"></a>
+  <a href="readme.de.md"><img src="https://img.shields.io/badge/Sprache-Deutsch-blue" alt="Deutsch"></a>
+  <img src="https://komarev.com/ghpvc/?username=sebssch&repo=TrackTab&label=Views&color=blue&style=flat" alt="README views">
 </p>
 
 <p align="center">
-  <a href="handbuch.md">Dokumentation</a> ·
+  <a href="manual.md">Manual</a> ·
   <a href="installation.md">Installation</a> ·
   <a href="changelog.md">Changelog</a>
 </p>
 
 <p align="center">
-  <b>Das Tool analysiert und korrigiert Bitraten, bearbeitet ID3-Tags und bietet eine Rekordbox-Anbindung inklusive Auto-Relocate sowie Hot-Cue-Anzeige.  Zudem umfasst es eine DJ-Ansicht mit Beatgrid-, Phrasen- und Cue-Editor samt Auto Cue und Rekordbox-Abgleich, eine lokale Stem-Trennung, einen Playlist-Generator, eine Duplikatsuche, einen MP3-, AAC- und AIFF-Konverter, Merk-, Play- und Smart-Playlists, Statistiken, ein Genre-, Album- und Künstler-Clean-up sowie einen Mediaplayer.</b>
+  <b>The tool analyses and corrects bitrates, edits ID3 tags and offers a Rekordbox integration including auto-relocate and hot-cue display. It also includes a DJ view with beat grid, phrase and cue editor plus Auto Cue and Rekordbox sync, local stem separation, a playlist generator, duplicate finder, an MP3, AAC and AIFF converter, favorite, normal and smart playlists, statistics, a genre, album and artist clean-up, and a media player.</b>
 </p>
 
-## Warum TrackTab?
-Apple Music, ID3-Tag-Editor, Mixed In Key und Rekordbox – die Pflege meiner Musiksammlung glich einem ständigen App-Wechsel. Das Ergebnis: Fehler, verlorene Dateipfade und keine Transparenz darüber, was eigentlich schon in Rekordbox gelandet war.
+> **Language note:** The documentation is kept in two languages. This README and the [manual](manual.md) are the English versions (default); [readme.de.md](readme.de.md) and [manual.de.md](manual.de.md) are the German versions. All documents exist in both languages: `*.md` is English, `*.de.md` is German (e.g. [installation.md](installation.md) / [installation.de.md](installation.de.md), [changelog.md](changelog.md) / [changelog.de.md](changelog.de.md)). Only the [technical reference](technical_functions.de.md) is currently German only.
 
-Deshalb habe ich mit Claude.ai TrackTab entwickelt. TrackTab hat zahlreichen Features um neue Tracks zu analysieren, die Qualität zu prüfen, sauber umzubenennen und die Bibliothek aktuell und ordentlich zu halten.
+## Why TrackTab?
+Apple Music, an ID3 tag editor, Mixed In Key and Rekordbox – maintaining my music collection felt like constantly switching between apps. The result: mistakes, lost file paths and no transparency about what had actually already made it into Rekordbox.
 
-TrackTab ist flexibel – ob mit oder ohne Apple-Music.app, Rekordbox oder Mixed in Key - kann es jeden Unterstützen der seine Musiksammlung verwalten möchte. 
+That is why I built TrackTab with Claude.ai. TrackTab has numerous features to analyse new tracks, check their quality, rename them cleanly and keep the library up to date and tidy.
+
+TrackTab is flexible – with or without the Apple Music app, Rekordbox or Mixed In Key – it can support anyone who wants to manage their music collection.
 
 
-## Wie funktioniert TrackTab?
-TrackTab läuft vollständig auf deinem Rechner im Browser deiner Wahl (vorzugsweise Safari) und benötigt keine Internetverbindung. Es kann sowohl mit als auch ohne die Apple Music App, Rekordbox oder Mixed In Key verwendet werden.
+## How does TrackTab work?
+TrackTab runs entirely on your computer in the browser of your choice (preferably Safari) and needs no internet connection. It can be used with or without the Apple Music app, Rekordbox or Mixed In Key.
 ___
 
-## Screenshot
+## Screenshots
 
-![DJ-Ansicht mit Beatgrid, Phrasen und Cues](docs/031-dj-ansicht.png)
+![DJ view with beat grid, phrases and cues](docs/031-dj-ansicht.png)
 
-*DJ-Ansicht: Phrasen, Hot und Memory Cues, Beatgrid-Werkzeuge.*
+*DJ view: phrases, hot and memory cues, beat grid tools.*
 
-![Bearbeiten-Ansicht mit Prüfliste](docs/002-bearbeiten-view.png)
+![Edit view with review list](docs/002-bearbeiten-view.png)
 
-*Übersicht der Bearbeiten-Ansicht mit Prüfliste.*
+*Overview of the Edit view with review list.*
 
-![Ausgeklappter Track mit Wellenform](docs/005-waveform.png)
+![Expanded track with waveform](docs/005-waveform.png)
 
-*Ausgeklappter Track mit Wellenform.*
+*Expanded track with waveform.*
 
-![Metadaten bearbeiten mit Online-Vorschlägen](docs/006-metadaten-edit.png)
+![Editing metadata with online suggestions](docs/006-metadaten-edit.png)
 
-*Metadaten bearbeiten mit Online-Vorschlägen.*
+*Editing metadata with online suggestions.*
 
-![Playlist-Generator mit Energiekurve](docs/037-playlist-builder-output.png)
+![Playlist generator with energy curve](docs/037-playlist-builder-output.png)
 
-*Playlist-Generator: Set entlang einer Energiekurve.*
+*Playlist generator: a set along an energy curve.*
 
-Weitere Screenshots zu allen Funktionen im [Handbuch](handbuch.md).
+More screenshots of all functions in the [manual](manual.md).
 
 ---
 
-## Funktionen
+## Features
 
 <details>
-<summary><b>DJ-Ansicht</b> — Beatgrid, Rampen, Phrasen, Cues, Rekordbox-Abgleich</summary>
+<summary><b>DJ view</b> — beat grid, ramps, phrases, cues, Rekordbox sync</summary>
 
-Eigene Ansicht für TrackTab-, Music- und Rekordbox-Listen: Hot Cues, Memory Cues, lückenlose Loops, Beatgrid (inkl. Tempowechsel und Rampen für Transition-Tracks) und Phrasen bearbeiten, ähnlich wie in Rekordbox. Tempo, Takt und Phrasen (Intro, Up/Verse, Down/Bridge, Chorus, Outro) erkennt TrackTab auch selbst, ohne Rekordbox: mit festem Tempo, mit Tempowechseln oder automatisch, mit Rückgängig und Tastenkürzeln. Speichert in der eigenen Datenbank; Abgleich mit Rekordbox in beide Richtungen auf Knopfdruck, vor dem Schreiben mit Rückfrage und Sicherung. Waveform-Quelle, -Farbe und Metronom-Klang sind einstellbar. Die eigene Erkennung läuft nur auf Apple-Silicon-Macs ab macOS 14; vorhandene Rekordbox-Daten haben auf Wunsch Vorrang.
+A view of its own for TrackTab, Music and Rekordbox lists: edit hot cues, memory cues, gapless loops, beat grid (including tempo changes and ramps for transition tracks) and phrases, similar to Rekordbox. TrackTab also detects tempo, bars and phrases (Intro, Up/Verse, Down/Bridge, Chorus, Outro) itself, without Rekordbox: with a fixed tempo, with tempo changes or automatically, with undo and keyboard shortcuts. Saves to its own database; sync with Rekordbox in both directions at the push of a button, with confirmation and backup before writing. Waveform source, colour and metronome sound are adjustable. The own detection only runs on Apple Silicon Macs from macOS 14; existing Rekordbox data takes precedence on request.
 
-→ [Details im Handbuch](handbuch.md#dj-ansicht) · [Beatgrid & Phrasen](handbuch.md#beatgrid-und-phrasen) · [Screenshot](docs/031-dj-ansicht.png) · [Screenshot: Rampe](docs/030-dj-ansicht-ramp.png) · [Screenshot: Rekordbox schreiben](docs/034-rekordbox-schreiben.png) · [Screenshot: Einstellungen](docs/040-dj-ansicht-settings.png)
+→ [Details in the manual](manual.md#dj-view) · [Beat grid & phrases](manual.md#beat-grid-and-phrases) · [Screenshot](docs/031-dj-ansicht.png) · [Screenshot: ramp](docs/030-dj-ansicht-ramp.png) · [Screenshot: writing to Rekordbox](docs/034-rekordbox-schreiben.png) · [Screenshot: settings](docs/040-dj-ansicht-settings.png)
 
 </details>
 
 <details>
-<summary><b>Konverter</b> — MP3 320, AAC 256 oder AIFF, ohne „Hochrechnen“</summary>
+<summary><b>Converter</b> — MP3 320, AAC 256 or AIFF, without “upscaling”</summary>
 
-Wandelt ausgewählte Tracks (auch mehrere gebündelt) nach MP3 320 kbit/s CBR, AAC 256 kbit/s (Apples Encoder) oder AIFF (verlustfrei, Bittiefe der Quelle bleibt erhalten). Verhindert "Hochrechnen": eine bereits verlustbehaftete Datei lässt sich nicht zu AIFF konvertieren, eine MP3 unter 320 kbit/s nicht zu 320 kbit/s hochkodieren — solche Tracks werden übersprungen und am Ende gemeldet. Tags und Cover werden übernommen, die konvertierte Datei wird in der Haupttabelle immer automatisch zu Music.app hinzugefügt (unabhängig davon, ob das Original dort schon war — in der Einzelprüfung nicht). Ein Schalter im Popup bestimmt, ob das Original danach in den Papierkorb wandert und dabei in Music.app/Rekordbox ersetzt wird (Standard), oder ob es unangetastet liegen bleibt und die konvertierte Datei stattdessen als eigener, zusätzlicher Track zur Bibliothek hinzukommt.
+Converts selected tracks (also several at once) to MP3 320 kbit/s CBR, AAC 256 kbit/s (Apple’s encoder) or AIFF (lossless, bit depth of the source is kept). Prevents “upscaling”: an already lossy file cannot be converted to AIFF, an MP3 below 320 kbit/s cannot be re-encoded up to 320 kbit/s — such tracks are skipped and reported at the end. Tags and cover are carried over, the converted file is always automatically added to Music.app in the main table (regardless of whether the original was already there — not in the single check). A switch in the popup determines whether the original then goes to the Trash and is replaced in Music.app/Rekordbox (default), or stays untouched and the converted file is added to the library as a separate, additional track.
 
-→ [Details im Handbuch](handbuch.md#konverter) · [Screenshot](docs/011-konverter.png)
-
-</details>
-
-<details>
-<summary><b>Metadaten bearbeiten</b> — Tags und Cover in der Datei, mit Online-Vorschlägen</summary>
-
-Titel, Interpret, Album, Albumkünstler, Komponist, Genre, Jahr, BPM, Tonart, Kommentar und Cover lassen sich direkt in der Audiodatei bearbeiten. Die Tonart erscheint als Spalte in den Farben des Camelot-Rads (Schreibweise wählbar: Camelot, Open Key oder Notennamen).
-
-Über einen Klick können anhand des Dateinamens passende Online-Vorschläge von iTunes, Deezer und MusicBrainz abgerufen und übernommen werden. Alternativ ist auch eine manuelle Suche möglich.
-
-Die Änderungen werden direkt in die Datei geschrieben und anschließend mit der Music.app-Mediathek synchronisiert.
-
-→ [Details im Handbuch](handbuch.md#tags-bearbeiten) · [Screenshot](docs/006-metadaten-edit.png) · [Screenshot: Genre-Vorschläge](docs/027-genre-vorschlag.png)
+→ [Details in the manual](manual.md#converter-mp3-aac-aiff) · [Screenshot](docs/011-konverter.png)
 
 </details>
 
 <details>
-<summary><b>Metadaten-Mehrfachbearbeitung</b> — viele Tracks auf einmal taggen</summary>
+<summary><b>Edit metadata</b> — tags and cover in the file, with online suggestions</summary>
 
-Mehrere Tracks auf einmal taggen (analog zur Funktionsweise der Music.app).
+Title, artist, album, album artist, composer, genre, year, BPM, key, comment and cover can be edited directly in the audio file. The key appears as a column in the colours of the Camelot wheel (notation selectable: Camelot, Open Key or note names).
 
-→ [Details im Handbuch](handbuch.md#tags-bearbeiten)
+With one click, matching online suggestions from iTunes, Deezer and MusicBrainz can be fetched based on the file name and applied. Alternatively, a manual search is possible too.
 
-</details>
+Changes are written directly to the file and then synchronised with the Music.app library.
 
-<details>
-<summary><b>Auffälligkeiten (Metadaten-Probleme)</b> — kaputte Tags finden und per Quick Fix beheben</summary>
-
-Eigene, vom Qualitäts-Verdikt unabhängige Prüfung auf beschädigte/unsaubere Tags — z. B. Steuerzeichen im Interpreten-Feld, alte ID3-Versionen, unaufgelöste Genre-Codes, fehlendes Cover oder kaputte Umlaute. Eindeutig sichere Fälle lassen sich per „Quick Fix" auf Knopfdruck beheben (einzeln, für alle Dateien mit demselben Fehler auf einmal, oder als eigene Spalte), uneindeutige Fälle springen direkt in den Tags-Dialog.
-
-→ [Details im Handbuch](handbuch.md#auffälligkeiten-metadaten-probleme)
+→ [Details in the manual](manual.md#editing-tags) · [Screenshot](docs/006-metadaten-edit.png) · [Screenshot: genre suggestions](docs/027-genre-vorschlag.png)
 
 </details>
 
 <details>
-<summary><b>BPM- & Tonart-Analyse</b> — Tempo und Tonart lokal messen</summary>
+<summary><b>Multi-edit metadata</b> — tag many tracks at once</summary>
 
-Misst Tempo und Tonart direkt aus dem Audio (lokal, ohne Mixed In Key) und schreibt sie nach einstellbaren Regeln in BPM-Feld, Tonart-Feld und Kommentar. Für markierte Tracks der Bibliothek und der Einzelprüfungen, auf Wunsch automatisch für neue Einzelprüfungen. Nur auf Apple-Silicon-Macs.
+Tag several tracks at once (similar to how Music.app works).
 
-→ [Details im Handbuch](handbuch.md#tonart) · [Screenshot: Einstellungen](docs/041-genre-tonart-bpm-settings.png)
-
-</details>
-
-<details>
-<summary><b>Genre, Stimmung & Energie</b> — Stil, Stimmung und Energie lokal erkennen</summary>
-
-Erkennt den Stil eines Tracks (400 Discogs-Stile, z. B. „Electro House 69 %“), seine Stimmung (aggressiv, fröhlich, Party, entspannt, traurig plus DJ-Stimmungen wie energiegeladen, deep, düster, melodisch) und eine Energie von 1–10 — lokal mit den [Essentia-Modellen](https://essentia.upf.edu/models.html) der MTG, ohne Upload. Genre-Vorschläge erscheinen im Tags-Dialog zum Übernehmen per Klick, Energie und Stimmung als eigene Spalten. Auf Wunsch landen Energie (im Kommentar) und Stimmung (Mood-Tag) auch in der Datei. Nur auf Apple-Silicon-Macs ab macOS 14; Modelle unter CC BY-NC-SA 4.0 (nicht-kommerziell).
-
-→ [Details im Handbuch](handbuch.md#genre-stimmung-und-energie) · [Screenshot: Genre-Vorschläge](docs/027-genre-vorschlag.png)
+→ [Details in the manual](manual.md#editing-tags)
 
 </details>
 
 <details>
-<summary><b>Auto Cue</b> — Cues automatisch setzen, gelernt aus deinen eigenen</summary>
+<summary><b>Issues (metadata problems)</b> — find broken tags and fix them with Quick Fix</summary>
 
-Setzt Hot und Memory Cues eines Tracks selbst (Break 1, Build, Drop, Intro, Outro u. a.) auf Basis von Beatgrid und Phrasen. Das Modell lernt aus deinen eigenen, von Hand gesetzten Cues — du trainierst es in den Einstellungen oder importierst eines. Die Slot-Belegung (welche Stelle auf welchen Hot Cue mit welcher Farbe) legst du selbst fest.
+A check of its own, independent of the quality verdict, for damaged/untidy tags — e.g. control characters in the artist field, old ID3 versions, unresolved genre codes, missing cover or broken umlauts. Unambiguously safe cases can be fixed at the push of a button with “Quick Fix” (individually, for all files with the same error at once, or as a column of its own); ambiguous cases jump straight into the tags dialog.
 
-→ [Details im Handbuch](handbuch.md#auto-cue) · [Screenshot: Modelle & Training](docs/032-dj-autocue-model.png) · [Screenshot: Slot-Belegung](docs/033-dj-autocue-setting.png)
-
-</details>
-
-<details>
-<summary><b>Duplikate finden</b> — doppelte Tracks per Hash oder Interpret + Titel + Dauer</summary>
-
-Identifiziert doppelte Tracks anhand des gleichen Datei-Hashes oder der Kombination aus *Interpret + Titel + Dauer* (z. B. derselbe Song einmal als MP3 und einmal als FLAC).
-
-→ [Details im Handbuch](handbuch.md#die-seitenleiste) · [Screenshot](docs/014-duplikate.png)
+→ [Details in the manual](manual.md#issues-metadata-problems)
 
 </details>
 
 <details>
-<summary><b>Playlist-Generator</b> — Sets entlang einer Energiekurve bauen</summary>
+<summary><b>BPM & key analysis</b> — measure tempo and key locally</summary>
 
-Baut ein Set entlang einer ziehbaren Energiekurve. Dazu kommen Stimmungsregler (Düster, Deep, Groovy, Melodisch …), Übergangsregeln für BPM (±0/±3, halbes/doppeltes Tempo) und Tonart (Camelot locker/streng) sowie ein Liederpool, der wie die Suche funktioniert (z. B. `/Genre House /BPM 120-128 /Add 30d`, auch als Eingabefelder über „Erweitert“), plus Quell-Playlist. Gesperrte Slots bleiben beim Neu-Würfeln stehen. Das Ergebnis ist eine echte Playlist (M3U-Export, Ziehen auf andere Listen). Braucht die Genre-/Stimmungsanalyse.
+Measures tempo and key directly from the audio (locally, without Mixed In Key) and writes them according to adjustable rules into the BPM field, key field and comment. For selected tracks of the library and of the single checks, automatically for new single checks if desired. Apple Silicon Macs only.
 
-→ [Details im Handbuch](handbuch.md#playlist-generator) · [Screenshot: Einstellungen](docs/036-playlist-builder.png) · [Screenshot: Ergebnis](docs/037-playlist-builder-output.png)
-
-</details>
-
-<details>
-<summary><b>Globale Suche & Kategorien</b> — tippfehlertolerante Suche mit Parametern und Filtern</summary>
-
-Durchsucht die gesamte Bibliothek mit gezielter Eingrenzung über Kategorien und Filter. Über „Erweitert“ stehen alle Suchparameter auch als Eingabefelder bereit.
-
-→ [Details im Handbuch](handbuch.md#suchen-und-filtern) · [Screenshot](docs/016-suchparameter.png) · [Screenshot: Erweitert](docs/016-2-erweiterte-suche.png)
+→ [Details in the manual](manual.md#key) · [Screenshot: settings](docs/041-genre-tonart-bpm-settings.png)
 
 </details>
 
 <details>
-<summary><b>Smart Playlists</b> — regelbasierte Listen wie in Apple Music</summary>
+<summary><b>Genre, mood & energy</b> — detect style, mood and energy locally</summary>
 
-Regelbasierte Listen nach dem Vorbild von Apple Music: „entspricht allen/beliebigen" Regeln über Status, Format, Cutoff, BPM, Tonart, Jahr, Lautheit, Dateigröße, Music.app- und Rekordbox-Präsenz und mehr, mit Begrenzung auf Anzahl, Spielzeit oder Speichergröße. Berechnet beim Start und beim Anklicken der Liste, mit Live-Vorschau im Regel-Editor.
+Detects a track’s style (400 Discogs styles, e.g. “Electro House 69 %”), its mood (aggressive, happy, party, relaxed, sad plus DJ moods such as energetic, deep, dark, melodic) and an energy of 1–10 — locally with the [Essentia models](https://essentia.upf.edu/models.html) of the MTG, without upload. Genre suggestions appear in the tags dialog to apply with one click, energy and mood as columns of their own. If you wish, energy (in the comment) and mood (mood tag) are also written to the file. Apple Silicon Macs from macOS 14 only; models under CC BY-NC-SA 4.0 (non-commercial).
 
-→ [Details im Handbuch](handbuch.md#smart-playlists) · [Screenshot](docs/007-playlist-smart-regeln.png)
-
-</details>
-
-<details>
-<summary><b>Bitraten Analyse</b> — Fake-Transcodes per Cutoff-Analyse aufdecken</summary>
-
-Spektrale Cutoff-Analyse (MP3, M4A, FLAC, WAV, AIFF). Diese deckt hochgerechnete/transcodierte Dateien auf. Ein Spektrogramm mit Cutoff-Linie zeigt die Grenze auf einen Klick. Analyseergebnisse sind filterbar nach **Fake**, **Verdächtig**, **Korrekt** 
-
-Direktes Umkodieren auf die gemessene Bitrate oder manuelles eingeben der gewünschten Bitrate möglich
-
-*Wichtig: Das Ergebnis ist eine Prüfliste, kein Urteil. Ein niedriger Cutoff kann auch von einem bandbegrenzten Master, einem Vinyl-Rip oder einer alten Aufnahme stammen.*
-
-→ [Details im Handbuch](handbuch.md#wie-die-prüfung-funktioniert-kurz-erklärt) · [Screenshot: Prüfliste](docs/009-pruefliste-tracks.png) · [Screenshot: Bitrate korrigieren](docs/018-bitrate-korrigieren.png) · [Screenshot: Spektrogramm](docs/042-pruefliste-spectrum.png)
+→ [Details in the manual](manual.md#genre-mood-and-energy) · [Screenshot: genre suggestions](docs/027-genre-vorschlag.png)
 
 </details>
 
 <details>
-<summary><b>Apple Music / iTunes</b> — zeigt, was schon in Music.app liegt</summary>
+<summary><b>Auto Cue</b> — set cues automatically, learned from your own</summary>
 
-Zeigt pro Track an, ob er bereits in der Music.app-Bibliothek geführt wird.
+Sets a track’s hot and memory cues itself (Break 1, Build, Drop, Intro, Outro and others) based on beat grid and phrases. The model learns from your own cues set by hand — you train it in the settings or import one. The slot assignment (which spot on which hot cue with which colour) is yours to define.
 
-</details>
-
-<details>
-<summary><b>Rekordbox</b> — zeigt, was schon in Rekordbox liegt</summary>
-
-Zeigt pro Track an, ob er bereits in der [Rekordbox](https://rekordbox.com/de/)-Bibliothek vorhanden ist. Ein eigener Abgleich („Rekordbox abgleichen") aktualisiert dieses Zeichen und findet verschobene Dateien wieder.
-
-→ [Details im Handbuch](handbuch.md#bibliothek-scannen) · [Screenshot](docs/010-rekordbox-scan.png)
+→ [Details in the manual](manual.md#auto-cue) · [Screenshot: models & training](docs/032-dj-autocue-model.png) · [Screenshot: slot assignment](docs/033-dj-autocue-setting.png)
 
 </details>
 
 <details>
-<summary><b>Waveform zum Anhören</b> — farbige Wellenform mit Hot Cues</summary>
+<summary><b>Find duplicates</b> — duplicate tracks by hash or artist + title + duration</summary>
 
-Stellt die Waveform der Datei an. Enthält Hot- und Memory-Cues aus Rekordbox (falls vorhanden), und zeigt die Waveform selbst farbig (RGB oder 3-Band, einstellbar) statt grau, wenn der Track in Rekordbox analysiert ist.
+Identifies duplicate tracks by the same file hash or the combination of *artist + title + duration* (e.g. the same song once as MP3 and once as FLAC).
 
-Zifferntasten **1–8** springen zu Hot Cue A–H. In Bearbeiten und Player werden Cues nur angezeigt; bearbeiten lassen sie sich in der DJ-Ansicht.
-
-→ [Details im Handbuch](handbuch.md#anhören-mit-wellenform) · [Screenshot](docs/005-waveform.png)
+→ [Details in the manual](manual.md#the-sidebar) · [Screenshot](docs/014-duplikate.png)
 
 </details>
 
 <details>
-<summary><b>Stems (Acapella & Instrumental)</b> — Gesang und Begleitung lokal trennen</summary>
+<summary><b>Playlist generator</b> — build sets along an energy curve</summary>
 
-Trennt einen Track lokal in Gesang und Begleitung (Demucs, ohne Upload). Erst nach einer Hörprobe und deiner Freigabe wird gespeichert: Tags und Cover vom Haupttrack, Titel-Zusatz und Genre „Acapella“/„Instrumental“, danach Eintrag in TrackTab, Music und — mit Beatgrid des Haupttracks — Rekordbox. Nur auf Apple-Silicon-Macs. Das Modell (Gewichte nur für wissenschaftliche/nicht-kommerzielle Nutzung) ist nicht Teil der App und wird in den Einstellungen einmalig geladen.
+Builds a set along a draggable energy curve. In addition there are mood dials (Dark, Deep, Groovy, Melodic …), transition rules for BPM (±0/±3, half/double tempo) and key (Camelot loose/strict) and a track pool that works like the search (e.g. `/Genre House /BPM 120-128 /Add 30d`, also as input fields via “Advanced”), plus a source playlist. Locked slots stay in place on re-roll. The result is a real playlist (M3U export, drag onto other lists). Needs the genre/mood analysis.
 
-→ [Details im Handbuch](handbuch.md#stems-erzeugen-acapella--instrumental) · [Screenshot: Einstellungen](docs/035-settings-stems.png) · [Screenshot: Dialog](docs/038-stem-generieren.png) · [Screenshot: Hörprobe](docs/039-stem-speichern.png)
-
-</details>
-
-<details>
-<summary><b>Dateien automatisch umbenennen</b> — einheitliche Dateinamen nach eigenem Muster</summary>
-
-Baut aus den Metadaten einen einheitlichen Dateinamen nach frei konfigurierbarem Muster (Vorgabe `{artist}_{title}_{bpm}_{key}_{bitrate}_{year}` → `daft-punk_get-lucky_116bpm_8a_320kbps_2013.mp3`). Unterstrich trennt die Kategorien, Bindestrich die Wörter darin; ein Platzhalter ohne Wert lässt seine Kategorie ersatzlos entfallen — bei verlustfreien Formaten also die Bitrate.
-
-Gedacht für frisch gekaufte Tracks: In den Einzelprüfungen wird nur umbenannt, was noch **nicht** in einem der Bibliotheksordner liegt. Bibliothekstracks benennst du über das Zeilenmenü oder die Sammelleiste um; TrackTab zieht dabei Music.app und Rekordbox nach. Die Zuordnung in TrackTab wird sofort mitgezogen, die Tracks bleiben also ohne Umweg weiter bearbeitbar.
-
-→ [Details im Handbuch](handbuch.md#dateien-automatisch-umbenennen)
+→ [Details in the manual](manual.md#playlist-generator) · [Screenshot: settings](docs/036-playlist-builder.png) · [Screenshot: result](docs/037-playlist-builder-output.png)
 
 </details>
 
 <details>
-<summary><b>Schnellzugriff per Icon</b> — Programme und Shops je Track mit einem Klick</summary>
+<summary><b>Global search & categories</b> — typo-tolerant search with parameters and filters</summary>
 
-Schnellaktionen lassen sich in den Einstellungen individuell festlegen. Die hinterlegten Programme werden anschließend mit ihrem jeweiligen Icon bei jedem Track angezeigt:
+Searches the whole library with targeted narrowing via categories and filters. Via “Advanced” all search parameters are also available as input fields.
 
-- In [Mixed In Key](https://mixedinkey.com/) öffnen
-- Im [Audio-Editor öffnen](technische_funktionen.md#im-audio-editor-öffnen) (z. B. [iZotope RX](https://www.izotope.com/products/rx-advanced), [Audacity](https://www.audacityteam.org/) )
-- In der eingestellten DAW öffnen (z. B. [Logic](https://www.apple.com/de/logic-pro/), [Abelton](https://www.ableton.com/de/) – nur sichtbar, wenn konfiguriert)
-- Der ausgewählte Track wird direkt auf den hinterlegten Plattformen gesucht, jede Suchseite mit ihrem Favicon als Icon. Standardmäßig stehen Beatport, SoundCloud, DJ City und Zip DJ zur Verfügung. Weitere Plattformen können jederzeit in den Einstellungen hinzugefügt werden.
-
-→ [Details im Handbuch](handbuch.md#die-knopfleiste)
+→ [Details in the manual](manual.md#searching-and-filtering) · [Screenshot](docs/016-suchparameter.png) · [Screenshot: advanced](docs/016-2-erweiterte-suche.png)
 
 </details>
 
 <details>
-<summary><b>Playlisten & Ordner</b> — eigene Playlisten und verschachtelte Ordner</summary>
+<summary><b>Smart playlists</b> — rule-based lists like in Apple Music</summary>
 
-Seitenleiste mit Listen-Baum, in der Breite verstellbar und in beiden Ansichten gleich. Eigene Playlisten und verschachtelte Ordner, Tracks per Drag & Drop oder über einen Auswahldialog hinein, freie Reihenfolge per Ziehen, Rückgängig/Wiederherstellen je Playlist (auch Cmd+Z), Duplizieren, Warteschlange und M3U8-Export je Liste.
+Rule-based lists modelled on Apple Music: “matches all/any” rules on status, format, cutoff, BPM, key, year, loudness, file size, Music.app and Rekordbox presence and more, with a limit on number, playing time or storage size. Calculated at start and when you click the list, with a live preview in the rule editor.
 
-→ [Details im Handbuch](handbuch.md#playlisten-und-ordner) · [Screenshot](docs/015-neue-plalist.png)
-
-</details>
-
-<details>
-<summary><b>Status-Listen</b> — feste Listen je Prüfstatus</summary>
-
-Für jeden Status (Korrekt, Verdächtig, Fake, Unklar, Manuell korrigiert) bringt TrackTab eine feste, schreibgeschützte Liste im Ordner „Prüflisten" mit. Innerhalb jeder beliebigen Liste lässt sich der Status zusätzlich über den Suchparameter `/Status` eingrenzen.
-
-→ [Details im Handbuch](handbuch.md#die-seitenleiste)
+→ [Details in the manual](manual.md#smart-playlists) · [Screenshot](docs/007-playlist-smart-regeln.png)
 
 </details>
 
 <details>
-<summary><b>Fremde Playlisten lesen</b> — Music.app- und Rekordbox-Playlisten im selben Baum</summary>
+<summary><b>Bitrate analysis</b> — expose fake transcodes via cutoff analysis</summary>
 
-Playlisten-Bäume aus Music.app und Rekordbox werden im selben Baum angezeigt (schreibgeschützt, Ordner und Smart Playlists inklusive). Tracks, zu denen TrackTab keine Datei hat — Apple-Music-Cloud-Titel oder Dateien außerhalb der gescannten Ordner — stehen an ihrer Stelle in der Liste und sind als solche gekennzeichnet.
+Spectral cutoff analysis (MP3, M4A, FLAC, WAV, AIFF). It exposes upscaled/transcoded files. A spectrogram with a cutoff line shows the limit with one click. Analysis results can be filtered by **Fake**, **Suspicious**, **OK**.
 
-→ [Details im Handbuch](handbuch.md#fremde-playlisten) · [Screenshot](docs/021-playlisten-baum.png)
+Direct re-encoding to the measured bitrate, or manually entering the desired bitrate, is possible.
 
-</details>
+*Important: the result is a review list, not a verdict. A low cutoff can also come from a band-limited master, a vinyl rip or an old recording.*
 
-<details>
-<summary><b>Merken</b> — farbige Merklisten zum Kennzeichnen</summary>
-
-Bis zu 4 eigene Playlisten lassen sich als Merkliste markieren (z. B. „Neu kaufen“, „Im Warenkorb“, "Zu Bearbeiten") zum Kennzeichnen von Tracks. Ein Track kann gleichzeitig in mehreren Merklisten stehen – unabhängig von Status wie *Ausgeblendet* oder *Manuell korrigiert*.
-
-→ [Details im Handbuch](handbuch.md#merken)
+→ [Details in the manual](manual.md#is-the-bitrate-correct) · [Screenshot: review list](docs/009-pruefliste-tracks.png) · [Screenshot: correct bitrate](docs/018-bitrate-korrigieren.png) · [Screenshot: spectrogram](docs/042-pruefliste-spectrum.png)
 
 </details>
 
 <details>
-<summary><b>Ansichten: Bearbeiten & Player</b> — Bearbeiten, Player und Mediaplayer</summary>
+<summary><b>Apple Music / iTunes</b> — shows what is already in Music.app</summary>
 
-Umschaltbar zwischen der vollständigen Bearbeiten-Ansicht und einer reduzierten Player-Ansicht fürs reine Anhören. Der Listen-Baum bleibt in beiden Ansichten vollständig bedienbar und behält seine Auswahl. Ein fixer Mediaplayer (Play/Pause, Vor/Zurück, Zufallswiedergabe, Titel-/Listen-Wiederholung, Warteschlange per Drag & Drop) läuft ansichtsübergreifend weiter, inklusive Wellenform-Anzeige mit Hot-Cue-Sprüngen in der Bearbeiten-Ansicht. Spalteneinstellungen werden je Ansicht getrennt gespeichert.
-
-→ [Details im Handbuch](handbuch.md#ansichten-bearbeiten-und-player) · [Screenshot: Player-Ansicht](docs/001-player-view.png) · [Screenshot: Warteschlange](docs/012-warteschlange.png)
+Shows per track whether it is already listed in the Music.app library.
 
 </details>
 
 <details>
-<summary><b>Spaltenansichten</b> — Spalten unter eigenen Namen speichern</summary>
+<summary><b>Rekordbox</b> — shows what is already in Rekordbox</summary>
 
-Sichtbare Spalten, ihre Reihenfolge und ihre Breite lassen sich unter eigenen Namen speichern und einzelnen Listen zuordnen — jeder Playlist, aber auch „Alle", „Ausgeblendet", den Prüflisten oder den Merklisten. Alle übrigen Listen nutzen den Standard der jeweiligen Ansicht („Standard – Bearbeiten“ bzw. „Standard – Player“).
+Shows per track whether it already exists in the [Rekordbox](https://rekordbox.com/) library. A sync of its own (“Sync Rekordbox”) updates this mark and finds moved files again.
 
-→ [Details im Handbuch](handbuch.md#spalten-anpassen)
-
-</details>
-
-<details>
-<summary><b>Deutsch & Englisch</b> — zwei Sprachen, automatisch oder fest</summary>
-
-Die Oberfläche ist auf Deutsch und Englisch verfügbar. Die Sprache lässt sich in den Einstellungen unter „Darstellung" fest wählen oder auf „Automatisch" stellen – dann folgt TrackTab der Spracheinstellung deines Browsers. Ist diese weder Deutsch noch Englisch, wird Deutsch angezeigt.
-
-→ [Details im Handbuch](handbuch.md#einstellungen)
+→ [Details in the manual](manual.md#scanning-the-library) · [Screenshot](docs/010-rekordbox-scan.png)
 
 </details>
 
 <details>
-<summary><b>Playlists exportieren</b> — CSV und M3U8</summary>
+<summary><b>Waveform for listening</b> — coloured waveform with hot cues</summary>
 
-Export in den Formaten **CSV** und **M3U8** aus ganzen Listen, Filterungen oder einzelnen Tracks — sowie je Playlist über deren Menü.
+Turns on the file’s waveform. Contains hot and memory cues from Rekordbox (if present), and shows the waveform itself in colour (RGB or 3-band, adjustable) instead of grey if the track is analysed in Rekordbox.
 
-→ [Details im Handbuch](handbuch.md#playlisten-und-ordner)
+Number keys **1–8** jump to hot cue A–H. In Edit and Player, cues are only displayed; they can be edited in the DJ view.
 
-</details>
-
-<details>
-<summary><b>Verwaiste Ordner finden & löschen</b> — leere Verzeichnisse aufräumen</summary>
-
-Durchsucht die konfigurierte Bibliotheksordner nach leeren Verzeichnissen (zählt auch als leer, wenn nur eine `.DS_Store`-Datei vorhanden ist) und verschiebt diese nach Rückfrage in den Papierkorb.
-
-→ [Details im Handbuch](handbuch.md#verwaiste-ordner)
+→ [Details in the manual](manual.md#listening-with-the-waveform) · [Screenshot](docs/005-waveform.png)
 
 </details>
 
 <details>
-<summary><b>Backup</b> — automatische Sicherungen</summary>
+<summary><b>Stems (acapella & instrumental)</b> — separate vocals and accompaniment locally</summary>
 
-Nach jedem Beenden des Tools wird automatisch ein Backup der Bibliothek in einem separaten Ordner erstellt. Aufbewahrt werden die letzten 10 Backups und zusätzlich je eines pro Tag für 7 Tage; ältere werden automatisch entfernt.
+Separates a track locally into vocals and accompaniment (Demucs, no upload). Only after a listening preview and your approval is it saved: tags and cover from the main track, title suffix and genre “Acapella”/“Instrumental”, then entry in TrackTab, Music and — with the main track’s beat grid — Rekordbox. Apple Silicon Macs only. The model (weights for scientific/non-commercial use only) is not part of the app and is loaded once in the settings.
 
-Vor jedem Schreibvorgang in die Rekordbox-Bibliothek wird zusätzlich geprüft, ob Rekordbox geöffnet ist. Ist die Anwendung geschlossen, wird vor dem Schreibvorgang automatisch ein weiteres Backup erstellt. Auch hierbei wird die Anzahl der Backups auf 10 Dateien begrenzt.
-
-→ [Details im Handbuch](handbuch.md#backup)
+→ [Details in the manual](manual.md#creating-stems-acapella--instrumental) · [Screenshot: settings](docs/035-settings-stems.png) · [Screenshot: dialog](docs/038-stem-generieren.png) · [Screenshot: listening preview](docs/039-stem-speichern.png)
 
 </details>
 
 <details>
-<summary><b>Log</b> — jede Bearbeitung protokolliert</summary>
+<summary><b>Rename files automatically</b> — uniform file names by your own pattern</summary>
 
-Protokolliert jede durchgeführte Bearbeitung lückenlos in einer Log-Datei pro Tag.
+Builds a uniform file name from the metadata by a freely configurable pattern (default `{artist}_{title}_{bpm}_{key}_{bitrate}_{year}` → `daft-punk_get-lucky_116bpm_8a_320kbps_2013.mp3`). Underscore separates the categories, hyphen the words within them; a placeholder without a value drops its category entirely — with lossless formats, that means the bitrate.
 
-</details>
+Intended for freshly bought tracks: in the single checks, only what does **not** yet lie in one of the library folders is renamed. Library tracks you rename via the row menu or the bulk bar; TrackTab carries Music.app and Rekordbox along. The assignment in TrackTab is carried along immediately, so the tracks stay editable without detours.
 
-<details>
-<summary><b>Statistik</b> — Nutzung und Bibliothek in Zahlen</summary>
-
-Jahres-/Monats-Auswertung aus dem Log und der tatsächlichen Hörzeit: Aktionen pro Monat, Gesamt-Wiedergabezeit sowie meistgehörte Titel, Interpreten und Genres. Aus den meistgehörten Titeln lässt sich direkt eine Playlist mit den Top 50 eines Jahres erstellen.
-
-→ [Details im Handbuch](handbuch.md#statistik) · [Screenshot: Nutzung](docs/013-statistik.png) · [Screenshot: Bibliothek](docs/013-1-statistik-bib.png) · [Screenshot: Rekordbox](docs/020-statistik-rekordbox.png)
+→ [Details in the manual](manual.md#renaming-files-automatically)
 
 </details>
 
 <details>
-<summary><b>Aufräumen</b> — Genre, Album und Künstler vereinheitlichen</summary>
+<summary><b>Quick access via icon</b> — programs and shops per track with one click</summary>
 
-Eigener Seitenleisten-Ordner mit Listen für Genre, Album und Künstler, gruppiert nach dem jeweiligen Wert, samt Bubble-Übersicht und automatischen Zusammenführungs-Vorschlägen (Leerzeichen, Groß-/Kleinschreibung, Tippfehler, Varianten). Ein Wert lässt sich für alle betroffenen Tracks auf einmal umbenennen — geschrieben wird in die Datei-Tags sowie, sofern zutreffend, in Music.app und Rekordbox, damit alle drei Orte im Gleichschritt bleiben.
+Quick actions can be set individually in the settings. The stored programs are then shown with their respective icon for every track:
 
-→ [Details im Handbuch](handbuch.md#aufräumen-genre-album-künstler)
+- Open in [Mixed In Key](https://mixedinkey.com/)
+- Open in the audio editor (e.g. [iZotope RX](https://www.izotope.com/products/rx-advanced), [Audacity](https://www.audacityteam.org/))
+- Open in the configured DAW (e.g. [Logic](https://www.apple.com/logic-pro/), [Ableton](https://www.ableton.com/) – only visible if configured)
+- The selected track is searched directly on the stored platforms, each search page with its favicon as icon. Beatport, SoundCloud, DJ City and Zip DJ are available by default. More platforms can be added at any time in the settings.
+
+→ [Details in the manual](manual.md#the-button-bar)
+
+</details>
+
+<details>
+<summary><b>Playlists & folders</b> — your own playlists and nested folders</summary>
+
+Sidebar with list tree, adjustable in width and the same in both views. Your own playlists and nested folders, tracks in via drag & drop or a selection dialog, free order by dragging, undo/redo per playlist (also Cmd+Z), duplicate, queue and M3U8 export per list.
+
+→ [Details in the manual](manual.md#playlists-and-folders) · [Screenshot](docs/015-neue-plalist.png)
+
+</details>
+
+<details>
+<summary><b>Status lists</b> — fixed lists per review status</summary>
+
+For every status (OK, Suspicious, Fake, Unclear, Manually corrected), TrackTab brings a fixed, read-only list in the “Review lists” folder. Within any list, the status can additionally be narrowed via the `/Status` search parameter.
+
+→ [Details in the manual](manual.md#the-sidebar)
+
+</details>
+
+<details>
+<summary><b>Read playlists from other apps</b> — Music.app and Rekordbox playlists in the same tree</summary>
+
+Playlist trees from Music.app and Rekordbox are shown in the same tree (folders and smart playlists included). Tracks for which TrackTab has no file — Apple Music cloud titles or files outside the scanned folders — appear at their place in the list and are marked as such.
+
+→ [Details in the manual](manual.md#playlists-from-other-apps) · [Screenshot](docs/021-playlisten-baum.png)
+
+</details>
+
+<details>
+<summary><b>Favorites</b> — coloured favorite lists for labelling</summary>
+
+Up to 4 of your own playlists can be marked as a favorite list (e.g. “Buy new”, “In cart”, “To edit”) to label tracks. A track can be in several favorite lists at once – independent of statuses like *Hidden* or *Manually corrected*.
+
+→ [Details in the manual](manual.md#favorite-playlists)
+
+</details>
+
+<details>
+<summary><b>Views: Edit & Player</b> — Edit, Player and media player</summary>
+
+Switchable between the full Edit view and a reduced Player view for pure listening. The list tree stays fully usable in both views and keeps its selection. A fixed media player (play/pause, previous/next, shuffle, track/list repeat, queue via drag & drop) keeps running across views, including a waveform display with hot-cue jumps in the Edit view. Column settings are saved separately per view.
+
+→ [Details in the manual](manual.md#views-edit-player-and-dj) · [Screenshot: Player view](docs/001-player-view.png) · [Screenshot: queue](docs/012-warteschlange.png)
+
+</details>
+
+<details>
+<summary><b>Column views</b> — save columns under your own names</summary>
+
+Visible columns, their order and their width can be saved under your own names and assigned to individual lists — every playlist, but also “All”, “Hidden”, the review lists or the favorite lists. All other lists use the default of the respective view (“Default – Edit” or “Default – Player”).
+
+→ [Details in the manual](manual.md#customising-columns)
+
+</details>
+
+<details>
+<summary><b>German & English</b> — two languages, automatic or fixed</summary>
+
+The interface is available in German and English. The language can be fixed in the settings under “Appearance” or set to “Automatic” – then TrackTab follows your browser’s language setting. If that is neither German nor English, German is shown.
+
+→ [Details in the manual](manual.md#settings)
+
+</details>
+
+<details>
+<summary><b>Export playlists</b> — CSV and M3U8</summary>
+
+Export in **CSV** and **M3U8** formats from whole lists, filtered results or individual tracks — and per playlist via its menu.
+
+→ [Details in the manual](manual.md#playlists-and-folders)
+
+</details>
+
+<details>
+<summary><b>Find & delete orphaned folders</b> — tidy up empty directories</summary>
+
+Searches the configured library folders for empty directories (also counts as empty if only a `.DS_Store` file is present) and, after confirmation, moves them to the Trash.
+
+→ [Details in the manual](manual.md#orphaned-folders)
+
+</details>
+
+<details>
+<summary><b>Backup</b> — automatic backups</summary>
+
+Every time the tool is quit, a backup of the library is created automatically in a separate folder. The last 10 backups and in addition one per day for 7 days are kept; older ones are removed automatically.
+
+Before every write to the Rekordbox library, it is also checked whether Rekordbox is open. If the application is closed, another backup is created automatically before writing. Here too the number of backups is limited to 10 files.
+
+→ [Details in the manual](manual.md#backup)
+
+</details>
+
+<details>
+<summary><b>Log</b> — every edit logged</summary>
+
+Logs every edit performed without gaps in one log file per day.
+
+</details>
+
+<details>
+<summary><b>Statistics</b> — usage and library in numbers</summary>
+
+Year/month evaluation from the log and the actual listening time: actions per month, total playing time as well as most-played titles, artists and genres. From the most-played titles, a playlist with the top 50 of a year can be created directly.
+
+→ [Details in the manual](manual.md#statistics) · [Screenshot: usage](docs/013-statistik.png) · [Screenshot: library](docs/013-1-statistik-bib.png) · [Screenshot: Rekordbox](docs/020-statistik-rekordbox.png)
+
+</details>
+
+<details>
+<summary><b>Clean-up</b> — unify genre, album and artist</summary>
+
+A sidebar folder of its own with lists for genre, album and artist, grouped by the respective value, including a bubble overview and automatic merge suggestions (spaces, upper/lower case, typos, variants). A value can be renamed for all affected tracks at once — written into the file tags as well as, where applicable, into Music.app and Rekordbox, so that all three places stay in step.
+
+→ [Details in the manual](manual.md#genre-album-artist--correction-suggestions)
 
 </details>
 
 
 ---
 
-## Weiterführende Dokumentation
+## Further documentation
 
-- **QuickStart** (So startest du in nur 5 Schritten): [quickstart.md](quickstart.md)
-- **Handbuch** (reine Bedienungsanleitung ohne technische Details): [handbuch.md](handbuch.md)
-- **Installation** (fertige App, eigener Build, Terminal): [installation.md](installation.md)
-- **Technische Funktionen** (Referenz für Weiterentwicklung: Algorithmen, Formeln, Architektur): [technische_funktionen.md](technische_funktionen.md)
-- **Änderungshistorie**: [changelog.md](changelog.md)
-- **Aktuelles Release** (Download der `.dmg`): [GitHub Releases](https://github.com/sebssch/TrackTab/releases/latest)
+- **QuickStart** (get started in just 5 steps): [quickstart.md](quickstart.md) · German: [quickstart.de.md](quickstart.de.md)
+- **Manual** (pure user guide without technical details): [manual.md](manual.md) · German: [manual.de.md](manual.de.md)
+- **Installation** (ready-made app, own build, terminal): [installation.md](installation.md) · German: [installation.de.md](installation.de.md)
+- **Technical functions** (reference for further development: algorithms, formulas, architecture; German only): [technical_functions.de.md](technical_functions.de.md)
+- **Change history**: [changelog.md](changelog.md) · German: [changelog.de.md](changelog.de.md)
+- **Latest release** (download of the `.dmg`): [GitHub Releases](https://github.com/sebssch/TrackTab/releases/latest)
 
-## Unterstützen
+## Support
 
-Dieses Projekt hat unzählige Arbeitsstunden und eine jede Menge an Tokens (Claude.ai) verschlungen.
+This project has swallowed countless hours of work and a great many tokens (Claude.ai).
 
-Gefällt dir TrackTab? Dann würde ich mich über eine kleine Spende freuen: [paypal.me/SGabler](https://paypal.me/SGabler)
+Do you like TrackTab? Then I would appreciate a small donation: [paypal.me/SGabler](https://paypal.me/SGabler)
 
-## Lizenz
+## Licence
 
-GPL-3.0-oder-später — siehe [LICENSE](LICENSE) und [NOTICE.md](NOTICE.md). © 2026 Sebastian Gabler (sgt.works). Software und Modelle Dritter stehen unter eigenen Lizenzen ([THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), Texte in [licenses/](licenses/)); die Modelle für Stem-Trennung (Demucs) und Genre/Stimmung (Essentia) sind nur nicht-kommerziell nutzbar.
+GPL-3.0-or-later — see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). © 2026 Sebastian Gabler (sgt.works). Third-party software and models are under their own licences ([THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md), texts in [licenses/](licenses/)); the models for stem separation (Demucs) and genre/mood (Essentia) may only be used non-commercially.
 
-Die Icons der Web-UI stammen aus dem [Lucide](https://lucide.dev/icons/)-Set (ISC-Lizenz), lokal
-vendort in `app/webui/lucide-icons.js`.
+The web UI icons come from the [Lucide](https://lucide.dev/icons/) set (ISC licence), vendored locally
+in `app/webui/lucide-icons.js`.

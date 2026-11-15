@@ -1418,6 +1418,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._get_corrected()
         elif route == "/api/dup-dismissed":
             self._get_dup_dismissed()
+        elif route == "/api/ignored-issues":
+            self._get_ignored_issues()
         elif route == "/api/rekordbox":
             self._get_rekordbox()
         elif route == "/api/rekordbox-status":
@@ -1783,6 +1785,38 @@ class _Handler(BaseHTTPRequestHandler):
             conn.close()
         self._json({"dup_dismissed": paths})
 
+    def _get_ignored_issues(self) -> None:
+        conn = db_mod.connect(cfgmod.load())
+        try:
+            data = db_mod.ignored_issues_map(conn)
+        finally:
+            conn.close()
+        self._json({"ignored_issues": data})
+
+    def _post_ignore_issues(self) -> None:
+        """Einzelne Auffaelligkeiten je Track ignorieren: {items: [{path, code}], flag}."""
+        try:
+            payload = json.loads(self._body(1_000_000).decode("utf-8"))
+            items = [(str(i["path"]), str(i["code"])) for i in payload["items"]]
+            flag = bool(payload["flag"])
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if not items:
+            self._fail("Keine Einträge angegeben")
+            return
+        with self.lock:
+            conn = db_mod.connect(cfgmod.load())
+            try:
+                for p, _c in items:
+                    if db_mod.row_for_path(conn, p) is None:
+                        self._fail("Unbekannter Pfad")
+                        return
+                db_mod.set_issues_ignored(conn, items, flag)
+            finally:
+                conn.close()
+        self._json({"ok": True, "flag": flag, "count": len(items)})
+
     def _get_rekordbox(self) -> None:
         conn = db_mod.connect(cfgmod.load())
         try:
@@ -1941,7 +1975,8 @@ class _Handler(BaseHTTPRequestHandler):
             latest = lookup_mod._version_tuple(result["latest_version"])
             show = bool(result["update_available"]
                         and (ignored is None or latest > ignored))
-            changes = (lookup_mod.fetch_changes(__version__, result["latest_version"])
+            lang = str(self._query().get("lang") or "en")[:2].lower()
+            changes = (lookup_mod.fetch_changes(__version__, result["latest_version"], lang)
                        if result["update_available"] else [])
             self._json({"ok": True, "reachable": True, **result,
                         "changes": changes,
@@ -2321,6 +2356,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_correct()
         elif route == "/api/dup-dismiss-bulk":
             self._post_dup_dismiss_bulk()
+        elif route == "/api/ignore-issues":
+            self._post_ignore_issues()
         elif route == "/api/reveal":
             self._post_reveal()
         elif route == "/api/analyse":

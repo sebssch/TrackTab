@@ -31,6 +31,7 @@ var DJ;
 var DJ_PREFS;
 var DJ_AUDIO_CTX;
 var DJ_METRO_SOUND;       // Einstellung dj_metronome_sound, gesetzt von app.js
+var DJ_KEY_LAYOUT;        // Einstellung keyboard_layout (auto/qwertz/qwerty/azerty), gesetzt von app.js
 var DJ_METRO_NOISE;       // Rauschpuffer je Kontext fuer die Metronom-Klaenge
 var DJ_METRO_PREVIEW;     // eigener Kontext fuers Vorhoeren in den Einstellungen
 // Verwaltung des Kontexts (siehe djCtx()): Leerlauf-Timer, Zeitpunkt des letzten
@@ -57,9 +58,25 @@ function djLoopColor(active) { return active ? [255, 0, 0] : [255, 165, 0]; }
 // Hot Cue an derselben Stelle wie ein Memory Cue (Rekordbox rundet auf Millisekunden).
 function djHotAt(ed, sec) { return ed.cues.find(c => c.kind === "hot" && Math.abs(c.position_s - sec) < 0.01) || null; }
 // Loop-Laengen auf der Tastenreihe, lange Schleifen links.
-function djLoopKeys() { return [["q", 64], ["w", 32], ["e", 16], ["r", 8], ["t", 4], ["z", 2], ["u", 1], ["i", 1 / 2], ["o", 1 / 4], ["p", 1 / 8]]; }
+// Die Tasten stehen als physische Position (KeyboardEvent.code), nicht als Zeichen:
+// so liegen sie auf jedem Layout in derselben Reihe, nur die Beschriftung wechselt.
+function djLoopKeys() { return [["KeyQ", 64], ["KeyW", 32], ["KeyE", 16], ["KeyR", 8], ["KeyT", 4], ["KeyY", 2], ["KeyU", 1], ["KeyI", 1 / 2], ["KeyO", 1 / 4], ["KeyP", 1 / 8]]; }
 // Beatjumps: Buchstabe halten und Pfeiltaste. Ohne Buchstabe springt der Pfeil 1 Schlag.
-function djJumpKeys() { return [["a", 64], ["s", 32], ["d", 16], ["f", 8], ["g", 4], ["h", 2]]; }
+function djJumpKeys() { return [["KeyA", 64], ["KeyS", 32], ["KeyD", 16], ["KeyF", 8], ["KeyG", 4], ["KeyH", 2]]; }
+// Layout der Tastatur: Einstellung, bei "auto" aus der Sprache der Oberflaeche.
+function djKeyLayout() {
+  if (["qwertz", "qwerty", "azerty"].includes(DJ_KEY_LAYOUT)) return DJ_KEY_LAYOUT;
+  return LANG === "de" ? "qwertz" : LANG === "fr" ? "azerty" : "qwerty";
+}
+// Beschriftung einer physischen Taste auf dem gewaehlten Layout (nur Abweichungen zur US-Belegung).
+const DJ_KEY_CAPS = {
+  qwertz: {KeyY: "Z"},
+  qwerty: {},
+  azerty: {KeyQ: "A", KeyW: "Z", KeyA: "Q", KeyM: ","},
+};
+function djKeyName(code) { return DJ_KEY_CAPS[djKeyLayout()][code] || code.replace(/^Key/, ""); }
+// Taste einer Funktion (C, M, X, B) als physische Position.
+const DJ_FN_KEYS = {cue: "KeyC", memory: "KeyM", cut: "KeyX", tap: "KeyB"};
 // Das Tempo gilt erst als anders, wenn es wirklich abweicht: 125 und 125.00 sind eins.
 function djEditedBpm(bpm, tag) { return bpm && Math.abs(bpm - (tag || 0)) >= 0.005 ? bpm : 0; }
 function djLoopLabel(n) { return n >= 1 ? String(n) : "1/" + Math.round(1 / n); }
@@ -2124,7 +2141,7 @@ function djCueTools(ed) {
     const on = loop && loop.on && ed.bt.length
       && (loop.beats === n || Math.abs((loop.end - loop.start) - n * 60 / (ed.segs[djSegIndexAt(ed, loop.start)] || {bpm: 120}).bpm) < 0.005);
     if (on) active = n;
-    return djToolBtn("looplen", djKeyLabel(djLoopLabel(n), key.toUpperCase()), t("dj.loop_len_title", {beats: djLoopLabel(n), key: key.toUpperCase()}), {cls: "kb" + (on ? " on" : ""), attrs: `data-n="${n}"`});
+    return djToolBtn("looplen", djKeyLabel(djLoopLabel(n), djKeyName(key)), t("dj.loop_len_title", {beats: djLoopLabel(n), key: djKeyName(key)}), {cls: "kb" + (on ? " on" : ""), attrs: `data-n="${n}"`});
   }).join("");
   // Ueberschrift = Zustand der Schleife: nichts, nur Anfang, aktiv (mit Laenge, wenn sie einer Taste entspricht).
   const cap = !loop ? t("dj.loop_caption") : loop.end == null ? t("dj.loop_caption_in")
@@ -2262,7 +2279,7 @@ function djRampTools(ed, i) {
 }
 
 function djJumpTools() {
-  const keys = Object.fromEntries(djJumpKeys().map(([k, n]) => [n, k.toUpperCase()]));
+  const keys = Object.fromEntries(djJumpKeys().map(([k, n]) => [n, djKeyName(k)]));
   const jump = n => djToolBtn("jump", djKeyLabel((n < 0 ? "−" : "+") + Math.abs(n), keys[Math.abs(n)]),
     t("dj.jump_title", {beats: Math.abs(n), key: keys[Math.abs(n)], arrow: n < 0 ? "←" : "→"}), {cls: "kb", attrs: `data-n="${n}"`});
   return djToolGroup(esc(t("dj.beatjump_caption")),
@@ -2568,10 +2585,10 @@ function djInfoHTML(ed) {
       esc(t("dj.autocue_title"))}">${djIcon("square-sparkles")} ${esc(t("dj.autocue"))}</button>` : ""}
     <div class="dj-note">${esc(t("dj.storage_note"))}</div>
     <div class="dj-keys">
-      ${[["Space", "dj.key_play"], ["C", "dj.key_cue"], ["M", "dj.key_memory"], ["X", "dj.key_cut"], ["1–8", "dj.key_hot"], ["⇧ 1–8", "dj.key_hot_delete"],
-         ["Q–P", "dj.key_loops"],
-         ["← →", "dj.key_jump"], ["A S D F G H + ← →", "dj.key_jumps"], ["⇧ ← →", "dj.key_jump_bar"],
-         ["B", "dj.key_tap"], ["+ −", "dj.key_zoom"], ["⌘Z", "dj.key_undo"], ["⌫", "dj.key_delete"], ["⌥", "dj.key_alt"]]
+      ${[["Space", "dj.key_play"], [djKeyName(DJ_FN_KEYS.cue), "dj.key_cue"], [djKeyName(DJ_FN_KEYS.memory), "dj.key_memory"], [djKeyName(DJ_FN_KEYS.cut), "dj.key_cut"], ["1–8", "dj.key_hot"], ["⇧ 1–8", "dj.key_hot_delete"],
+         [djKeyName("KeyQ") + "–" + djKeyName("KeyP"), "dj.key_loops"],
+         ["← →", "dj.key_jump"], [djJumpKeys().map(([k]) => djKeyName(k)).join(" ") + " + ← →", "dj.key_jumps"], ["⇧ ← →", "dj.key_jump_bar"],
+         [djKeyName(DJ_FN_KEYS.tap), "dj.key_tap"], ["+ −", "dj.key_zoom"], ["⌘Z", "dj.key_undo"], ["⌫", "dj.key_delete"], ["⌥", "dj.key_alt"]]
         .map(([k, label]) => `<div><kbd>${esc(k)}</kbd><span>${esc(t(label))}</span></div>`).join("")}
     </div>
   </div>`;
@@ -2958,7 +2975,7 @@ function djShowJumpHud(ed) {
   hud.innerHTML = `<div class="dj-jumphud-main"><span data-dir="-1">←</span><b>${beats}</b><span data-dir="1">→</span></div>
     <div class="dj-jumphud-unit">${esc(t("dj.jump_hud_beats"))}</div>
     <div class="dj-jumphud-keys">${djJumpKeys().map(([k, n]) =>
-      `<span${k === held ? ' class="on"' : ""}><kbd>${k.toUpperCase()}</kbd>${n}</span>`).join("")}</div>`;
+      `<span${k === held ? ' class="on"' : ""}><kbd>${djKeyName(k)}</kbd>${n}</span>`).join("")}</div>`;
   hud.classList.add("on");
 }
 
@@ -3011,8 +3028,8 @@ document.addEventListener("keydown", ev => {
   // Ueber den Tastencode: mit Shift (ueberschreiben) oder der Wahltaste (nicht
   // einrasten) liefert key sonst "!" oder "¡".
   const hotSlot = /^(Digit|Numpad)[1-8]$/.test(ev.code) ? Number(ev.code.slice(-1)) : 0;
-  const loopKey = djLoopKeys().find(([k]) => k === lower);
-  const jumpKey = djJumpKeys().find(([k]) => k === lower);
+  const loopKey = djLoopKeys().find(([k]) => k === ev.code);
+  const jumpKey = djJumpKeys().find(([k]) => k === ev.code);
   // Solange Cmd gedrueckt ist, meldet macOS kein keyup anderer Tasten: die Anzeige bliebe stehen.
   if (mod && ed.jumpHeld) djReleaseJump(ed);
   let done = true;
@@ -3028,11 +3045,11 @@ document.addEventListener("keydown", ev => {
     djPulseJumpHud(dir);
   }
   else if (jumpKey) djHoldJump(ed, jumpKey);
-  else if (lower === "c") { if (!ev.repeat) djCueDown(ed); }
-  else if (lower === "m") djAddMemory(ed, ev);
-  else if (lower === "x") { if (!ev.repeat) djCutPhrase(ed, ev); }
+  else if (ev.code === DJ_FN_KEYS.cue) { if (!ev.repeat) djCueDown(ed); }
+  else if (ev.code === DJ_FN_KEYS.memory) djAddMemory(ed, ev);
+  else if (ev.code === DJ_FN_KEYS.cut) { if (!ev.repeat) djCutPhrase(ed, ev); }
   else if (loopKey) { if (!ev.repeat) djLoopBeats(ed, loopKey[1]); }
-  else if (lower === "b") djTap(ed);
+  else if (ev.code === DJ_FN_KEYS.tap) djTap(ed);
   else if (key === "+" || key === "=") djZoom(ed, 1);
   else if (key === "-") djZoom(ed, -1);
   else if (key === "Delete" || key === "Backspace") {
@@ -3047,8 +3064,8 @@ window.addEventListener("resize", () => { if (DJ && !DJ.closed) djFitTools(DJ); 
 
 document.addEventListener("keyup", ev => {
   if (!DJ) return;
-  if (DJ.jumpHeld && DJ.jumpHeld[0] === ev.key.toLowerCase()) djReleaseJump(DJ);
-  if (ev.key.toLowerCase() === "c") djCueUp(DJ);
+  if (DJ.jumpHeld && DJ.jumpHeld[0] === ev.code) djReleaseJump(DJ);
+  if (ev.code === DJ_FN_KEYS.cue) djCueUp(DJ);
   else if (/^(Digit|Numpad)[1-8]$/.test(ev.code)) djHotUp(DJ, Number(ev.code.slice(-1)));
 }, true);
 // Geht der Fokus verloren, kommt kein keyup mehr: der Cue darf nicht weiterlaufen.

@@ -78,6 +78,13 @@ GROUPS = [
                          {"value": "en", "label": "English"}],
              "help": "„Automatisch“ übernimmt die Spracheinstellung des Browsers. "
                      "Beim Speichern laedt die Seite automatisch neu."},
+            {"key": "keyboard_layout", "type": "select", "label": "Tastaturlayout",
+             "options": [{"value": "auto", "label": "Automatisch (nach Sprache)"},
+                         {"value": "qwertz", "label": "QWERTZ"},
+                         {"value": "qwerty", "label": "QWERTY"},
+                         {"value": "azerty", "label": "AZERTY"}],
+             "help": "Für die Tastenkürzel der DJ-Ansicht (Loops, Sprünge, Cues). "
+                     "„Automatisch“ leitet das Layout aus der Sprache ab."},
             {"key": "theme", "type": "select", "label": "Farbschema",
              "options": [{"value": "auto", "label": "Automatisch (System)"},
                          {"value": "light", "label": "Hell"},

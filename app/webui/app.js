@@ -1921,11 +1921,39 @@ function albumCoverMap() {
 const albumCoverIssueOf = r => albumCoverMap().get(r) || null;
 // Quick-Fix-faehig: feste Codes, oder das Album-Cover mit eindeutiger Mehrheit (issue.source).
 const isAutoFixIssue = i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code) || (ALBUM_COVER_CODES.has(i.code) && !!i.source);
-const rowIssues = r => {
+const rowIssuesAll = r => {
   const extra = [tempoIssueOf(r), keyIssueOf(r), coverDupIssueOf(r), albumCoverIssueOf(r)].filter(Boolean), own = Array.isArray(r.ti) ? r.ti : [];
   return extra.length ? [...own, ...extra] : own;
 };
-const hasAnyTagIssues = r => rowIssues(r).length > 0;
+// Einzeln ignorierte Auffaelligkeiten je Track (Pfad -> Set von Codes), live per syncMarks()
+// aus /api/ignored-issues. rowIssues() liefert nur noch die nicht ignorierten, rowIgnoredIssues()
+// die ignorierten, die der Track tatsaechlich noch hat (veraltete Eintraege bleiben unsichtbar).
+const IGN_ISSUES = new Map();
+const ISSUE_FILTER_IGNORED = "__ignored__";
+const issueIgnored = (r, code) => { const s = IGN_ISSUES.get(r.p); return !!s && s.has(code); };
+const rowIssues = r => {
+  const all = rowIssuesAll(r);
+  return IGN_ISSUES.has(r.p) ? all.filter(i => !issueIgnored(r, i.code)) : all;
+};
+const rowIgnoredIssues = r => IGN_ISSUES.has(r.p) ? rowIssuesAll(r).filter(i => issueIgnored(r, i.code)) : [];
+const issueFilterHit = (r, f) => f === ISSUE_FILTER_IGNORED
+  ? rowIgnoredIssues(r).length > 0 : rowIssues(r).some(i => i.code === f);
+const hasAnyTagIssues = r => rowIssues(r).length > 0 ||
+  (state.tagIssueFilter === ISSUE_FILTER_IGNORED && rowIgnoredIssues(r).length > 0);
+async function setIssuesIgnored(items, flag) {
+  const res = await fetch("/api/ignore-issues", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({items, flag})});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || res.statusText);
+  for (const {path, code} of items) {
+    let set = IGN_ISSUES.get(path);
+    if (flag) { if (!set) IGN_ISSUES.set(path, set = new Set()); set.add(code); }
+    else if (set) { set.delete(code); if (!set.size) IGN_ISSUES.delete(path); }
+  }
+  // Ein Filter, der nichts mehr trifft, wuerde eine leere Liste ohne Bubble hinterlassen.
+  const f = state.tagIssueFilter;
+  if (f && !DATA.some(r => !r.removed && issueFilterHit(r, f))) state.tagIssueFilter = null;
+}
 const hasAutoFixableTagIssues = r => rowIssues(r).some(isAutoFixIssue);
 // Feldnamen von /api/fix-tag-issues (wie tags.write_tags()) auf die kompakten
 // Zeilen-Kurzschluessel -- nur fuer den Drop-Zweig ohne DB-Zeile gebraucht,
@@ -5468,7 +5496,7 @@ function mergePairKey(a, b) { return [a, b].sort().join("\u0000"); }
 async function syncMarks() {
   refreshRekordboxPending();
   try {
-    const [ign, cor, ddm, rbx, mad, pls, mgd, djb] = await Promise.all([
+    const [ign, cor, ddm, rbx, mad, pls, mgd, djb, igi] = await Promise.all([
       fetch("/api/ignored", {cache: "no-store"}).then(r => r.json()),
       fetch("/api/corrected", {cache: "no-store"}).then(r => r.json()),
       fetch("/api/dup-dismissed", {cache: "no-store"}).then(r => r.json()),
@@ -5479,7 +5507,10 @@ async function syncMarks() {
       fetch("/api/playlists", {cache: "no-store"}).then(r => r.json()),
       fetch("/api/merge-dismissed", {cache: "no-store"}).then(r => r.json()),
       fetch("/api/dj-bpms", {cache: "no-store"}).then(r => r.json()),
+      fetch("/api/ignored-issues", {cache: "no-store"}).then(r => r.json()),
     ]);
+    IGN_ISSUES.clear();
+    for (const [p, codes] of Object.entries(igi.ignored_issues || {})) IGN_ISSUES.set(p, new Set(codes));
     for (const field of ["genre", "artist", "album"]) {
       MERGE_DISMISSED[field] = new Set(
         (mgd.dismissed && mgd.dismissed[field] || []).map(p => mergePairKey(p.a, p.b)));
@@ -5620,6 +5651,7 @@ async function initStorage() {
         applyAccentColor(s.values.accent_color);
         applyDjSurface(s.values.dj_waveform_surface);
         DJ_METRO_SOUND = s.values.dj_metronome_sound || "beep";
+        DJ_KEY_LAYOUT = s.values.keyboard_layout || "auto";
         setKeyNotation(s.values.key_notation);
         state.infiniteScroll = !!s.values.infinite_scroll;
         state.searchTolerance = typeof s.values.search_typo_tolerance === "number"
@@ -7010,7 +7042,8 @@ function refreshI18nCache() {
   for (const col of OPTIONAL_COLUMNS) col.label = t(columnKeyToI18n[col.key]);
   const viewIdToI18n = {ignored:"views.ignored", corrected:"views.corrected",
     gone:"views.missing", all:"views.all", duplicates:"views.duplicates",
-    tag_issues:"views.tag_issues", tags:"views.tags"};
+    tag_issues:"views.tag_issues", tags:"views.tags", recent:"views.recent",
+    "grp:genre":"views.grp_genre", "grp:album":"views.grp_album", "grp:artist":"views.grp_artist"};
   // "pl:"/"sm:"/Fremd-Ansichten ueberspringen: ihre Label kommen aus der
   // Playlist-Tabelle (Nutzername), nicht aus STRINGS.
   for (const v of VIEWS) if (viewIdToI18n[v.id]) v.label = t(viewIdToI18n[v.id]);
@@ -7912,7 +7945,8 @@ function buildDupGroupInfo() {
     DUP_GROUPS.set(gid, {members, best: members[0], diff, sameFile});
   }
 }
-const dupBaseRow = r => !!r.dg && !merkPlaylists().some(n => PLAYLIST_SETS[n.id] && PLAYLIST_SETS[n.id].has(r.p));
+// Duplikate sind unabhaengig von Merklisten/Playlisten: jede erkannte Kopie zaehlt.
+const dupBaseRow = r => !!r.dg;
 function dupGroupDismissed(gid) {
   const g = DUP_GROUPS.get(gid);
   return !!g && g.members.every(r => r.dd);
@@ -8214,7 +8248,7 @@ function filtered() {
     // Bubble-Filter der "Auffaelligkeiten"-Liste (state.tagIssueFilter) --
     // wie state.valueFilter nur wirksam, solange diese Liste aktiv ist.
     (!state.tagIssueFilter || view.id !== "tag_issues" ||
-     rowIssues(r).some(i => i.code === state.tagIssueFilter)) &&
+     issueFilterHit(r, state.tagIssueFilter)) &&
     // Bubble-Filter der Tag-Liste: ALLE gewaehlten Tags muessen passen.
     (!state.tagFilter.length || view.id !== "tags" ||
      (ids => state.tagFilter.every(id => ids.has(id)))(new Set(rowTags(r).map(tg => tg.id))))
@@ -8582,6 +8616,17 @@ const CELL_RENDERERS = {
   // beheben" springt direkt in den bestehenden Tags-Dialog.
   ti: r => {
     const issues = rowIssues(r);
+    const ignMode = state.view === "tag_issues" && state.tagIssueFilter === ISSUE_FILTER_IGNORED;
+    const canIgnore = r._id === undefined && !r.ext && !r.gone;
+    if (ignMode && canIgnore) {
+      const chips = rowIgnoredIssues(r).map(i => {
+        const label = t("tagissue." + i.code);
+        return `<span class="tichip ign" title="${esc(label)}"><span>${esc(label)}</span>` +
+          `<button type="button" class="tibtn" data-issueunign="${esc(r.p)}" data-issuecode="${esc(i.code)}" ` +
+          `title="${esc(t("tagissue.unignore"))}">${ICONS.eyeOff}</button></span>`;
+      }).join("");
+      return `<td><div class="ticell">${chips}</div></td>`;
+    }
     if (!issues.length) return `<td></td>`;
     // Je Auffaelligkeit ein kleines Badge (Funken = per Quick Fix behebbar, Stift = nur von Hand);
     // das betroffene Feld steht im Tooltip. In Bearbeiten sitzt die Aktion als Symbolknopf IM
@@ -8593,7 +8638,9 @@ const CELL_RENDERERS = {
       const btn = !edit ? ICONS[auto ? "sparkles" : "pencil"]
         : auto ? `<button type="button" class="tibtn" data-tagfixauto="${esc(r.p)}" title="${esc(t("fixtag.auto_fix_button"))}">${ICONS.sparkles}</button>`
                : `<button type="button" class="tibtn" data-tagfixmanual="${esc(r.p)}" title="${esc(t("fixtag.manual_edit_link"))}">${ICONS.pencil}</button>`;
-      return `<span class="tichip ${auto ? "auto" : "manual"}" title="${esc(tip)}">${edit ? "" : btn}<span>${esc(label)}</span>${edit ? btn : ""}</span>`;
+      const ign = canIgnore
+        ? `<button type="button" class="tibtn" data-issueign="${esc(r.p)}" data-issuecode="${esc(i.code)}" title="${esc(t("tagissue.ignore"))}">${ICONS.eye}</button>` : "";
+      return `<span class="tichip ${auto ? "auto" : "manual"}" title="${esc(tip)}">${edit ? "" : btn}<span>${esc(label)}</span>${edit ? btn : ""}${ign}</span>`;
     }).join("");
     return `<td><div class="ticell">${chips}</div></td>`;
   },
@@ -9327,6 +9374,20 @@ const ROW_CLICK_ACTIONS = {
   tagissues: b => {
     const row = DATA.find(x => x.p === b.dataset.tagissues);
     if (row) openTagIssuesPopup(row, false);
+  },
+  issueign: async b => {
+    try {
+      await setIssuesIgnored([{path: b.dataset.issueign, code: b.dataset.issuecode}], true);
+      updateCards(); render();
+      note(t("toast.issue_ignored"));
+    } catch (err) { note(t("error.failed", {error: err.message}), true); }
+  },
+  issueunign: async b => {
+    try {
+      await setIssuesIgnored([{path: b.dataset.issueunign, code: b.dataset.issuecode}], false);
+      updateCards(); render();
+      note(t("toast.issue_unignored"));
+    } catch (err) { note(t("error.failed", {error: err.message}), true); }
   },
   tagfixmanual: b => {
     const row = DATA.find(x => x.p === b.dataset.tagfixmanual);
@@ -13770,11 +13831,30 @@ async function pruneMissing() {
 // ── Einstellungen ───────────────────────────────────────────────────────
 let schema = null;
 
+// Die Texte des Einstellungs-Dialogs stehen in settings.py (Deutsch = Quellsprache).
+// Fuer andere Sprachen legt i18n/xx.js Schluessel sg.<gruppe>.<title|note>,
+// sf.<feld>.<label|help|unit|placeholder> und so.<feld>.<option>.label an; was dort
+// fehlt, bleibt beim deutschen Servertext (de.js enthaelt sie bewusst nicht).
+// Schluessel nie ueber t() lesen -- das gaebe den Schluessel selbst zurueck.
+function localizeSettings(sch) {
+  if (!sch || !Array.isArray(sch.groups)) return sch;
+  const tr = (obj, attr, key) => { if (typeof obj[attr] === "string" && STRINGS[key]) obj[attr] = STRINGS[key]; };
+  for (const g of sch.groups) {
+    tr(g, "title", `sg.${g.id}.title`);
+    tr(g, "note", `sg.${g.id}.note`);
+    for (const f of g.fields || []) {
+      for (const a of ["label", "help", "unit", "placeholder"]) tr(f, a, `sf.${f.key}.${a}`);
+      for (const o of f.options || []) if (o && typeof o === "object") tr(o, "label", `so.${f.key}.${o.value}.label`);
+    }
+  }
+  return sch;
+}
+
 async function openSettings() {
   const ov = document.getElementById("settingsOverlay");
   if (!apiMode) { note(t("settings.needs_server"), "soft"); return; }
   try {
-    schema = await (await fetch("/api/settings")).json();
+    schema = localizeSettings(await (await fetch("/api/settings")).json());
   } catch (err) {
     document.getElementById("settingsBody").innerHTML =
       `<div class="path">${esc(t("settings.load_failed", {error: err.message}))}</div>`;
@@ -13801,7 +13881,7 @@ async function checkForUpdate() {
   link.textContent = t("settings.check_update_running");
   let data;
   try {
-    data = await (await fetch("/api/check-update")).json();
+    data = await (await fetch("/api/check-update?lang=" + encodeURIComponent(LANG))).json();
   } catch (err) {
     data = {ok: false};
   }
@@ -13874,7 +13954,7 @@ async function checkUpdateOnStart() {
   if (!apiMode) return;
   let data;
   try {
-    data = await (await fetch("/api/check-update")).json();
+    data = await (await fetch("/api/check-update?lang=" + encodeURIComponent(LANG))).json();
   } catch (err) { return; }
   if (!data || !data.ok || !data.show_on_start) return;
   document.getElementById("updateCheckTitle").textContent = t("settings.update_available_title");
@@ -16150,6 +16230,7 @@ async function postSettings(url, body) {
     applyAccentColor(data.values.accent_color);
     applyDjSurface(data.values.dj_waveform_surface);
     DJ_METRO_SOUND = data.values.dj_metronome_sound || "beep";
+    DJ_KEY_LAYOUT = data.values.keyboard_layout || "auto";
     refreshWaveColors();
     if (DJ) djLoadDetail(DJ);
     setKeyNotation(data.values.key_notation);
@@ -20435,8 +20516,14 @@ function renderIssueBubbles() {
     }
   }
   const codes = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
-  if (!codes.length) { row.hidden = true; return; }
+  let ignRows = 0;
+  if (IGN_ISSUES.size) for (const r of live()) if (rowIgnoredIssues(r).length) ignRows++;
+  if (!codes.length && !ignRows) { row.hidden = true; return; }
   row.hidden = false;
+  const ignBubble = ignRows ? `<span class="genrebubble ignbubble${state.tagIssueFilter === ISSUE_FILTER_IGNORED ? " active" : ""}" data-code="${ISSUE_FILTER_IGNORED}">
+      <span>${esc(t("tagissue.ignored_bubble"))}</span>
+      <span class="genrecount">(${ignRows})</span>
+    </span>` : "";
   row.innerHTML = codes.map(code => {
     const active = state.tagIssueFilter === code;
     const auto = AUTO_FIXABLE_TAG_ISSUE_CODES.has(code) || ALBUM_COVER_CODES.has(code);
@@ -20447,11 +20534,18 @@ function renderIssueBubbles() {
               title="${esc(t(auto ? "fixtag.auto_fix_button" : "fixtag.manual_edit_link"))}">${
               auto ? ICONS.sparkles : ICONS.pencil}</button>
     </span>`;
-  }).join("");
+  }).join("") + ignBubble;
   row.querySelectorAll("[data-code]").forEach(el => el.onclick = ev => {
     if (ev.target.closest("[data-issueedit]")) return;
     const code = el.dataset.code;
     state.tagIssueFilter = state.tagIssueFilter === code ? null : code;
+    // Album-Cover-Auffaelligkeiten sind nur nach Album gruppiert gut lesbar.
+    if (state.tagIssueFilter && ALBUM_COVER_CODES.has(code) && !state.groupAlbums) {
+      state.groupAlbums = true;
+      const ga = document.getElementById("groupAlbums");
+      if (ga) ga.checked = true;
+      saveFilters();
+    }
     state.shown = PAGE;
     render();
   });

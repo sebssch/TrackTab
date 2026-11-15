@@ -1,6 +1,6 @@
 # TrackTab — Technische Funktionen
 
-> Kurzer Einstieg mit Screenshot, Voraussetzungen und Installation: [readme.md](readme.md). Reine Bedienungsanleitung ohne technische Details: [handbuch.md](handbuch.md). Installation/Build/Terminal-Betrieb: [installation.md](installation.md).
+> Kurzer Einstieg mit Screenshot, Voraussetzungen und Installation: [readme.de.md](readme.de.md). Reine Bedienungsanleitung ohne technische Details: [manual.de.md](manual.de.md). Installation/Build/Terminal-Betrieb: [installation.de.md](installation.de.md).
 
 > **⚠️ Das Ergebnis ist eine Prüfliste, kein Urteil.** Ein niedriger Cutoff kann auch von einem bandbegrenzten Master, einem Vinyl-Rip oder einer alten Aufnahme stammen. Hör dir auffällige Tracks an, bevor du etwas löschst. Die Analyse selbst liest nur — deine Audiodateien werden ausschließlich angefasst, wenn du es ausdrücklich anstößt: [Tags bearbeiten](#tags-bearbeiten), Bitrate korrigieren oder Papierkorb.
 
@@ -16,7 +16,7 @@ Das analysiert die Bibliothek, erzeugt den Report und öffnet ihn im Browser. De
 
 Der Report läuft dabei über einen kleinen lokalen Server (nur auf `127.0.0.1`, nichts davon ist im Netz erreichbar). Der ist nötig, damit ausgeblendete Tracks gespeichert werden können — eine reine HTML-Datei kann das nicht. Beenden mit `Strg+C` im Terminal oder mit dem Knopf **Beenden** rechts oben in der Oberfläche.
 
-Wer gar kein Terminal will, baut sich die App (siehe [Als App](#als-app)) und startet sie per Doppelklick. Details zu allen drei Betriebsarten: [installation.md](installation.md).
+Wer gar kein Terminal will, baut sich die App (siehe [Als App](#als-app)) und startet sie per Doppelklick. Details zu allen drei Betriebsarten: [installation.de.md](installation.de.md).
 
 ---
 
@@ -331,7 +331,7 @@ Titel, Künstler, Album, Albumkünstler, Komponist und Genre schlagen beim Klick
 
 ### Auffälligkeiten (Metadaten-Probleme)
 
-Eigene, vom Qualitäts-Verdikt (Korrekt/Verdächtig/Fake/Unklar) unabhängige Prüfung: `app/taganomaly.py` liest bei jeder Analyse zusätzlich die rohen Tag-Frames (ID3-Version, Mehrfach-Frames, Steuerzeichen, Encoding-Artefakte, Cover-Größe/-Gültigkeit, …) und speichert das Ergebnis als JSON-Liste in der neuen DB-Spalte `tag_issues` — pro Fund ein `{code, field, value, suggestion}`-Objekt, siehe [Modulreferenz](#apptaganomalypy). 27 mögliche Codes (die Titel-Bereinigung — `web_junk`, `video_words`, `underscore_spaces` automatisch, `trackno_in_title`, `artist_in_title`, `remix_notation`, `feat_notation`, `case_all`, `typo_quotes` nur melden — läuft über `_check_cleanup()`, je Regel schaltbar über `tagclean_*`/`tagwatch_*`, `detect()` liest sie per `config.load()`; Wortlisten (`tagclean_web_words`/`_web_tlds`/`_video_remove`, `tagwatch_remix_words`) und Ziel-Schreibweisen (`tagwatch_remix_style`, `tagwatch_feat_word`/`_bracket`, `tagwatch_case_style`, `tagwatch_quotes_style`, `tagclean_underscore_single`/`_double`) baut `taganomaly._ruleset()` zu Regexen (gecacht je Config-Stand); die Regeln laufen je Feld nacheinander auf dem schon bereinigten Wert, `suggestion` trägt deshalb bei der LETZTEN Meldung eines Feldes den vollständig bereinigten Wert (Vorschlag-Knopf im Tags-Dialog, `renderTagsSuggestions()`), `fix_safe()` wendet je Code `_strip_web()`/`_strip_video()`/`_fix_spaces()` an), unterteilt in **sicher automatisch behebbar** (z. B. Steuerzeichen entfernen, ID3-Version anheben, Genre-Code auflösen) und **nur manuell** (z. B. Mojibake, fehlende Felder, Cover) — die vollständige Tabelle mit Erklärung steht im [Handbuch](handbuch.md#auffälligkeiten-metadaten-probleme).
+Eigene, vom Qualitäts-Verdikt (Korrekt/Verdächtig/Fake/Unklar) unabhängige Prüfung: `app/taganomaly.py` liest bei jeder Analyse zusätzlich die rohen Tag-Frames (ID3-Version, Mehrfach-Frames, Steuerzeichen, Encoding-Artefakte, Cover-Größe/-Gültigkeit, …) und speichert das Ergebnis als JSON-Liste in der neuen DB-Spalte `tag_issues` — pro Fund ein `{code, field, value, suggestion}`-Objekt, siehe [Modulreferenz](#apptaganomalypy). 27 mögliche Codes (die Titel-Bereinigung — `web_junk`, `video_words`, `underscore_spaces` automatisch, `trackno_in_title`, `artist_in_title`, `remix_notation`, `feat_notation`, `case_all`, `typo_quotes` nur melden — läuft über `_check_cleanup()`, je Regel schaltbar über `tagclean_*`/`tagwatch_*`, `detect()` liest sie per `config.load()`; Wortlisten (`tagclean_web_words`/`_web_tlds`/`_video_remove`, `tagwatch_remix_words`) und Ziel-Schreibweisen (`tagwatch_remix_style`, `tagwatch_feat_word`/`_bracket`, `tagwatch_case_style`, `tagwatch_quotes_style`, `tagclean_underscore_single`/`_double`) baut `taganomaly._ruleset()` zu Regexen (gecacht je Config-Stand); die Regeln laufen je Feld nacheinander auf dem schon bereinigten Wert, `suggestion` trägt deshalb bei der LETZTEN Meldung eines Feldes den vollständig bereinigten Wert (Vorschlag-Knopf im Tags-Dialog, `renderTagsSuggestions()`), `fix_safe()` wendet je Code `_strip_web()`/`_strip_video()`/`_fix_spaces()` an), unterteilt in **sicher automatisch behebbar** (z. B. Steuerzeichen entfernen, ID3-Version anheben, Genre-Code auflösen) und **nur manuell** (z. B. Mojibake, fehlende Felder, Cover) — die vollständige Tabelle mit Erklärung steht im [Handbuch](manual.de.md#auffälligkeiten-metadaten-probleme).
 
 **Liste „Auffälligkeiten"** liegt im Ordner „Prüflisten" der Seitenleiste. Im Kopf der Liste erscheint dieselbe Bubble-Reihe wie bei Genre/Album/Künstler (`renderIssueBubbles()` in `app.js`, eigenständig neben `renderPlaylistHeaderValueBox()`), hier aber über **Codes** statt Feldwerten: ein Klick filtert (`state.tagIssueFilter`), der Knopf daneben ruft `editAllWithIssueCode(code)` — bei einem automatisch behebbaren Code ein Bulk-Quick-Fix über alle betroffenen Zeilen (3-Worker-Warteschlange wie bei der Bitrate-Korrektur), sonst öffnet er den bestehenden Sammel-Tags-Dialog (`openTagsPopupBulk()`) für genau diese Zeilen.
 
@@ -607,7 +607,7 @@ workers: 0                         # 0 = alle Kerne minus einer
 
 ## Web-Oberfläche und Server — Implementierungsdetails
 
-Vertiefung zu den Abschnitten oben, auf Code-Ebene: CSS-/JS-Mechanik, Datenbankfelder, Server-Endpunkte und dokumentierte Bugfixes/Workarounds. Wer nur die Bedienung nachschlagen will, findet die reine Anwendersicht in [handbuch.md](handbuch.md) bzw. weiter oben in diesem Dokument.
+Vertiefung zu den Abschnitten oben, auf Code-Ebene: CSS-/JS-Mechanik, Datenbankfelder, Server-Endpunkte und dokumentierte Bugfixes/Workarounds. Wer nur die Bedienung nachschlagen will, findet die reine Anwendersicht in [manual.de.md](manual.de.md) bzw. weiter oben in diesem Dokument.
 
 ### Listen und Filter — Interna
 
@@ -1660,7 +1660,7 @@ Erkennung von Metadaten-Auffälligkeiten (Tag-Qualität) — eigenständig neben
 
 | Funktion | Zweck |
 |---|---|
-| `AUTO_FIXABLE` / `MANUAL_ONLY` | Zwei Mengen von Codes — welche `fix_safe()` selbst schreibt und welche nur angezeigt werden (siehe Tabelle im [Handbuch](handbuch.md#auffälligkeiten-metadaten-probleme)) |
+| `AUTO_FIXABLE` / `MANUAL_ONLY` | Zwei Mengen von Codes — welche `fix_safe()` selbst schreibt und welche nur angezeigt werden (siehe Tabelle im [Handbuch](manual.de.md#auffälligkeiten-metadaten-probleme)) |
 | `detect(path, codec_family="")` | Alle Funde einer Datei als `[{code, field, value, suggestion}, …]`. Best effort wie `tags.read_extra()` — `[]` bei jedem Lesefehler statt Abbruch. Routing nach Endung wie `tags.py` (eigene, dortselbst NICHT wiederverwendete Konstanten, um nicht auf private Unterstrich-Namen eines fremden Moduls zuzugreifen), eigene `_detect_id3/_detect_mp4/_detect_flac`-Helfer mit rohem Container-Zugriff — ID3-Version, Mehrfach-Frames und Genre-Code brauchen die Rohdaten, nicht die bereits verstringten Werte aus `tags.read_extra()` |
 | `_check_string(field, value)` | Steuerzeichen/Leerraum/Mojibake/NFC für EIN Feld, containerformat-unabhängig |
 | `_is_id3v1_only(path)` | Kein ID3v2-Header UND letzte 128 Bytes beginnen mit `b"TAG"` (die öffentliche ID3v1-Signatur — mutagen bietet dafür keine eigene Klasse) |

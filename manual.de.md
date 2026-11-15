@@ -1,13 +1,15 @@
 # Handbuch
 
+*English version: [manual.md](manual.md)*
+
 Dieses Handbuch erklärt, wie du TrackTab benutzt — ohne technische Details. Es richtet sich an alle, die ihre Musikbibliothek prüfen, aufräumen und pflegen wollen.
 
 Andere Dokumente:
 
-- **[readme.md](readme.md)** — kurzer Einstieg mit Screenshots.
-- **[quickstart.md](quickstart.md)** — die ersten Schritte in fünf Punkten.
-- **[installation.md](installation.md)** — Einrichtung: fertige App, eigener Build oder Terminal.
-- **[Technische Funktionen](technische_funktionen.md)** — Detailwissen für Weiterentwicklung: Analyse-Algorithmen, Formeln, Systemarchitektur.
+- **[readme.de.md](readme.de.md)** — kurzer Einstieg mit Screenshots.
+- **[quickstart.de.md](quickstart.de.md)** — die ersten Schritte in fünf Punkten.
+- **[installation.de.md](installation.de.md)** — Einrichtung: fertige App, eigener Build oder Terminal.
+- **[Technische Funktionen](technical_functions.de.md)** — Detailwissen für Weiterentwicklung: Analyse-Algorithmen, Formeln, Systemarchitektur.
 - **[changelog.md](changelog.md)** — was sich von Version zu Version geändert hat.
 
 ---
@@ -43,7 +45,7 @@ Andere Dokumente:
 - [Anhören mit Wellenform](#anhören-mit-wellenform)
 - [Tags bearbeiten](#tags-bearbeiten)
 - [Auffälligkeiten (Metadaten-Probleme)](#auffälligkeiten-metadaten-probleme)
-- [Konverter (MP3, AIFF)](#konverter)
+- [Konverter (MP3, AIFF)](#konverter-mp3-aac-aiff)
 - [Einzelprüfung von neuen Dateien (nicht in der Mediathek)](#einzelprüfung-von-neuen-dateien-nicht-in-der-mediathek)
 - [Dateien automatisch umbenennen](#dateien-automatisch-umbenennen)
 - [Statistik](#statistik)
@@ -62,15 +64,15 @@ Es gibt drei Wege, TrackTab zu benutzen. Die fertige App (Installation über ein
 
 ### 1. Fertige App (Installation über eine .dmg-Datei)
 
-Der einfachste Weg, ganz ohne Terminal — .dmg öffnen, App in den Programme-Ordner ziehen, einmalig per Rechtsklick öffnen. Voraussetzung: Mac mit Apple-Silicon-Prozessor. Schritt-für-Schritt-Anleitung: [installation.md](installation.md#1-installation-via-dmg-datei-macos).
+Der einfachste Weg, ganz ohne Terminal — .dmg öffnen, App in den Programme-Ordner ziehen, einmalig per Rechtsklick öffnen. Voraussetzung: Mac mit Apple-Silicon-Prozessor. Schritt-für-Schritt-Anleitung: [installation.de.md](installation.de.md#1-installation-via-dmg-datei-macos).
 
 ### 2. Eigener App-Build
 
-Du baust dir aus dem Quellcode eine eigene, doppelklickbare App — danach brauchst du kein Terminal mehr, auch nicht zum Starten oder Beenden. Schritt-für-Schritt-Anleitung: [installation.md](installation.md#2-eigener-app-build-kompilierung-aus-dem-quellcode).
+Du baust dir aus dem Quellcode eine eigene, doppelklickbare App — danach brauchst du kein Terminal mehr, auch nicht zum Starten oder Beenden. Schritt-für-Schritt-Anleitung: [installation.de.md](installation.de.md#2-eigener-app-build-kompilierung-aus-dem-quellcode).
 
 ### 3. Nutzung über das Terminal
 
-Du startest TrackTab direkt per Befehl im Terminal. Das ist der schnellste Weg für den Einstieg und eignet sich auch, wenn du einzelne Schritte (nur scannen, nur den Report neu erzeugen, …) gezielt einzeln ausführen willst. Voraussetzungen und alle Befehle: [installation.md](installation.md#3-ausführung--betrieb-über-das-terminal).
+Du startest TrackTab direkt per Befehl im Terminal. Das ist der schnellste Weg für den Einstieg und eignet sich auch, wenn du einzelne Schritte (nur scannen, nur den Report neu erzeugen, …) gezielt einzeln ausführen willst. Voraussetzungen und alle Befehle: [installation.de.md](installation.de.md#3-ausführung--betrieb-über-das-terminal).
 
 ---
 
@@ -198,7 +200,7 @@ Zusätzlich misst TrackTab die **Lautheit** jeder Datei (nach dem in der Musikin
 
 Die Schwellwerte können in den Einstellungen individuell angepasst werden. Nach anpassung der Schwellwerte muss die Bibliothek erneut gescannt werden.
 
-Die genauen Schwellwerte, Formeln und die Kalibrierung dahinter stehen in den [Technischen Funktionen](technische_funktionen.md).
+Die genauen Schwellwerte, Formeln und die Kalibrierung dahinter stehen in den [Technischen Funktionen](technical_functions.de.md).
 
 ---
 
@@ -601,7 +603,7 @@ Die Wellenform erzeugt TrackTab hier immer selbst, auch für Tracks in Rekordbox
 
 Die Pfeiltasten ↑/↓ bewegen unabhängig davon eine Markierung zeilenweise durch die Tabelle — praktisch zum Durchblättern per Tastatur, ohne deine Checkbox-Auswahl für Sammelaktionen zu verändern. Läuft gerade ein Track, startet die Markierung bei dessen Zeile. Die Eingabetaste startet die Wiedergabe der markierten Zeile.
 
-Welche Formate sich dabei tatsächlich hörbar abspielen lassen, hängt vom verwendeten Browser ab (AIFF und ALAC z. B. nur in Safari) — die vollständige Tabelle steht in der [README](readme.md#unterstützte-dateiformate). Analyse, Tags und Umbenennen sind davon nicht betroffen.
+Welche Formate sich dabei tatsächlich hörbar abspielen lassen, hängt vom verwendeten Browser ab (AIFF und ALAC z. B. nur in Safari) — die vollständige Tabelle steht in der [Unterstützte Dateiformate](#unterstützte-dateiformate). Analyse, Tags und Umbenennen sind davon nicht betroffen.
 
 ## Tonart
 
@@ -1093,6 +1095,6 @@ Beim Beenden von TrackTab wird automatisch ein Backup deiner Analysedaten erstel
 - AAC-Dateien: Die Grenzen sind an Apples Encoder gemessen (Music.app/iTunes). Eine 128er-Quelle lässt sich dort nicht sicher von einer 160er unterscheiden, weil Apple den Tiefpass je nach Musik um gut 1 kHz verschiebt. Eine echte 256er-Datei von Apple hat oft gar keine harte Kante. Wurde eine laute Datei mit einem Werkzeug neu kodiert, das unterwegs auf 16 Bit wandelt (z. B. ffmpeg mit Apples Encoder, oft auch libfdk_aac), kann Übersteuerung die frühere Kante verdecken. Solche Fälle erkennt TrackTab meist nicht.
 - 224 kbps und 256 kbps lassen sich nicht voneinander unterscheiden.
 - Der Papierkorb lässt sich nicht aus TrackTab heraus leeren — das bleibt bewusst dem Finder überlassen.
-- Die Wiedergabe im Player hängt vom Browser ab: AIFF und ALAC spielen zuverlässig nur in Safari (siehe [README](readme.md#unterstützte-dateiformate)).
+- Die Wiedergabe im Player hängt vom Browser ab: AIFF und ALAC spielen zuverlässig nur in Safari (siehe [Unterstützte Dateiformate](#unterstützte-dateiformate)).
 - Tag-Änderungen aktualisieren Music.app nicht sofort — der Import zeigt dort weiter die alten Metadaten, bis Music.app sie selbst neu einliest.
 - Online-Metadatenvorschläge liefern selten ein BPM.

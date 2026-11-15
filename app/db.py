@@ -109,6 +109,15 @@ CREATE TABLE IF NOT EXISTS dup_dismissed (
     ts   REAL
 );
 
+-- Einzeln ignorierte Auffaelligkeiten je Track (Code = Auffaelligkeits-Kennung
+-- wie 'album_cover_mismatch'). Reine Nutzer-Entscheidung, mehrere Zeilen je Pfad.
+CREATE TABLE IF NOT EXISTS ignored_issues (
+    path TEXT,
+    code TEXT,
+    ts   REAL,
+    PRIMARY KEY (path, code)
+);
+
 -- Dauerhaft ausgeblendete Zusammenfuehrungs-Vorschlaege (Genre/Album/
 -- Interpret-Uebersicht, "aehnliche Werte zusammenfuehren?"). Nicht
 -- pfadbasiert wie dup_dismissed, sondern je Werte-Paar -- value_a/value_b
@@ -910,7 +919,7 @@ def delete_cached_cover(conn: sqlite3.Connection, path: str) -> None:
 # wandert, die zweite Haelfte (playlist_id) bleibt.
 _PATH_TABLES = ("files", "ignored", "corrected", "waveform",
                 "rekordbox", "rekordbox_pending", "rekordbox_stem_pending",
-                "music_added", "cover_cache", "playlist_items", "dup_dismissed", "genremood", "user_tags",
+                "music_added", "cover_cache", "playlist_items", "dup_dismissed", "ignored_issues", "genremood", "user_tags",
                 "phrases", "dj_track", "waveform_color", "grid_tempo", "rb_snapshot", "autocue_log",
                 "playlist_link_items")
 
@@ -1072,7 +1081,7 @@ def forget_file(conn: sqlite3.Connection, path: str) -> None:
     Stehen bleibt, was der Nutzer von Hand angelegt hat (Playlisten, eigene
     Tags, DJ-Bearbeitungen) -- wie bei prune_missing().
     """
-    for table in _PRUNE_TABLES + ("cover_cache", "ignored", "corrected"):
+    for table in _PRUNE_TABLES + ("cover_cache", "ignored", "corrected", "ignored_issues"):
         conn.execute(f"DELETE FROM {table} WHERE path = ?", (path,))
     conn.commit()
 
@@ -1454,6 +1463,26 @@ def set_dup_dismissed_bulk(conn: sqlite3.Connection, paths: list[str], flag: boo
                           [(p,) for p in paths])
     conn.commit()
     return len(paths)
+
+
+def ignored_issues_map(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """Pfad -> Liste der einzeln ignorierten Auffaelligkeits-Codes."""
+    out: dict[str, list[str]] = {}
+    for r in conn.execute("SELECT path, code FROM ignored_issues"):
+        out.setdefault(r["path"], []).append(r["code"])
+    return out
+
+
+def set_issues_ignored(conn: sqlite3.Connection, items: list[tuple[str, str]], flag: bool) -> int:
+    """Auffaelligkeiten (Pfad, Code) ignorieren bzw. wieder zulassen."""
+    if flag:
+        ts = time.time()
+        conn.executemany("INSERT OR REPLACE INTO ignored_issues (path, code, ts) VALUES (?, ?, ?)",
+                         [(p, c, ts) for p, c in items])
+    else:
+        conn.executemany("DELETE FROM ignored_issues WHERE path = ? AND code = ?", items)
+    conn.commit()
+    return len(items)
 
 
 def merge_dismissed_pairs(conn: sqlite3.Connection, field: str) -> set[tuple[str, str]]:

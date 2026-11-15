@@ -1,139 +1,141 @@
 # Installation
 
-Diese Anleitung beschreibt, wie du TrackTab einrichtest — in drei unabhängigen Varianten. Du brauchst nur eine davon; welche für dich passt, hängt davon ab, ob du überhaupt mit dem Terminal arbeiten willst. Ein allgemeiner Überblick über die Bedienung nach der Einrichtung steht im [Handbuch](handbuch.md).
+*Deutsche Fassung: [installation.de.md](installation.de.md)*
+
+This guide describes how to set up TrackTab — in three independent variants. You only need one of them; which one suits you depends on whether you want to work with the terminal at all. A general overview of how to use TrackTab after setup is in the [manual](manual.md).
 
 ---
 
-## 1. Installation via .dmg-Datei (macOS)
+## 1. Installation via .dmg file (macOS)
 
-Die einfachste Variante: eine fertig gepackte App, kein Terminal nötig. Voraussetzung ist ein Mac mit Apple-Silicon-Prozessor (M1 oder neuer) — auf einem Intel-Mac läuft diese Variante nicht, dort Abschnitt 2 oder 3 verwenden.
+The easiest variant: a ready-packaged app, no terminal needed. The requirement is a Mac with an Apple Silicon processor (M1 or newer) — this variant does not run on an Intel Mac; use section 2 or 3 there.
 
-1. Die `.dmg`-Datei doppelklicken — öffnet automatisch ein Fenster mit der App und einer Verknüpfung „Programme".
-2. `TrackTab.app` auf die Verknüpfung „Programme" ziehen.
-3. `TrackTab.app` im Programme-Ordner öffnen — dafür **einmalig** mit der rechten Maustaste (oder zwei Finger auf dem Trackpad) darauf klicken und *Öffnen* wählen, dann im Dialog nochmal *Öffnen* bestätigen. Zeigt macOS trotzdem eine Sicherheitswarnung, muss die App einmalig manuell unter **Systemeinstellungen → Datenschutz & Sicherheit** freigegeben werden (Button *Trotzdem öffnen* neben dem Hinweis zu TrackTab).
+1. Double-click the `.dmg` file — a window opens automatically with the app and a shortcut “Applications”.
+2. Drag `TrackTab.app` onto the “Applications” shortcut.
+3. Open `TrackTab.app` in the Applications folder — **once**, right-click it (or two fingers on the trackpad) and choose *Open*, then confirm *Open* again in the dialog. If macOS still shows a security warning, the app must be allowed manually once under **System Settings → Privacy & Security** (button *Open Anyway* next to the notice about TrackTab).
 
-ffmpeg/ffprobe sind in dieser Variante bereits enthalten — im Gegensatz zu Abschnitt 2 muss nichts zusätzlich installiert werden.
+ffmpeg/ffprobe are already included in this variant — unlike section 2, nothing additional has to be installed.
 
-Die BPM-/Tonart-Analyse ist in der App enthalten (libsonare), ebenso die Genre-/Stimmungs-Analyse samt Modellen (onnxruntime, Essentia-Modelle; benötigt macOS 14) während das Stem-Trennmodell (Demucs, ~170 MB) aus Lizenzgründen nicht enthalten ist: Es wird in den Einstellungen unter „Stems“ einmalig geladen, bis dahin sind die Stem-Funktionen ausgeblendet.
+The BPM/key analysis is included in the app (libsonare), as is the genre/mood analysis including models (onnxruntime, Essentia models; requires macOS 14), while the stem separation model (Demucs, ~170 MB) is not included for licensing reasons: it is loaded once in the settings under “Stems”; until then the stem functions are hidden.
 
 ---
 
-## 2. Eigener App-Build (Kompilierung aus dem Quellcode)
+## 2. Your own app build (compiling from source)
 
-Diese Variante erzeugt eine doppelklickbare App, mit der du TrackTab danach komplett ohne Terminal benutzen kannst.
+This variant creates a double-clickable app with which you can then use TrackTab entirely without the terminal.
 
-### Voraussetzungen für den Build
+### Build requirements
 
-- macOS 13 oder neuer
-- Python 3.12 oder neuer
-- `ffmpeg`/`ffprobe` im PATH (per Homebrew: `brew install ffmpeg`)
+- macOS 13 or newer
+- Python 3.12 or newer
+- `ffmpeg`/`ffprobe` in the PATH (via Homebrew: `brew install ffmpeg`)
 
-### Vorgehen
+### Procedure
 
-1. Repository herunterladen bzw. klonen.
-2. Im Terminal in den Projektordner wechseln und den Build-Befehl ausführen:
+1. Download or clone the repository.
+2. In the terminal, change to the project folder and run the build command:
 
    ```bash
    ./build_app.sh
    ```
 
-3. Das erzeugt `dist/TrackTab.app` — eigenständig, ohne dass Python, eine virtuelle Umgebung oder Homebrew auf dem Zielrechner installiert sein müssen. Zusätzlich legt der Build eine Verknüpfung `TrackTab` in `/Applications` an.
-4. Die App per Doppelklick starten. Sie sucht sich automatisch einen freien Port, startet ihren eigenen Server im Hintergrund und öffnet den Report im Standardbrowser.
+3. This creates `dist/TrackTab.app` — standalone, without Python, a virtual environment or Homebrew having to be installed on the target computer. In addition, the build creates a shortcut `TrackTab` in `/Applications`.
+4. Start the app by double-click. It automatically finds a free port, starts its own server in the background and opens the report in the default browser.
 
-Das Bundle ist nicht signiert. Auf einem fremden Mac hilft beim allerersten Start ein Rechtsklick auf die App → *Öffnen*, statt sie einfach zu doppelklicken.
+The bundle is not signed. On someone else’s Mac, a right-click on the app → *Open* helps at the very first start, instead of simply double-clicking it.
 
-Ein eigener Build nutzt einen eigenen Datenordner (`TrackTab-Build` statt `TrackTab` unter `~/Library/Application Support/`) und einen eigenen Port-Bereich — auch wenn er über die Verknüpfung in `/Applications` gestartet wird. Er läuft also unabhängig von und gleichzeitig zu einer per .dmg installierten Version (siehe oben), mit eigener, zunächst leerer Bibliothek.
+An own build uses a data folder of its own (`TrackTab-Build` instead of `TrackTab` under `~/Library/Application Support/`) and its own port range — even when started via the shortcut in `/Applications`. It therefore runs independently of and at the same time as a version installed via .dmg (see above), with its own, initially empty library.
 
-**Beenden:** über den Button **Beenden** in der Oberfläche, per `Cmd+Q` oder per Rechtsklick auf das Dock-Symbol → *Beenden*. Nur das Browser-Fenster zu schließen beendet die App **nicht** — sie läuft dann im Hintergrund weiter (erkennbar am Dock-Symbol) und ein Scan wird dadurch nicht unterbrochen.
+**Quitting:** via the **Quit** button in the interface, with `Cmd+Q` or by right-clicking the Dock icon → *Quit*. Merely closing the browser window does **not** quit the app — it keeps running in the background (recognisable by the Dock icon) and a scan is not interrupted by it.
 
-Nach einer neuen Version des Quellcodes einfach `./build_app.sh` erneut ausführen — die App erkennt eine geänderte Oberfläche automatisch und aktualisiert sich beim nächsten Start selbst.
+After a new version of the source code, simply run `./build_app.sh` again — the app recognises a changed interface automatically and updates itself at the next start.
 
 ---
 
-## 3. Ausführung & Betrieb über das Terminal
+## 3. Running & operating from the terminal
 
-### Voraussetzungen
+### Requirements
 
-- macOS 13 oder neuer
-- Python 3.12 oder neuer
-- `ffmpeg`/`ffprobe` im PATH
-- Optional: `libsonare` für die BPM-/Tonart-Analyse (kommt über `requirements.txt` automatisch mit; das PyPI-Wheel gibt es nur für Apple Silicon — auf einem Intel-Mac läuft TrackTab ohne diese Funktion)
-- Optional: `onnxruntime` und die Essentia-Modelle für Genre, Stimmung und Energie. `onnxruntime` kommt über `requirements.txt` mit (nur Apple Silicon, macOS 14+), die Modelle (~21 MB) lädt einmalig `./fetch_models.sh` nach `vendor/models/essentia/`; `./build_app.sh` erledigt das selbst. Ohne beides läuft TrackTab ohne diese Funktion.
-- Optional: das Demucs-Modell für die Stem-Trennung (Acapella/Instrumental, ~170 MB, nutzt dasselbe `onnxruntime`). Es wird in den Einstellungen unter „Stems“ geladen (Ablage in `models/demucs/` im Datenordner, nicht im Bundle); ein vorhandenes `vendor/models/demucs/` wird im Entwicklungsbetrieb weiter genutzt. Ohne das Modell sind die Stem-Funktionen ausgeblendet.
-- Auto Cue bringt kein Modell mit: Jede Installation trainiert ihr eigenes aus den eigenen Hand-Cues (in der App oder mit `./run.command autocue-train`, siehe „Auto Cue neu trainieren“) oder importiert eines als ZIP. Ein früher genutztes `vendor/models/autocue/` liest TrackTab nicht mehr; liegt es noch dort, gehört es weg, sonst packt `build_app.sh` es unnötig mit in die App.
-- Optional: das Phrasenmodell `vendor/models/phrases/phrases.onnx` für „Beatgrid & Phrasen“ (nutzt dasselbe `onnxruntime`). Es stammt aus GlideMix (GPL) und liegt nicht im Repository (`vendor/` ist ausgeschlossen); `./fetch_models.sh` holt es einmalig aus dem GlideMix-Quellarchiv (Download rund 70 MB, das Modell selbst 1,2 MB), `./build_app.sh` erledigt das selbst. Liegt die Datei dort, wird sie beim Bauen mit in die App gepackt. Ohne das Modell ist die Funktion ausgeblendet.
-- `osascript` (in macOS bereits enthalten; wird für Papierkorb, Finder-Integration, externe Programme und Dialoge genutzt)
+- macOS 13 or newer
+- Python 3.12 or newer
+- `ffmpeg`/`ffprobe` in the PATH
+- Optional: `libsonare` for the BPM/key analysis (comes along automatically via `requirements.txt`; the PyPI wheel only exists for Apple Silicon — on an Intel Mac TrackTab runs without this function)
+- Optional: `onnxruntime` and the Essentia models for genre, mood and energy. `onnxruntime` comes along via `requirements.txt` (Apple Silicon only, macOS 14+); the models (~21 MB) are loaded once by `./fetch_models.sh` into `vendor/models/essentia/`; `./build_app.sh` does this itself. Without both, TrackTab runs without this function.
+- Optional: the Demucs model for stem separation (acapella/instrumental, ~170 MB, uses the same `onnxruntime`). It is loaded in the settings under “Stems” (stored in `models/demucs/` in the data folder, not in the bundle); an existing `vendor/models/demucs/` continues to be used in development mode. Without the model the stem functions are hidden.
+- Auto Cue brings no model with it: every installation trains its own from its own hand-set cues (in the app or with `./run.command autocue-train`, see “Retraining Auto Cue”) or imports one as a ZIP. TrackTab no longer reads a formerly used `vendor/models/autocue/`; if it is still there, it should go, otherwise `build_app.sh` needlessly packs it into the app.
+- Optional: the phrase model `vendor/models/phrases/phrases.onnx` for “Beat grid & phrases” (uses the same `onnxruntime`). It comes from GlideMix (GPL) and is not in the repository (`vendor/` is excluded); `./fetch_models.sh` fetches it once from the GlideMix source archive (download about 70 MB, the model itself 1.2 MB), `./build_app.sh` does this itself. If the file is there, it is packed into the app when building. Without the model the function is hidden.
+- `osascript` (already included in macOS; used for Trash, Finder integration, external programs and dialogs)
 
-### Einrichtung
+### Setup
 
-1. Repository herunterladen bzw. klonen.
-2. Im Terminal in den Projektordner wechseln und starten:
+1. Download or clone the repository.
+2. In the terminal, change to the project folder and start:
 
    ```bash
    ./run.command
    ```
 
-   Beim ersten Start wird automatisch eine eigene, isolierte Python-Umgebung (`.venv`) angelegt und alle benötigten Python-Pakete werden installiert.
-3. Fehlt `ffmpeg`, bricht `run.command` mit einem Hinweis ab. Nachinstallieren per Homebrew:
+   On first start, an isolated Python environment of its own (`.venv`) is created automatically and all required Python packages are installed.
+3. If `ffmpeg` is missing, `run.command` aborts with a notice. Install it afterwards via Homebrew:
 
    ```bash
    brew install ffmpeg
    ```
 
-   Danach `./run.command` erneut starten.
-4. Ohne weitere Angaben läuft jetzt der komplette Durchlauf: die Bibliothek wird analysiert, der Report erzeugt und im Browser geöffnet.
+   Then start `./run.command` again.
+4. Without further arguments the complete run now happens: the library is analysed, the report is generated and opened in the browser.
 
-### Befehle
+### Commands
 
-Alle Befehle laufen über `./run.command <Befehl>`:
+All commands run via `./run.command <command>`:
 
-| Befehl | Zweck |
+| Command | Purpose |
 |---|---|
-| *(ohne Angabe)* | Kompletter Durchlauf: Analyse, Report, Browser |
-| `scan` | Bibliothek analysieren (inkrementell — nur Neues/Geändertes wird gemessen) |
-| `scan --limit 200` | Testlauf über nur 200 Dateien |
-| `scan --force` | Cache ignorieren, alle Dateien neu messen |
-| `scan --prune` | Einträge zu inzwischen gelöschten Dateien aus der Datenbank entfernen |
-| `scan --covers` | Nur Cover-Abgleich mit Music.app für alle bekannten Dateien ohne Cover, kein Neu-Scan der Audiodateien |
-| `scan "/Pfad/zum/Ordner"` | Nur einen bestimmten Ordner prüfen |
-| `check "/Pfad/Datei.mp3"` | Eine einzelne Datei im Detail direkt im Terminal prüfen |
-| `report` | Report-Dateien (HTML, CSV, M3U) aus dem aktuellen Datenbankstand neu erzeugen |
-| `serve` | Weboberfläche öffnen |
-| `serve --port 9000` | Weboberfläche auf einem anderen Port öffnen, falls 8756 belegt ist |
-| `serve --no-open` | Weboberfläche starten, ohne automatisch den Browser zu öffnen |
-| `reclassify` | Bewertungen anhand geänderter Einstellungen neu bilden, ohne die Dateien erneut zu messen |
-| `stats` | Zusammenfassung der Bewertungen anzeigen |
-| `calibrate` | Regressionsprüfung: erzeugt Testdateien aus der eigenen Bibliothek und prüft, ob die Erkennung sie korrekt wiedererkennt |
-| `backup create` | Backup der Analysedaten jetzt erstellen |
-| `backup list` | Vorhandene automatische Backups anzeigen |
-| `backup restore <Datei>` | Analysedaten aus einem Backup wiederherstellen (der bisherige Stand wird davor selbst gesichert) |
-| `autocue-train` | Auto Cue neu trainieren (siehe unten) |
-| `autocue-eval` | Auto-Cue-Modelle auf der Prüfliste bewerten, ohne zu trainieren |
+| *(none)* | Complete run: analysis, report, browser |
+| `scan` | Analyse the library (incremental — only new/changed files are measured) |
+| `scan --limit 200` | Test run over only 200 files |
+| `scan --force` | Ignore the cache, re-measure all files |
+| `scan --prune` | Remove database entries for files that have since been deleted |
+| `scan --covers` | Cover sync with Music.app only, for all known files without a cover, no re-scan of the audio files |
+| `scan "/path/to/folder"` | Check only a specific folder |
+| `check "/path/file.mp3"` | Check a single file in detail directly in the terminal |
+| `report` | Regenerate report files (HTML, CSV, M3U) from the current database state |
+| `serve` | Open the web interface |
+| `serve --port 9000` | Open the web interface on a different port if 8756 is taken |
+| `serve --no-open` | Start the web interface without automatically opening the browser |
+| `reclassify` | Re-derive verdicts from changed settings without measuring the files again |
+| `stats` | Show a summary of the verdicts |
+| `calibrate` | Regression check: creates test files from your own library and checks whether the detection recognises them correctly |
+| `backup create` | Create a backup of the analysis data now |
+| `backup list` | Show existing automatic backups |
+| `backup restore <file>` | Restore analysis data from a backup (the current state is backed up first) |
+| `autocue-train` | Retrain Auto Cue (see below) |
+| `autocue-eval` | Evaluate Auto Cue models on the review list without training |
 
-Beenden der Weboberfläche: `Strg+C` im Terminal, oder der Button **Beenden** rechts oben in der Oberfläche.
+Quitting the web interface: `Ctrl+C` in the terminal, or the **Quit** button at the top right of the interface.
 
-### Auto Cue neu trainieren
+### Retraining Auto Cue
 
-In der App geht das unter Einstellungen → Auto Cue → **Training** (siehe [Handbuch](handbuch.md#auto-cue)). Im Entwicklungsordner gibt es denselben Ablauf als Befehl, der mit den Daten jeder TrackTab-Instanz arbeiten kann, auch mit denen der installierten App. LightGBM steht in `requirements.txt` und braucht die OpenMP-Bibliothek aus Homebrew:
+In the app this is done under Settings → Auto Cue → **Training** (see [manual](manual.md#auto-cue)). In the development folder, the same procedure exists as a command that can work with the data of any TrackTab instance, including that of the installed app. LightGBM is in `requirements.txt` and needs the OpenMP library from Homebrew:
 
 ```bash
 brew install libomp
 ```
 
-Dann die Vorlage kopieren und anpassen (die eigene Datei wird nicht eingecheckt):
+Then copy the template and adapt it (your own file is not checked in):
 
 ```bash
 cp autocue-train.example.yaml autocue-train.yaml
 ```
 
-Darin stehen der Datenordner der TrackTab-Instanz, deren Tracks und Hand-Cues gelernt werden (`installed` für die installierte App, `dev` für den Entwicklungsordner oder ein Pfad), die Playlist **Training** (daraus wird gelernt, je mehr Tracks, desto besser) und die Playlist **Prüfliste** (daran wird gemessen, nie gelernt). Beides sind normale TrackTab-Playlisten dieser Instanz und dürfen keinen Track gemeinsam haben. Was gelernt wird, kommt wie in der App aus der Slot-Belegung der Instanz; `label_slots` setzt zum Ausprobieren eine feste Hot-Cue-Zuordnung, `name` den Namen des Modells. Drop 2 und Break 1 müssen als Rolle auf einem Hot Cue liegen. Das neue Modell kommt nach Rückfrage in die Modellliste dieser Instanz und wird dort ausgewählt (der frühere Eintrag `targets` mit dem Ziel `vendor` entfällt, ein mitgeliefertes Modell gibt es nicht mehr). Dann:
+It contains the data folder of the TrackTab instance whose tracks and hand-set cues are learned (`installed` for the installed app, `dev` for the development folder or a path), the playlist **Training** (learned from; the more tracks, the better) and the playlist **Review list** (measured against, never learned from). Both are normal TrackTab playlists of this instance and must not share any track. What is learned comes, as in the app, from the slot assignment of the instance; `label_slots` sets a fixed hot-cue assignment for experimenting, `name` the model’s name. Drop 2 and Break 1 must lie as a role on a hot cue. After a confirmation, the new model goes into this instance’s model list and is selected there (the former `targets` entry with the target `vendor` no longer applies, there is no bundled model any more). Then:
 
 ```bash
 ./run.command autocue-train
 ```
 
-Gelernt wird aus den von Hand gesetzten Hot Cues (nach der Slot-Belegung) und den Memory Cues (aus der DJ-Ansicht bzw. aus Rekordbox nach „Rekordbox abgleichen“ → Laden), auf TrackTabs Beatgrid und Phrasen. Fehlt ein eigenes Beatgrid, übernimmt der Lauf das aus Rekordbox in die Datenbank der Instanz. Cues im Ausklang am Trackende zählen nicht.
+Learning is from the hand-set hot cues (according to the slot assignment) and the memory cues (from the DJ view or from Rekordbox after “Sync Rekordbox” → Load), on TrackTab’s beat grid and phrases. If an own beat grid is missing, the run takes it over from Rekordbox into the instance’s database. Cues in the fade-out at the end of the track do not count.
 
-Der erste Lauf über rund 4.000 Tracks dauert etwa eine Stunde; Protokoll, Modell und ZIP jedes Laufs liegen im Entwicklungsordner unter `autocue-training/runs/<zeit>/`, Datensatz und Zwischenstände in `autocue-training/` im Datenordner der Instanz; beides ist von git ausgeschlossen. Danach rechnet der Export nur Geändertes neu. Am Ende stehen neues und aktives Modell auf der Prüfliste nebeneinander (beim ersten Modell der Instanz nur das neue); zusätzlich entsteht `autocue-modell-<zeit>.zip`, die sich in jeder TrackTab-App unter Einstellungen → Auto Cue → **Modell importieren …** einspielen lässt. Übernommen wird nach Rückfrage. `./run.command autocue-train --probe` prüft schon mit wenigen Tracks (ab 3), ob alles durchläuft, und installiert nie. `./run.command autocue-eval` bewertet nur, ohne zu trainieren. Weitere Schalter zeigt `./run.command autocue-train --help`.
+The first run over about 4,000 tracks takes about an hour; log, model and ZIP of each run are in the development folder under `autocue-training/runs/<time>/`, dataset and intermediate states in `autocue-training/` in the instance’s data folder; both are excluded from git. After that the export only recalculates what changed. At the end, the new and the active model are shown side by side on the review list (for the instance’s first model only the new one); in addition `autocue-modell-<time>.zip` is created, which can be imported in any TrackTab app under Settings → Auto Cue → **Import model …**. It is adopted after a confirmation. `./run.command autocue-train --probe` checks with just a few tracks (from 3) whether everything runs through, and never installs. `./run.command autocue-eval` only evaluates, without training. More switches are shown by `./run.command autocue-train --help`.
 
-Für die Bedeutung der Analyseergebnisse und eine Erklärung der Weboberfläche siehe das [Handbuch](handbuch.md).
+For the meaning of the analysis results and an explanation of the web interface, see the [manual](manual.md).

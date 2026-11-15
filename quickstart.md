@@ -1,47 +1,49 @@
-# Schnellstart
+# Quick start
 
-Die fünf Schritte vom Download bis zur ersten geprüften Bibliothek. Details zu jedem Schritt stehen im [Handbuch](handbuch.md) bzw. in [installation.md](installation.md).
+*Deutsche Fassung: [quickstart.de.md](quickstart.de.md)*
+
+The five steps from download to your first checked library. Details on each step are in the [manual](manual.md) and in [installation.md](installation.md).
 
 ---
 
-## 1. Installieren
+## 1. Install
 
-Wähle einen der drei Wege — die fertige App ist der einfachste Einstieg, ganz ohne Terminal:
+Choose one of the three ways — the ready-made app is the easiest start, entirely without the terminal:
 
-- **Fertige App (.dmg)** — [installation.md](installation.md#1-installation-via-dmg-datei-macos)
-- **Eigener App-Build** — [installation.md](installation.md#2-eigener-app-build-kompilierung-aus-dem-quellcode)
-- **Terminal** — [installation.md](installation.md#3-ausführung--betrieb-über-das-terminal)
+- **Ready-made app (.dmg)** — [installation.md](installation.md#1-installation-via-dmg-file-macos)
+- **Own app build** — [installation.md](installation.md#2-your-own-app-build-compiling-from-source)
+- **Terminal** — [installation.md](installation.md#3-running--operating-from-the-terminal)
 
-## 2. Starten & Einstellungen
+## 2. Start & settings
 
-Beim ersten Start ist die Bibliothek noch leer. Öffne unter dem Zahnrad-Symbol die [Einstellungen](handbuch.md#einstellungen) und lege mindestens fest:
+On first start the library is still empty. Under the gear icon, open the [settings](manual.md#settings) and set at least:
 
-- **Bibliothek** — deine Musikordner (Gruppe „Bibliothek").
-![Statistik-Dashboard](docs/quickstart/02-1-quick-start-bibliothek-ordner.png)
-
-
-- **Externe Programme** — falls du Music.app und/oder Rekordbox nutzt: hier auswählen, damit TrackTab beide abgleichen und Buttons dafür anzeigen kann. Nutzt du Music.app, aktiviere dort zusätzlich „Medienordner automatisch verwalten" und „Beim Hinzufügen zur Mediathek Dateien in den Medienordner kopieren" (Details im [Handbuch](handbuch.md#einstellungen)).
-![Statistik-Dashboard](docs/quickstart/02-2-quick-start-externe-programme.png)
-
-## 3. Verdikt, Lautheit etc. anpassen oder Standard belassen
-
-Die Analyse-Schwellwerte (Cutoff-/Klassengrenzen, LUFS-Referenzbereich) sind ab Werk sinnvoll kalibriert — für den Einstieg reicht es, sie unangetastet zu lassen. Wer will, passt sie in den Gruppen **Analyse** und **Lautheit** an; siehe [Ist die Bitrate korrekt?](handbuch.md#ist-die-bitrate-korrekt) und [Lautheit der Tracks](handbuch.md#lautheit-der-tracks). Änderungen hier wirken erst nach einem erneuten Scan.
-
-![Statistik-Dashboard](docs/quickstart/03-quick-start-analyse.png)
-
-## 4. Bibliothek scannen
-
-Der Button „Bibliothek scannen" analysiert alle noch nicht bekannten oder seither geänderten Dateien in den konfigurierten Musikordnern. Details zu den Scan-Optionen: [Bibliothek scannen](handbuch.md#bibliothek-scannen).
-
-![Statistik-Dashboard](docs/quickstart/04-quick-start-scan.png)
+- **Library** — your music folders (group “Library”).
+![Library folders](docs/quickstart/02-1-quick-start-bibliothek-ordner.png)
 
 
-## 5. Loslegen
+- **External programs** — if you use Music.app and/or Rekordbox: choose them here so that TrackTab can sync with both and show buttons for them. If you use Music.app, additionally enable there “Keep Music Media folder organized” and “Copy files to Music Media folder when adding to library” (details in the [manual](manual.md#settings)).
+![External programs](docs/quickstart/02-2-quick-start-externe-programme.png)
 
-Ergebnis ist eine Prüfliste, kein Urteil — nach dem Scan siehst du in den festen **Prüflisten** die Tracks je Verdikt (Korrekt/Verdächtig/Fake/Unklar). Von hier aus:
+## 3. Adjust verdict, loudness etc. or keep the defaults
 
-- Auffällige Tracks anhören und einordnen — siehe [Ist die Bitrate korrekt?](handbuch.md#ist-die-bitrate-korrekt) und [Anhören mit Wellenform](handbuch.md#anhören-mit-wellenform).
-- Falsche Treffer [ausblenden](handbuch.md#tracks-ausblenden) oder [manuell korrigieren](handbuch.md#die-buttonleiste).
-- Verlustbehaftete Tracks direkt [auf eine ehrliche Bitrate umkodieren](handbuch.md#bitrate-korrigieren).
+The analysis thresholds (cutoff/class limits, LUFS reference range) are sensibly calibrated out of the box — to get started it is enough to leave them untouched. If you like, adjust them in the groups **Analysis** and **Loudness**; see [Is the bitrate correct?](manual.md#is-the-bitrate-correct) and [Loudness of tracks](manual.md#loudness-of-tracks). Changes here only take effect after another scan.
 
-Für alles Weitere (Playlisten, Tags bearbeiten, Konverter, Statistik, …) ist das [Handbuch](handbuch.md) die vollständige Referenz.
+![Analysis settings](docs/quickstart/03-quick-start-analyse.png)
+
+## 4. Scan the library
+
+The “Scan library” button analyses all files in the configured music folders that are not yet known or have changed since. Details on the scan options: [Scanning the library](manual.md#scanning-the-library).
+
+![Scan](docs/quickstart/04-quick-start-scan.png)
+
+
+## 5. Get going
+
+The result is a review list, not a verdict — after the scan you see the tracks per verdict (OK/Suspicious/Fake/Unclear) in the fixed **Review lists**. From here:
+
+- Listen to conspicuous tracks and judge them — see [Is the bitrate correct?](manual.md#is-the-bitrate-correct) and [Listening with the waveform](manual.md#listening-with-the-waveform).
+- [Hide](manual.md#hiding-tracks) false hits or [correct them manually](manual.md#the-button-bar).
+- [Re-encode lossy tracks directly to an honest bitrate](manual.md#correcting-the-bitrate).
+
+For everything else (playlists, editing tags, converter, statistics, …) the [manual](manual.md) is the complete reference.
