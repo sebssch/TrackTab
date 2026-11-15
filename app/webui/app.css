@@ -294,7 +294,10 @@
   th.sel::after, td.sel::after { right:0; }
   th.links::before, td.links::before { left:0; }
   th.links, th.sel { z-index:3; }
-  td.links, td.sel { z-index:1; }
+  td.links { z-index:1; }
+  /* Checkbox ganz oben: auch ueber "Behalten" (td.dupcol, z-index 1), das
+     direkt daneben klebt und beim Scrollen sonst darueber rutschen kann. */
+  td.sel { z-index:2; }
   .iconbtn { background:none; border:none; cursor:pointer; padding:3px; margin:0;
              color:var(--accent); line-height:0; border-radius:6px;
              vertical-align:middle; display:inline-flex; align-items:center; }
@@ -357,7 +360,9 @@
      .appfoot ruecht nur noch knapp darunter. */
   .sub { color:var(--dim); font-size:12px; margin-top:26px; text-align:center; }
   .appfoot { color:var(--dim); font-size:12px; margin-top:4px; text-align:center; }
-  tr.ign td { opacity:.45; }
+  /* Ausgeblendet: Abschwaechung siehe "Ausgeblendete Zeilen" weiter unten
+     (keine opacity -- durchsichtige Zellen liessen beim waagrechten Scrollen
+     andere Zellen durchscheinen). */
   .iconbtn.ig { color:var(--dim); }
   .iconbtn.ig:hover { color:var(--fake); }
   tr.ign .iconbtn.ig { color:var(--accent); }
@@ -2423,12 +2428,25 @@ td.titlecell { font-weight:600; }
 .rbyes { display:inline-flex; vertical-align:middle; }
 .appicon.appicon-sm { width:15px; height:15px; }
 
-/* Ausgeblendet blendet die Zeile per opacity ab -- bei den fixierten Zellen
-   stattdessen nur deren Inhalt, damit sie deckend bleiben. Manuell
-   korrigiert und Merken bleiben bewusst voll deckend (siehe oben), brauchen
-   also keine dieser Ausnahme. */
-tr.ign td.sel, tr.ign td.links { opacity:1; }
-tr.ign td.sel > *, tr.ign td.links > * { opacity:.45; }
+/* Ausgeblendete Zeilen: abgeschwaechte Farbwerte statt opacity (Nutzervorgabe).
+   Mit opacity wurde die ganze Zelle samt Hintergrund durchsichtig -- beim
+   waagrechten Scrollen schienen dann andere Zellen durch (doppelte Icons,
+   heller Streifen). Jetzt bleibt jede Zelle deckend (--card wie sonst), und
+   eine Ebene in Kartenfarbe ueber dem Inhalt mischt alle Farben -- Text,
+   Badges, Cover, Icons -- zu 55 % zur Kartenfarbe hin (entspricht dem
+   frueheren .45). Sie spart die obere/untere 1px-Kante aus, damit der
+   Kartenrahmen kraeftig bleibt. Ausgenommen sind alle fixierten bzw.
+   bedienenden Zellen: Checkbox (sel), "Behalten" (dupcol, Duplikate),
+   "Oeffnen" (links) und die Fuellzelle, die in der DJ-Ansicht die
+   Zeilenknoepfe traegt -- dort bleibt alles voll sichtbar und bedienbar.
+   Wichtig: position:relative darf NIE eine fixierte Zelle treffen, sonst
+   verliert sie ihr sticky und scrollt (mit ihrem z-index) ueber die
+   Checkbox. Eine neue fixierte Spalte gehoert deshalb hier ausgenommen.
+   Manuell korrigiert und Merken bleiben bewusst voll deckend (siehe oben). */
+table.trk > tbody > tr.ign > td:not(.sel):not(.links):not(.filler):not(.dupcol) { position:relative; }
+table.trk > tbody > tr.ign > td:not(.sel):not(.links):not(.filler):not(.dupcol)::after {
+  content:""; position:absolute; inset:1px 0; pointer-events:none;
+  background:color-mix(in srgb, var(--card) 55%, transparent); }
 
 /* ── Ansicht "Player" (Issue #14) ──────────────────────────────────────
    Rein visuelle Haelfte des Layout-Umschalters -- die dazugehoerige Logik
