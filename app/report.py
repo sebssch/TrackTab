@@ -16,6 +16,7 @@ from pathlib import Path
 from . import __version__
 from . import classify as classify_mod
 from . import config as cfgmod
+from . import coverhash as coverhash_mod
 from . import genremood as genremood_mod
 from . import taganomaly as taganomaly_mod
 from . import tags as tags_mod
@@ -70,6 +71,11 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
     # Genre-Vorschlaege unter dieser Schwelle (Prozent) bleiben weg -- bei 400
     # Stilen haette sonst fast jede Zeile einen langen Schwanz an 1-%-Treffern.
     min_p = max(0.0, float(cfg.get("genremood_min_percent", 5) or 0)) / 100.0
+    # Cover-Kennung: gleiche Bilder mit kleiner Abweichung teilen eine Kennung
+    # (coverhash.canonical()). Erst alle anmelden, dann zuordnen -- sonst
+    # haengt die Gruppierung von der Zeilenreihenfolge ab.
+    rows = list(rows)
+    coverhash_mod.register_all(r["cover_hash"] for r in rows)
     out = []
     for idx, r in enumerate(rows):
         flagged = r["verdict"] != classify_mod.VERDICT_OK
@@ -107,7 +113,7 @@ def rows_to_payload(rows, cfg: dict, ignored: set[str] | None = None,
             "tn": int(r["track_no"] or 0),
             "tt": int(r["track_total"] or 0),
             "cv": int(r["has_cover"] or 0),
-            "ch": (r["cover_hash"] or "")[:12],
+            "ch": coverhash_mod.canonical(r["cover_hash"]),
             "cl": int(r["compilation"] or 0),
             "v": r["verdict"] or classify_mod.VERDICT_UNKNOWN,
             "fam": r["codec_family"] or "lossy_mp3",
@@ -326,7 +332,7 @@ def build_all(conn, cfg: dict, exports: bool = False) -> dict:
 
 
 # Aus diesen Dateien backt _template() den Report zusammen.
-_UI_FILES = ("index.html", "app.css", "app.js", "generator.js", "dj.js", "i18n/de.js", "i18n/en.js",
+_UI_FILES = ("index.html", "app.css", "app.js", "generator.js", "dj.js", "replace.js", "i18n/de.js", "i18n/en.js",
              "lucide-icons.js")
 
 
@@ -386,8 +392,10 @@ def _template() -> str:
     gen_js = (ui / "generator.js").read_text(encoding="utf-8")
     # Gleiches Prinzip fuer den Editor der DJ-Ansicht.
     dj_js = (ui / "dj.js").read_text(encoding="utf-8")
+    # Und fuer Suchen & Ersetzen samt Ersetzungsregeln.
+    replace_js = (ui / "replace.js").read_text(encoding="utf-8")
     html = html.replace("<!--__JS__-->", i18n_de + "\n" + i18n_en + "\n" + lucide_js + "\n"
-                        + app_js + "\n" + gen_js + "\n" + dj_js)
+                        + app_js + "\n" + gen_js + "\n" + dj_js + "\n" + replace_js)
     html = html.replace("<!--__VERSION__-->", f"v{__version__}")
     # Versionsmarke direkt hinter <head> -- is_stale() liest nur den Anfang
     # der Datei und erkennt daran einen Report aus einer anderen Version.

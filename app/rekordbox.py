@@ -1838,24 +1838,38 @@ def _rb_tag_values() -> dict:
         genres = {g.ID: g.Name for g in db.get_genre() if _live(g)}
         keys = {k.ID: k.ScaleName for k in db.get_key() if _live(k)}
         out: dict = {}
+        stamps: dict = {}
         for c in db.get_content():
             path = c.FolderPath or ""
             if not path or path in out or not _live(c):
                 continue
+            # Gleiches Format wie track_stamp(), im selben Durchlauf mitgenommen.
+            stamps[path] = f"{c.AnalysisUpdated}|{c.CueUpdated}|{c.updated_at}"
             out[path] = {"title": _tag_norm(c.Title), "artist": _tag_norm(artists.get(c.ArtistID)),
                          "album": _tag_norm(albums.get(c.AlbumID)), "genre": _tag_norm(genres.get(c.GenreID)),
                          "composer": _tag_norm(artists.get(c.ComposerID)), "comment": _tag_norm(c.Commnt),
                          "year": str(c.ReleaseYear) if c.ReleaseYear else "",
                          "key": tags_mod.normalize_key(keys.get(c.KeyID) or ""),
                          "bpm": (c.BPM or 0) / 100}
-        return out
+        return out, stamps
 
     try:
-        value = _query_cached(_import_pyrekordbox(), _query)
+        value, stamps = _query_cached(_import_pyrekordbox(), _query)
     except Exception:                                   # noqa: BLE001
         return {}
-    _rb_tags_cache.update(stamp=stamp, value=value)
+    _rb_tags_cache.update(stamp=stamp, value=value, stamps=stamps)
     return value
+
+
+def track_stamps() -> dict:
+    """{pfad: Aenderungsstand} aller lebenden Tracks, wie track_stamp() je Track, aber
+    in einem Durchlauf (derselbe wie _rb_tag_values()). Leer, wenn Rekordbox nicht
+    lesbar ist -- dann nie einen aelteren Stand ausgeben."""
+    stamp = master_db_mtime()
+    _rb_tag_values()
+    if stamp is None or _rb_tags_cache.get("stamp") != stamp:
+        return {}
+    return _rb_tags_cache.get("stamps") or {}
 
 
 def tag_diff_map(rows: dict) -> dict:

@@ -516,6 +516,328 @@ class _ReportBuilder:
 
 REPORT = _ReportBuilder()
 
+
+class _MusicTagSync:
+    """
+    Tag-Aenderungen (/api/tags) an Music.app weitergeben -- gebuendelt.
+
+    Music.app liest Tags nicht von selbst aus der Datei nach, sie fuehrt ihre
+    eigene Bibliothek. Ohne Abgleich zeigt sie nach einem Speichern in TrackTab
+    weiter den alten Stand, und wer die Werte dann in Music.app nachpflegt,
+    loest dort ein Umsortieren der Dateien aus.
+
+    Je Track ein osascript waere bei einem Sammel-Speichern (ein /api/tags je
+    Datei) zu langsam. /api/tags merkt deshalb nur vor (add(), Mikrosekunden),
+    ausgefuehrt wird ein Lauf fuer alle vorgemerkten Tracks:
+      - sofort, wenn der Client nach seinem Speichervorgang /api/music-tags-flush
+        ruft (Tags-Dialog, Schnellkorrekturen) -- er bekommt das Ergebnis und
+        nachgezogene Pfade zurueck,
+      - sonst nach IDLE_S ohne neue Vormerkung (Auffangnetz, z.B. Tab zu).
+    Ein Lauf haelt keinen Server-Lock waehrend osascript (Lock-Regel).
+    Ergebnisse bleiben je Pfad kurz liegen (done), damit ein Flush auch den
+    Ausgang eines Laufs erfaehrt, den das Auffangnetz schon gestartet hatte.
+    """
+    IDLE_S = 2.0
+    _DONE_MAX = 2000
+    # Scheitert ein Lauf (Music.app antwortet nicht, AppleScript-Fehler), bleibt die
+    # Aenderung vorgemerkt und wird nach RETRY_S erneut versucht, hoechstens TRIES-mal.
+    # Vorher war sie nach dem ersten Fehler weg, Music.app behielt den alten Stand.
+    TRIES = 3
+    RETRY_S = 15.0
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._run_lock = threading.Lock()          # genau ein Lauf gleichzeitig
+        self._pending: dict[str, dict] = {}
+        self._done: dict[str, dict] = {}
+        self._last_add = 0.0
+        self._watcher: threading.Thread | None = None
+
+    def add(self, path: str, old_title: str, new_title: str, fields: dict) -> bool:
+        values = media.music_tag_values(fields)
+        if not values:
+            return False
+        with self._lock:
+            item = self._pending.get(path)
+            if item is None:
+                self._pending[path] = {"path": path, "titles": [old_title, new_title],
+                                       "fields": dict(values)}
+            else:
+                # Erster alter Titel bleibt: so heisst der Track in Music.app noch.
+                item["titles"][1] = new_title
+                item["fields"].update(values)
+            self._done.pop(path, None)
+            self._last_add = time.monotonic()
+            self._ensure_watcher()
+        return True
+
+    def forget(self, path: str) -> list[str]:
+        """Vormerkung eines Tracks verwerfen, der gleich geloescht wird, und die
+        Titel liefern, unter denen Music.app ihn noch kennen kann (der alte Titel
+        steht dort, solange der Abgleich nicht gelaufen ist)."""
+        with self._lock:
+            item = self._pending.pop(path, None)
+            self._done.pop(path, None)
+        return list(item["titles"]) if item else []
+
+    def _ensure_watcher(self) -> None:
+        """Nur unter self._lock aufrufen."""
+        if self._watcher is None:
+            self._watcher = threading.Thread(target=self._watch, daemon=True,
+                                             name="music-tags")
+            self._watcher.start()
+
+    def _requeue(self, items: list[dict], results: dict[str, dict]) -> None:
+        """Fehlgeschlagene Eintraege wieder vormerken. Nur unter self._lock aufrufen.
+        Eine inzwischen neu vorgemerkte Aenderung desselben Tracks gilt vor der alten."""
+        again = False
+        for item in items:
+            if (results.get(item["path"]) or {}).get("status") != "error":
+                continue
+            tries = item.get("tries", 0) + 1
+            if tries >= self.TRIES:
+                errlog.log("music-tags", RuntimeError(
+                    f"aufgegeben nach {tries} Versuchen: {item['path']}: "
+                    f"{results[item['path']].get('error')}"))
+                continue
+            newer = self._pending.get(item["path"])
+            if newer is None:
+                item["tries"] = tries
+                self._pending[item["path"]] = item
+            else:
+                newer["titles"][0] = item["titles"][0]
+                newer["fields"] = {**item["fields"], **newer["fields"]}
+                newer["tries"] = tries
+            again = True
+        if again:
+            self._last_add = time.monotonic() + self.RETRY_S - self.IDLE_S
+            self._ensure_watcher()
+
+    def _watch(self) -> None:
+        while True:
+            time.sleep(0.5)
+            with self._lock:
+                if not self._pending:
+                    self._watcher = None
+                    return
+                if time.monotonic() - self._last_add < self.IDLE_S:
+                    continue
+            try:
+                self.run(None)
+            except Exception as exc:                     # noqa: BLE001
+                errlog.log("music-tags", exc)
+
+    def run(self, paths: list[str] | None) -> dict[str, dict]:
+        """Vorgemerkte Tracks abarbeiten (paths=None: alle) und das Ergebnis je
+        angefragtem Pfad liefern, auch aus einem gerade beendeten Lauf."""
+        with self._run_lock:
+            with self._lock:
+                # Immer alles Vorgemerkte mitnehmen, nicht nur die angefragten
+                # Pfade -- ein osascript-Lauf fuer alles ist billiger.
+                items = list(self._pending.values())
+                self._pending.clear()
+            if items:
+                results = _music_tags_apply(items)
+                with self._lock:
+                    self._requeue(items, results)
+                    self._done.update(results)
+                    while len(self._done) > self._DONE_MAX:
+                        self._done.pop(next(iter(self._done)))
+            with self._lock:
+                wanted = paths if paths is not None else [it["path"] for it in items]
+                return {p: self._done[p] for p in wanted if p in self._done}
+
+
+MUSIC_TAGS = _MusicTagSync()
+
+
+class _MusicIndex:
+    """Kurzlebiger Zwischenspeicher von media.music_file_tracks() (~22 s je
+    Lesen). Gebraucht vom Papierkorb-Rueckfall (findet der Titel nichts, wird
+    ueber den Pfad gesucht -- bei einer Sammel-Loeschung sonst 22 s je Datei)
+    und von "Music.app abgleichen" (Pruefen, dann Aufraeumen). Eintraege, die
+    TrackTab selbst entfernt, nimmt drop() sofort heraus."""
+    TTL_S = 600.0
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._read_lock = threading.Lock()         # nur ein Lesen gleichzeitig
+        self._tracks: list[dict] | None = None
+        self._ts = 0.0
+
+    def get(self, max_age: float | None = None) -> list[dict]:
+        max_age = self.TTL_S if max_age is None else max_age
+        with self._read_lock:
+            with self._lock:
+                if self._tracks is not None and time.monotonic() - self._ts <= max_age:
+                    return list(self._tracks)
+            tracks = media.music_file_tracks()
+            for t in tracks:
+                t["path"] = unicodedata.normalize("NFC", t["path"])
+            with self._lock:
+                self._tracks, self._ts = tracks, time.monotonic()
+            return list(tracks)
+
+    def drop(self, pids) -> None:
+        gone = set(pids)
+        with self._lock:
+            if self._tracks is not None and gone:
+                self._tracks = [t for t in self._tracks if t["pid"] not in gone]
+
+    def invalidate(self) -> None:
+        with self._lock:
+            self._tracks = None
+
+
+MUSIC_INDEX = _MusicIndex()
+
+
+def _music_remove_path(path: str, titles: list[str], in_music: bool = True) -> tuple[int, bool]:
+    """Bibliothekseintrag(e) einer Datei aus Music.app entfernen -- erst ueber die
+    Titel (schnell), dann, wenn das nichts findet, ueber den Pfad im Index.
+    Music.app kennt einen Track unter dem Titel, den es zuletzt gesehen hat; hat
+    TrackTab ihn danach geaendert, ohne dass Music.app das erfuhr, lief die
+    Titelsuche ins Leere und es blieb eine Karteileiche (an echter Bibliothek
+    14 Stueck). Den Pfad-Rueckfall nur, wenn TrackTab den Track in Music.app
+    weiss ('in_music', Tabelle music_added) -- sonst kostete jede Datei ausserhalb
+    der Music-Bibliothek ein Lesen des Index. Liefert (Anzahl entfernt, Cloud-Hinweis)."""
+    count, cloud = media.remove_from_music_library(path, titles)
+    if count > 0 or not in_music:
+        return count, cloud
+    key = db_mod.path_norm_key(path)
+    pids = [t["pid"] for t in MUSIC_INDEX.get() if t["path"] and db_mod.path_norm_key(t["path"]) == key]
+    removed = media.music_delete_tracks(pids)
+    MUSIC_INDEX.drop(removed)
+    return len(removed), False
+
+
+def _music_tags_apply(items: list[dict]) -> dict[str, dict]:
+    """Ein osascript-Lauf fuer alle Eintraege, danach DB nachziehen: hat
+    Music.app die Datei umsortiert, wird die Zeile umgeschrieben (db.move_path),
+    sonst Groesse/mtime/Tags nachgelesen (Music.app schreibt die gesetzten Werte
+    in die Datei zurueck). Antwort je Pfad: {"status": ok|missing|error,
+    "new": neuer Pfad (nur bei Umsortieren), "error"}."""
+    cfg = cfgmod.load()
+    try:
+        locations = media.music_update_tracks(items)
+    except Exception as exc:                             # noqa: BLE001
+        return {it["path"]: {"status": "error", "error": str(exc)} for it in items}
+    results: dict[str, dict] = {}
+    moves: list[tuple[str, str]] = []
+    touched: list[str] = []
+    for item, loc in zip(items, locations):
+        path = item["path"]
+        if loc is None:
+            results[path] = {"status": "missing"}
+            continue
+        audit_log.log("music-tags", path, ", ".join(sorted(item["fields"])))
+        loc = unicodedata.normalize("NFC", loc)
+        if db_mod.path_norm_key(loc) != db_mod.path_norm_key(path) and os.path.isfile(loc):
+            moves.append((path, loc))
+            results[path] = {"status": "ok", "new": loc}
+        else:
+            touched.append(path)
+            results[path] = {"status": "ok"}
+    if not moves and not touched:
+        return results
+    moved: list[tuple[str, str]] = []
+    with _Handler.lock:
+        conn = db_mod.connect(cfg)
+        try:
+            rekordbox_before = db_mod.rekordbox_paths(conn)
+            for path in touched:
+                db_mod.refresh_external(conn, path)
+            for old, new in moves:
+                if db_mod.move_path(conn, old, new):
+                    audit_log.log("verschoben", new, f"vorher {old} (Music.app)")
+                    moved.append((old, new))
+                else:
+                    results[old] = {"status": "ok"}
+        finally:
+            conn.close()
+        _Handler._invalidate_path(*touched, *(p for m in moves for p in m))
+        REPORT.mark_dirty(cfg)
+    rb_moves = [{"path": new, "prior_path": old} for old, new in moved if old in rekordbox_before]
+    if rb_moves:
+        rb = _rekordbox_relocate(cfg, rb_moves)
+        for old, new in moved:
+            if old in rekordbox_before:
+                results[old]["rekordbox"] = rb
+    return results
+
+
+def _rekordbox_relocate(cfg: dict, moves: list[dict]) -> dict:
+    """Rekordbox' eigene Zeile (FolderPath + Tags) verschobener Tracks
+    nachziehen -- gemeinsam fuer /api/relink, den Music-Tag-Abgleich und den
+    Formatwechsel. Laeuft Rekordbox, wird in der Datenbank vorgemerkt
+    (rekordbox_pending mit prior_path, wie beim Umbenennen) und "Rekordbox
+    abgleichen" holt es nach: {"running": True, "queued": n, "pending": gesamt}.
+    Frueher lag die offene Korrektur nur im Browser und ging mit dem Neuladen
+    verloren. Nach db.move_path() aufrufen, nie unter _Handler.lock."""
+    conn = db_mod.connect(cfg)
+    try:
+        metadata = {m["path"]: db_mod.row_for_path(conn, m["path"]) for m in moves}
+        metadata = {k: v for k, v in metadata.items() if v is not None}
+    finally:
+        conn.close()
+    try:
+        with _Handler._rekordbox_lock:
+            result = rekordbox_mod.update_relocated_tracks(moves, metadata)
+        for p in result["updated"]:
+            audit_log.log("rekordbox-korrigiert", p, "nach Verschiebung")
+        return {"running": False, **result}
+    except rekordbox_mod.RekordboxRunning:
+        with _Handler.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                for m in moves:
+                    if m["prior_path"] != m["path"]:
+                        db_mod.rekordbox_pending_add_rename(conn, m["path"], m["prior_path"])
+                pending = (db_mod.rekordbox_pending_count(conn)
+                           + db_mod.rekordbox_stem_pending_count(conn))
+            finally:
+                conn.close()
+        # "moves" bleibt leer: aeltere Aufrufer lasen daraus die Wiederholung.
+        return {"running": True, "queued": len(moves), "pending": pending, "moves": []}
+
+def _rekordbox_forget(cfg: dict, paths: list[str], session: str = "") -> dict | None:
+    """In den Papierkorb gelegte Tracks auch aus Rekordbox' Sammlung nehmen (wie
+    dort "Von der Sammlung entfernen", rekordbox.remove_from_collection(): weich
+    geloescht, Analysedateien nach backup/). Nur bei eingerichtetem Rekordbox.
+    Laeuft Rekordbox, wird vorgemerkt und "Rekordbox abgleichen" holt es nach.
+    Nie unter _Handler.lock aufrufen. None = Rekordbox nicht eingerichtet bzw.
+    Track dort unbekannt; sonst {"removed": n} | {"queued": n, "pending": gesamt}
+    | {"error": text}."""
+    if not paths or not cfg.get("external_rekordbox"):
+        return None
+    try:
+        ids = rekordbox_mod.resolve_content_ids(paths)      # nur lesen, geht immer
+    except Exception as exc:                             # noqa: BLE001
+        return {"error": str(exc)}
+    if not ids:
+        return None
+    try:
+        with rekordbox_mod.backup_session(session), _Handler._rekordbox_lock:
+            result = rekordbox_mod.remove_from_collection(list(ids.values()))
+    except rekordbox_mod.RekordboxRunning:
+        with _Handler.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                db_mod.rekordbox_remove_pending_add(conn, list(ids))
+                pending = (db_mod.rekordbox_pending_count(conn)
+                           + db_mod.rekordbox_stem_pending_count(conn))
+            finally:
+                conn.close()
+        return {"queued": len(ids), "pending": pending}
+    except Exception as exc:                             # noqa: BLE001
+        errlog.log("rekordbox-forget", exc)
+        return {"error": str(exc)}
+    for p in ids:
+        wavedetail_mod.forget(p)
+        audit_log.log("rekordbox", p, "aus Sammlung entfernt (Papierkorb)")
+    return {"removed": len(result["removed"])}
+
+
 # Gleichzeitige Anfragen fuer dieselbe Huellkurve teilen sich EINEN
 # ffmpeg-Lauf. Vorher startete jede gleichzeitig aufgeklappte Zeile ihren
 # eigenen Unterprozess, der die Datei komplett nach f32 dekodiert (bei 8 kHz
@@ -670,27 +992,80 @@ def _dj_rb_hashes(state: dict) -> dict:
 
 # Pfad -> (Stand von master.db, Pruefsumme der Bearbeitung, Ergebnis). Rekordbox zu
 # lesen kostet rund 50 ms je Track und /api/dj-bpms laeuft bei jedem syncMarks().
+#
+# Schluessel ist der Aenderungsstand DES TRACKS in Rekordbox (track_stamps()), nicht
+# der der ganzen master.db: sonst liest jede Aenderung dort (Rekordbox schreibt im
+# Betrieb laufend ins WAL) alle bearbeiteten Tracks neu -- an echtem Material 109
+# Tracks, rund 8 s je Seitenaufruf. Der Cache liegt ausserdem als Datei vor
+# (_DJ_RB_COMPARE_FILE), damit auch der erste Aufruf nach einem App-Start nichts
+# liest, was sich nicht geaendert hat. Nur ein Zwischenspeicher: fehlt die Datei
+# oder passt ein Eintrag nicht, wird Rekordbox gelesen wie bisher.
 _dj_rb_compare_cache: dict = {}
+_dj_rb_compare_lock = threading.Lock()
+_dj_rb_compare_loaded = False
+_DJ_RB_COMPARE_FILE = "data/rb-compare-cache.json"
 
 
-def _dj_rb_diff(path: str, edits: dict, base: dict) -> list:
+def _dj_rb_compare_load() -> None:
+    """Gespeicherten Vergleichs-Cache einmal je Prozess einlesen. Eine andere Lesart
+    (rekordbox.READER_VERSION) verwirft ihn ganz: die Pruefsummen passen dann nicht."""
+    global _dj_rb_compare_loaded
+    with _dj_rb_compare_lock:
+        if _dj_rb_compare_loaded:
+            return
+        _dj_rb_compare_loaded = True
+        try:
+            data = json.loads(cfgmod.resolve(_DJ_RB_COMPARE_FILE).read_text(encoding="utf-8"))
+            if data.get("reader") != rekordbox_mod.READER_VERSION:
+                return
+            for path, (stamp, digest, result) in data["tracks"].items():
+                _dj_rb_compare_cache.setdefault(path, (str(stamp), str(digest), list(result)))
+        except (OSError, ValueError, TypeError, KeyError, AttributeError):
+            pass
+
+
+def _dj_rb_compare_save(keep: set) -> None:
+    """Cache wegschreiben, nur fuer Tracks mit Bearbeitung (keep) und nur Eintraege mit
+    dem Stand des Tracks als Schluessel (der Rueckfall auf den Stand der master.db ist
+    eine Zahl und gilt nur fuer diesen Prozess)."""
+    with _dj_rb_compare_lock:
+        # list(): andere Anfragen tragen waehrenddessen ohne diese Sperre ein.
+        for path in [p for p in list(_dj_rb_compare_cache) if p not in keep]:
+            _dj_rb_compare_cache.pop(path, None)
+        tracks = {p: list(v) for p, v in list(_dj_rb_compare_cache.items()) if isinstance(v[0], str)}
+    try:
+        target = cfgmod.resolve(_DJ_RB_COMPARE_FILE)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        cfgmod.atomic_write_text(target, json.dumps(
+            {"reader": rekordbox_mod.READER_VERSION, "tracks": tracks}, ensure_ascii=False), fsync=False)
+    except OSError:
+        pass
+
+
+def _dj_rb_diff(path: str, edits: dict, base: dict, stamps: dict | None = None) -> tuple[list, bool]:
     """Worin weicht die Bearbeitung eines Tracks von Rekordbox ab? Noch nicht dorthin
-    geschrieben: diese Felder, ohne Rekordbox zu lesen. Sonst: seither dort geaendert."""
+    geschrieben: diese Felder, ohne Rekordbox zu lesen. Sonst: seither dort geaendert.
+    stamps: rekordbox.track_stamps(). Zweiter Wert: wurde Rekordbox dafuer gelesen
+    (dann hat sich der Cache geaendert)."""
     fields = [f for f in db_mod.DJ_TRACK_FIELDS if edits[f] is not None]
     pending = [f for f in fields if base["pushed"].get(f) != _dj_hash(edits[f])]
     if pending:
-        return pending
-    stamp, digest = rekordbox_mod.master_db_mtime(), _dj_hash(edits)
+        return pending, False
+    # Ohne Stand des Tracks (nicht in der Sammlung, Rekordbox nicht lesbar) gilt wie
+    # frueher der Stand der ganzen master.db. base["rb"] gehoert in die Pruefsumme:
+    # "Abweichung gesehen" aendert es, ohne dass sich Bearbeitung oder Rekordbox aendern.
+    stamp = (stamps or {}).get(path) or rekordbox_mod.master_db_mtime()
+    digest = _dj_hash([edits, base["rb"]])
     hit = _dj_rb_compare_cache.get(path)
     if hit and hit[0] == stamp and hit[1] == digest:
-        return hit[2]
+        return hit[2], False
     state = rekordbox_mod.track_state(path)
     if not state["available"]:
-        return []
+        return [], False
     hashes = _dj_rb_hashes(state)
     result = [f for f in fields if f in base["rb"] and base["rb"][f] != hashes[f]]
     _dj_rb_compare_cache[path] = (stamp, digest, result)
-    return result
+    return result, True
 
 
 def _hot_cue_paths(cfg: dict) -> set:
@@ -2473,6 +2848,10 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_rekordbox_fix_paths()
         elif route == "/api/music-added-sync":
             self._post_music_added_sync()
+        elif route == "/api/music-check":
+            self._post_music_check()
+        elif route == "/api/music-cleanup":
+            self._post_music_cleanup()
         elif route == "/api/pick-folder":
             self._post_pick_folder()
         elif route == "/api/pick-daw-template":
@@ -2499,10 +2878,20 @@ class _Handler(BaseHTTPRequestHandler):
             self._post_rewrite_drop()
         elif route == "/api/tags":
             self._post_tags()
+        elif route == "/api/music-tags-flush":
+            self._post_music_tags_flush()
+        elif route == "/api/tag-replace":
+            self._post_tag_replace()
+        elif route == "/api/tag-replace-finish":
+            self._post_tag_replace_finish()
+        elif route == "/api/replace-rules":
+            self._post_replace_rules()
         elif route == "/api/file-writable":
             self._post_file_writable()
         elif route == "/api/fix-tag-issues":
             self._post_fix_tag_issues()
+        elif route == "/api/fix-tag-issues-preview":
+            self._post_fix_tag_issues_preview()
         elif route == "/api/genre-rename":
             self._post_genre_rename()
         elif route == "/api/artist-rename":
@@ -4182,12 +4571,39 @@ class _Handler(BaseHTTPRequestHandler):
                 stem_items = db_mod.rekordbox_stem_pending_list(conn)
                 stem_meta = {i["path"]: db_mod.row_for_path(conn, i["path"])
                              for i in stem_items}
+                remove_paths = db_mod.rekordbox_remove_pending_list(conn)
             finally:
                 conn.close()
         metadata = {k: v for k, v in metadata.items() if v is not None}
+        # Vorgemerktes Entfernen (Papierkorb bei laufendem Rekordbox). Liegt die
+        # Datei wieder da, wurde sie zurueckgeholt: dann bleibt der Track.
+        removed: list[str] = []
+        if remove_paths:
+            gone = [p for p in remove_paths if not os.path.lexists(p)]
+            try:
+                ids = rekordbox_mod.resolve_content_ids(gone) if gone else {}
+                if ids:
+                    with self._rekordbox_lock:
+                        rekordbox_mod.remove_from_collection(list(ids.values()))
+                    removed = list(ids)
+            except rekordbox_mod.RekordboxRunning as exc:
+                self._json({"ok": False, "error": str(exc), "sticky": True}, 500)
+                return
+            except Exception as exc:                      # noqa: BLE001
+                self._fail(str(exc), 500)
+                return
+            for p in removed:
+                wavedetail_mod.forget(p)
+                audit_log.log("rekordbox", p, "aus Sammlung entfernt (vorgemerkt)")
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    db_mod.rekordbox_remove_pending_clear(conn, remove_paths)
+                finally:
+                    conn.close()
         if not paths and not stem_items:
             self._json({"ok": True, "updated": [], "not_found": [], "errors": {},
-                        "pending": 0, "stems_added": []})
+                        "pending": 0, "stems_added": [], "removed": removed})
             return
         result = {"updated": [], "not_found": [], "errors": {}}
         stem_result = {"added": [], "skipped": [], "errors": {}, "grid": {}}
@@ -4232,7 +4648,7 @@ class _Handler(BaseHTTPRequestHandler):
             audit_log.log("rekordbox-tags", p, "ueber Abgleich (vorgemerkt)")
         for p in stem_result["added"]:
             audit_log.log("rekordbox-stem", p, "ueber Abgleich (vorgemerkt)")
-        self._json({"ok": True, **result, "pending": remaining,
+        self._json({"ok": True, **result, "pending": remaining, "removed": removed,
                     "stems_added": stem_result["added"],
                     "stems_errors": stem_result["errors"],
                     "stems_grid": stem_result["grid"]})
@@ -4348,6 +4764,158 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
         self._json({"ok": True, "matched": matched, "checked": total})
+
+    _music_cleanup_lock = threading.Lock()
+
+    @staticmethod
+    def _music_entry(t: dict, playlists: dict[str, list[str]] | None = None) -> dict:
+        out = {"pid": t["pid"], "name": t["name"], "artist": t["artist"],
+               "added": t["added"], "plays": t["plays"]}
+        if playlists is not None:
+            out["playlists"] = playlists.get(t["pid"], [])
+        return out
+
+    @staticmethod
+    def _music_dup_groups(tracks: list[dict]) -> list[list[dict]]:
+        groups: dict[str, list[dict]] = {}
+        for t in tracks:
+            if t["path"]:
+                groups.setdefault(db_mod.path_norm_key(t["path"]), []).append(t)
+        return [g for g in groups.values() if len(g) > 1]
+
+    def _post_music_check(self) -> None:
+        """
+        "Music.app abgleichen" mit Schaltern: findet Eintraege ohne Datei
+        (Ausrufezeichen in Music.app) und Eintraege, die zu zweit oder mehr auf
+        DIESELBE Datei zeigen. Aendert nichts -- die Vorschau entscheidet, was
+        /api/music-cleanup entfernt.
+
+        Duplikate: behalten wird je Datei der Eintrag mit den meisten Playlisten,
+        dann den meisten Wiedergaben, dann der aelteste. Ein anderer Eintrag, der
+        in einer Playlist steht, in der der behaltene fehlt, ist 'blocked' --
+        Entfernen nimmt einen Bibliothekseintrag auch aus allen Playlisten.
+        """
+        cfg = cfgmod.load()
+        if not self._require_music(cfg):
+            return
+        try:
+            raw = json.loads(self._body(10_000).decode("utf-8") or "{}")
+            want_dead, want_dups = bool(raw.get("dead")), bool(raw.get("dups"))
+        except (ValueError, TypeError, AttributeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        try:
+            tracks = MUSIC_INDEX.get(max_age=0)
+            dead = [self._music_entry(t) for t in tracks if not t["path"]] if want_dead else []
+            dups: list[dict] = []
+            if want_dups:
+                groups = self._music_dup_groups(tracks)
+                playlists = media.music_playlists_of([t["pid"] for g in groups for t in g])
+                for g in groups:
+                    g = sorted(g, key=lambda t: (-len(playlists.get(t["pid"], [])),
+                                                 -t["plays"], t["added"] or float("inf")))
+                    keep, rest = g[0], g[1:]
+                    kept_lists = set(playlists.get(keep["pid"], []))
+                    remove = []
+                    for t in rest:
+                        e = self._music_entry(t, playlists)
+                        e["blocked"] = sorted(set(e["playlists"]) - kept_lists)
+                        remove.append(e)
+                    dups.append({"path": keep["path"], "keep": self._music_entry(keep, playlists),
+                                 "remove": remove})
+        except Exception as exc:                     # noqa: BLE001
+            self._fail(str(exc), 500)
+            return
+        self._json({"ok": True, "dead": dead, "dups": dups, "checked": len(tracks)})
+
+    def _post_music_cleanup(self) -> None:
+        """
+        Entfernt die in der Vorschau angehakten Eintraege aus Music.app
+        ({"dead": [pid], "dups": [pid]}). Jede ID wird gegen den Index von
+        /api/music-check erneut geprueft: 'dead' nur ohne Datei, 'dups' nur,
+        wenn ein anderer, NICHT mit entfernter Eintrag dieselbe Datei behaelt.
+
+        Duplikate brauchen eine Sicherung: Music.app legt die Datei eines
+        Eintrags aus seinem Medienordner beim Entfernen selbst in den Papierkorb
+        (an einer Testdatei bestaetigt) -- auch die, auf die der verbleibende
+        Eintrag zeigt. Deshalb vorher ein Hardlink unter backup/music-dup/,
+        danach die Datei an ihren Ort zurueck und den Ort des behaltenen
+        Eintrags ausdruecklich darauf setzen (music_set_location(), sonst koennte
+        dessen Alias der Datei in den Papierkorb gefolgt sein). Kein Lock: nur
+        Music.app und Dateien, keine Datenbank.
+        """
+        cfg = cfgmod.load()
+        if not self._require_music(cfg):
+            return
+        try:
+            raw = json.loads(self._body(1_000_000).decode("utf-8") or "{}")
+            want_dead = {str(p) for p in raw.get("dead") or []}
+            want_dups = {str(p) for p in raw.get("dups") or []}
+        except (ValueError, TypeError, AttributeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if not self._music_cleanup_lock.acquire(blocking=False):
+            self._fail("Ein Music.app-Abgleich läuft bereits.", 409)
+            return
+        try:
+            tracks = MUSIC_INDEX.get()
+            by_pid = {t["pid"]: t for t in tracks}
+            dead = [p for p in want_dead if p in by_pid and not by_pid[p]["path"]]
+            removed_dead = media.music_delete_tracks(dead)
+            MUSIC_INDEX.drop(removed_dead)
+            for pid in removed_dead:
+                t = by_pid[pid]
+                audit_log.log("music-karteileiche", f"{t['artist']} - {t['name']}", pid)
+
+            removed_dups: list[str] = []
+            errors: list[str] = []
+            for group in self._music_dup_groups(tracks):
+                drop = [t for t in group if t["pid"] in want_dups]
+                keep = [t for t in group if t["pid"] not in want_dups]
+                if not drop or not keep:
+                    continue                    # nie alle Eintraege einer Datei
+                path = keep[0]["path"]
+                try:
+                    removed_dups += self._music_drop_duplicates(cfg, path, keep[0], drop)
+                except Exception as exc:            # noqa: BLE001
+                    errors.append(f"{Path(path).name}: {exc}")
+                    errlog.log("music-cleanup", exc)
+        finally:
+            self._music_cleanup_lock.release()
+        self._json({"ok": True, "removed_dead": len(removed_dead),
+                    "removed_dups": len(removed_dups), "errors": errors})
+
+    def _music_drop_duplicates(self, cfg: dict, path: str, keep: dict, drop: list[dict]) -> list[str]:
+        """Doppelte Eintraege einer Datei entfernen, Datei und behaltenen Eintrag
+        dabei erhalten (siehe _post_music_cleanup())."""
+        if not os.path.isfile(path):
+            raise RuntimeError("Datei nicht gefunden")
+        safe_dir = Path(cfgmod.resolve("backup")) / "music-dup" / time.strftime("%Y%m%d-%H%M%S")
+        safe_dir.mkdir(parents=True, exist_ok=True)
+        safe = safe_dir / Path(path).name
+        try:
+            os.link(path, safe)                 # gleiche Datei, kein Platzbedarf
+        except OSError:
+            shutil.copy2(path, safe)            # anderes Volume
+        removed = media.music_delete_tracks([t["pid"] for t in drop])
+        MUSIC_INDEX.drop(removed)
+        time.sleep(0.5)                         # Music.app legt zeitversetzt in den Papierkorb
+        if not os.path.lexists(path):
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            os.rename(safe, path)
+        media.music_set_location(keep["pid"], path)
+        if media.music_track_location(keep["pid"]) != path:
+            raise RuntimeError(f"Eintrag zeigt nicht mehr auf die Datei, Sicherung: {safe}")
+        if safe.exists():
+            safe.unlink()
+        try:
+            safe_dir.rmdir()
+        except OSError:
+            pass
+        for t in drop:
+            if t["pid"] in removed:
+                audit_log.log("music-duplikat", path, t["pid"])
+        return removed
 
     def _post_pick_folder(self) -> None:
         """Nativer Ordnerauswahl-Dialog (mehrfach) fuer die Bibliotheksordner."""
@@ -4510,7 +5078,9 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self._body(1_000_000).decode("utf-8"))
             path = str(payload["path"])
-        except (ValueError, KeyError, TypeError) as exc:
+            # Eine Sicherung der master.db je Nutzeraktion, auch bei vielen Dateien.
+            rb_session = str(payload.get("rb_session") or "")[:64]
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
             self._fail(f"Ungültige Anfrage: {exc}")
             return
         # Nicht _known_file(): das verlangt eine vorhandene Datei. Liegt sie
@@ -4522,6 +5092,8 @@ class _Handler(BaseHTTPRequestHandler):
         conn = db_mod.connect(cfgmod.load())
         try:
             row = db_mod.row_for_path(conn, path)
+            in_music = conn.execute("SELECT 1 FROM music_added WHERE path = ?",
+                                    (path,)).fetchone() is not None
         finally:
             conn.close()
         if row is None or (os.path.lexists(path) and not os.path.isfile(path)):
@@ -4543,13 +5115,21 @@ class _Handler(BaseHTTPRequestHandler):
         library_error = None
         cloud_note = False
         removed_from_music = False
+        music_missed = False
         if cfg.get("external_music"):
-            title = row["title"] or Path(path).stem
+            # Alle Titel, unter denen Music.app den Track kennen kann: noch nicht
+            # abgeschickte Vormerkung (alter Titel), aktueller Titel, Dateiname.
+            titles = MUSIC_TAGS.forget(path) + [row["title"] or "", Path(path).stem]
             try:
-                count, cloud_note = media.remove_from_music_library(path, title)
+                count, cloud_note = _music_remove_path(path, titles, in_music)
                 if count > 0:
                     removed_from_music = True
                     audit_log.log("music-entfernt", path)
+                else:
+                    # TrackTab weiss den Track in Music.app, gefunden wurde er
+                    # weder ueber Titel noch Pfad: dem Nutzer sagen, statt still
+                    # eine moegliche Karteileiche zu hinterlassen.
+                    music_missed = in_music
             except Exception as exc:                     # noqa: BLE001
                 library_error = str(exc)
 
@@ -4585,9 +5165,13 @@ class _Handler(BaseHTTPRequestHandler):
             # Ohne Neubacken zeigt tracktab.html die geloeschte Zeile nach dem
             # naechsten Neuladen weiter an, siehe /api/prune.
             self._rebuild(cfg)
+        # Erst jetzt und ausserhalb des Locks: die Datei liegt sicher im
+        # Papierkorb. Ein Fehler hier nimmt das Loeschen nicht zurueck.
+        rekordbox_result = _rekordbox_forget(cfg, [path], rb_session)
         self._json({"ok": True, "total": total, "removed_from_music": removed_from_music,
+                     "rekordbox": rekordbox_result,
                      "music_error": library_error, "music_cloud_note": cloud_note,
-                     "already_gone": already_gone})
+                     "music_missed": music_missed, "already_gone": already_gone})
 
     def _post_convert(self) -> None:
         """
@@ -4770,21 +5354,9 @@ class _Handler(BaseHTTPRequestHandler):
             # korrigieren, und ein automatischer Zusatz-Import in Rekordbox
             # ist eine eigene, hier nicht angefragte Aktion.
             if was_rekordbox and trash_original:
-                try:
-                    conn = db_mod.connect(cfg)
-                    try:
-                        metadata = {new_path: db_mod.row_for_path(conn, new_path)}
-                    finally:
-                        conn.close()
-                    with self._rekordbox_lock:
-                        rb_result = rekordbox_mod.update_relocated_tracks(
-                            [{"path": new_path, "prior_path": path}], metadata)
-                    entry["rekordbox"] = {"running": False, **rb_result}
-                    for p in rb_result["updated"]:
-                        audit_log.log("rekordbox-korrigiert", p, "nach Konvertierung")
-                except rekordbox_mod.RekordboxRunning:
-                    entry["rekordbox"] = {"running": True,
-                        "moves": [{"path": new_path, "prior_path": path}]}
+                # Laeuft Rekordbox, merkt der Helfer dauerhaft vor.
+                entry["rekordbox"] = _rekordbox_relocate(
+                    cfg, [{"path": new_path, "prior_path": path}])
 
             results.append(entry)
 
@@ -4981,6 +5553,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         cfg = cfgmod.load()
+        old_title = row["title"] or ""
         with self.lock:
             conn = db_mod.connect(cfg)
             try:
@@ -5001,10 +5574,228 @@ class _Handler(BaseHTTPRequestHandler):
                 conn.close()
             self._rebuild(cfg)
 
+        # Music.app nur vormerken -- ausgefuehrt wird gebuendelt (siehe
+        # _MusicTagSync), der Client holt das Ergebnis ueber /api/music-tags-flush.
+        music_queued = bool(cfg.get("external_music")) and path in music_added and \
+            MUSIC_TAGS.add(path, old_title, fields.get("title", old_title), fields)
+
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
             dup_dismissed, genremood)[0]
-        self._json({"ok": True, "row": compact})
+        self._json({"ok": True, "row": compact, "music_queued": music_queued})
+
+    def _post_music_tags_flush(self) -> None:
+        """Vorgemerkte Tag-Aenderungen jetzt an Music.app geben ({paths}) und
+        das Ergebnis fuer diese Pfade liefern. Die Pfade dienen nur dem
+        Nachschlagen im Ergebnis, es wird keine Datei ueber sie geoeffnet.
+        Antwort: synced, missing (in Music.app nicht gefunden), error,
+        relinked (von Music.app umsortiert, Format wie /api/relink), rekordbox."""
+        try:
+            payload = json.loads(self._body(1_000_000).decode("utf-8") or "{}")
+            paths = [str(p) for p in payload.get("paths") or []]
+        except (ValueError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        self._json({"ok": True, **self._music_flush_result(paths)})
+
+    def _music_flush_result(self, paths: list[str]) -> dict:
+        """Kern von /api/music-tags-flush, auch fuer /api/tag-replace-finish:
+        Vorgemerktes an Music.app geben, Ergebnis fuer 'paths' zusammenfassen."""
+        results = MUSIC_TAGS.run(paths)
+        cfg = cfgmod.load()
+        moved = [(p, r["new"]) for p, r in results.items() if r.get("new")]
+        relinked = []
+        if moved:
+            conn = db_mod.connect(cfg)
+            try:
+                rows = self._compact_rows(conn, cfg, [new for _, new in moved])
+            finally:
+                conn.close()
+            relinked = [{"old": old, "new": new, "row": row}
+                        for (old, new), row in zip(moved, rows) if row is not None]
+        rb_results = [r["rekordbox"] for r in results.values() if r.get("rekordbox")]
+        rekordbox = None
+        if rb_results:
+            running = [rb for rb in rb_results if rb.get("running")]
+            rekordbox = running[-1] if running else rb_results[0]
+        errors = [r["error"] for r in results.values() if r["status"] == "error"]
+        return {"synced": sum(1 for r in results.values() if r["status"] == "ok"),
+                "missing": [p for p, r in results.items() if r["status"] == "missing"],
+                "error": errors[0] if errors else None,
+                "relinked": relinked, "rekordbox": rekordbox}
+
+    # Felder, die Suchen & Ersetzen anfassen darf (Textfelder des Tags-Dialogs).
+    _REPLACE_FIELDS = ("title", "artist", "album", "album_artist", "composer",
+                       "genre", "comment")
+
+    def _post_tag_replace(self) -> None:
+        """
+        Suchen & Ersetzen: mehrere Dateien mit je eigenen neuen Werten
+        ({items: [{path, fields: {feld: {old, new}}}]}). Die Treffer-Logik
+        steht nur im Client (replaceInValue() in app.js), der Server prueft
+        nur, ob 'old' noch dem DB-Stand entspricht -- sonst haette der
+        Browser einen veralteten Wert gesehen und die Zeile wird mit Grund
+        "changed" uebersprungen. Lock-Regel: lesen unter self.lock, Dateien
+        ohne Lock schreiben, DB-Update wieder unter self.lock. Music.app wird
+        nur vorgemerkt; abgeschickt (samt Rekordbox) wird mit
+        /api/tag-replace-finish einmal fuer den ganzen Lauf.
+        """
+        try:
+            payload = json.loads(self._body(2_000_000).decode("utf-8"))
+            items = [(str(it["path"]), dict(it["fields"])) for it in payload["items"]]
+        except (ValueError, KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        if len(items) > 200:
+            self._fail("Zu viele Einträge auf einmal (höchstens 200)")
+            return
+        cfg = cfgmod.load()
+        skipped: dict[str, str] = {}
+        todo: list[tuple[str, dict, dict]] = []      # (pfad, neue Felder, DB-Zeile)
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                for path, changes in items:
+                    row = db_mod.row_for_path(conn, path)
+                    if row is None:
+                        skipped[path] = "unknown"
+                        continue
+                    fields: dict = {}
+                    for field, change in changes.items():
+                        if field not in self._REPLACE_FIELDS or not isinstance(change, dict):
+                            continue
+                        old = str(change.get("old") or "")
+                        new = str(change.get("new") or "").strip()
+                        if (row[field] or "") != old:
+                            skipped[path] = "changed"
+                            fields = {}
+                            break
+                        if new and new != old:
+                            fields[field] = new
+                    if fields:
+                        todo.append((path, fields, dict(row)))
+                    elif path not in skipped:
+                        skipped[path] = "unchanged"
+            finally:
+                conn.close()
+
+        written: list[tuple[str, dict, dict, list]] = []
+        failed: dict[str, str] = {}
+        for path, fields, row in todo:
+            if not os.path.isfile(path):
+                failed[path] = "missing"
+                continue
+            try:
+                tags_mod.write_tags(path, fields)
+            except tags_mod.TagError as exc:
+                failed[path] = str(exc)
+                continue
+            issues = taganomaly_mod.detect(path, row.get("codec_family") or "")
+            written.append((path, fields, row, issues))
+            audit_log.log("tag-replace", path, "; ".join(
+                f"{f}: {row.get(f) or ''} → {v}" for f, v in fields.items()))
+
+        rows: list = []
+        music_queued: list[str] = []
+        if written:
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    for path, fields, _row, issues in written:
+                        db_mod.update_tags(conn, path, fields)
+                        db_mod.update_tag_issues(conn, path, issues)
+                        db_mod.refresh_stat(conn, path)
+                    music_added = db_mod.music_added_map(conn) if cfg.get("external_music") else {}
+                    rows = self._compact_rows(conn, cfg, [w[0] for w in written])
+                finally:
+                    conn.close()
+                self._rebuild(cfg)
+            for path, fields, row, _issues in written:
+                if path in music_added:
+                    old_title = row.get("title") or ""
+                    if MUSIC_TAGS.add(path, old_title, fields.get("title", old_title), fields):
+                        music_queued.append(path)
+        self._json({"ok": True,
+                    "updated": [{"path": w[0], "row": r} for w, r in zip(written, rows)],
+                    "failed": failed, "skipped": skipped, "music_queued": music_queued})
+
+    def _post_tag_replace_finish(self) -> None:
+        """
+        Abschluss eines Ersetzungs-Laufs (Suchen & Ersetzen, Quick Fix einer
+        Ersetzungsregel): vorgemerkte Tag-Aenderungen an Music.app geben und
+        die geaenderten Metadaten nach Rekordbox schreiben -- sofort, wenn
+        Rekordbox geschlossen ist (eine Sicherung je 'session', Abschnitte
+        von 50 unter _rekordbox_lock, wie _post_rekordbox_tags_sync()),
+        sonst vormerken fuer "Rekordbox abgleichen". Nur Pfade, die
+        Rekordbox kennt (db.rekordbox_paths()).
+        """
+        try:
+            payload = json.loads(self._body(2_000_000).decode("utf-8") or "{}")
+            paths = [str(p) for p in payload.get("paths") or []]
+            session = str(payload.get("session") or "") or f"tag-replace-{time.time():.0f}"
+        except (ValueError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        cfg = cfgmod.load()
+        music = self._music_flush_result(paths) if paths and cfg.get("external_music") else None
+        rekordbox = None
+        if paths and self._rekordbox_available(cfg):
+            conn = db_mod.connect(cfg)
+            try:
+                in_rb = db_mod.rekordbox_paths(conn)
+            finally:
+                conn.close()
+            # Pfade koennen durch den Music-Abgleich umgezogen sein.
+            moved = {m["old"]: m["new"] for m in (music or {}).get("relinked") or []}
+            todo = [moved.get(p, p) for p in paths]
+            todo = [p for p in dict.fromkeys(todo) if p in in_rb]
+            if todo:
+                rekordbox = self._rekordbox_write_tags(cfg, todo, session)
+        audit_log.log("tag-replace-sync", f"{len(paths)} Tracks",
+                      f"music={bool(music)} rekordbox={rekordbox}")
+        self._json({"ok": True, "music": music, "rekordbox": rekordbox})
+
+    def _rekordbox_write_tags(self, cfg: dict, paths: list[str], session: str) -> dict:
+        """Metadaten aus TrackTabs DB nach Rekordbox schreiben; laeuft Rekordbox
+        (auch erst zwischendurch), wird der Rest vorgemerkt. Nie unter self.lock."""
+        rows = _tag_rows(cfg)
+        written: list[str] = []
+        errors: dict = {}
+        rest: list[str] = []
+        try:
+            if rekordbox_mod.is_running() or rekordbox_mod.agent_running():
+                raise rekordbox_mod.RekordboxRunning("running")
+            with rekordbox_mod.backup_session(session):
+                for i in range(0, len(paths), 50):
+                    chunk = [p for p in paths[i:i + 50] if p in rows]
+                    items = [{"path": p, "cues": None, "beats": None, "phrases": None,
+                              "audio_start_ms": 0, "tags": rows[p]} for p in chunk]
+                    with self._rekordbox_lock:
+                        result = rekordbox_mod.update_tracks(items)
+                    for p, res in result["results"].items():
+                        written.append(p)
+                        if res.get("written"):
+                            audit_log.log("rekordbox-tags", p, ",".join(res["written"]))
+                    errors.update(result["errors"])
+                    if result["stopped"]:
+                        rest = [p for p in paths[i:] if p not in result["results"]
+                                and p not in result["errors"]]
+                        break
+        except rekordbox_mod.RekordboxRunning:
+            rest = [p for p in paths if p not in written]
+        except Exception as exc:                      # noqa: BLE001
+            return {"written": len(written), "pending": 0, "error": str(exc)[:300]}
+        pending = 0
+        if rest:
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    db_mod.rekordbox_pending_add(conn, rest)
+                    pending = db_mod.rekordbox_pending_count(conn)
+                finally:
+                    conn.close()
+        return {"written": len(written), "queued": len(rest), "pending": pending,
+                "errors": errors}
 
     def _post_bpmkey(self) -> None:
         """BPM + Tonart per libsonare messen und nach den Einstellungen
@@ -5091,7 +5882,23 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
             self._rebuild(cfg)
-        self._json({**base, "status": "written", "fields": fields, "row": compact})
+        self._json({**base, "status": "written", "fields": fields, "row": compact,
+                    "music_queued": self._queue_music_tags(cfg, path, row, fields)})
+
+    def _queue_music_tags(self, cfg: dict, path: str, row, fields: dict) -> bool:
+        """Was eine Analyse in die Datei geschrieben hat (BPM, Kommentar), fuer
+        Music.app vormerken -- derselbe Weg wie /api/tags (_MusicTagSync). Ohne das
+        behielt Music.app den alten Stand. Nur fuer dort importierte Tracks; nach dem
+        DB-Update und ausserhalb von self.lock aufrufen."""
+        if row is None or not fields or not cfg.get("external_music"):
+            return False
+        conn = db_mod.connect(cfg)
+        try:
+            known = conn.execute("SELECT 1 FROM music_added WHERE path = ?", (path,)).fetchone()
+        finally:
+            conn.close()
+        title = row["title"] or ""
+        return bool(known) and MUSIC_TAGS.add(path, title, str(fields.get("title", title)), fields)
 
     def _get_dj_wave(self) -> None:
         """Wellenform des DJ-Editors nach dj_waveform_source und dj_waveform_style,
@@ -5315,7 +6122,16 @@ class _Handler(BaseHTTPRequestHandler):
             edited = db_mod.dj_track_edits(conn)
         finally:
             conn.close()
-        rb_diff = {**rb_changed, **{p: d for p, (e, b) in edited.items() if (d := _dj_rb_diff(p, e, b))}}
+        _dj_rb_compare_load()
+        stamps = rekordbox_mod.track_stamps()
+        rb_diff, reread = dict(rb_changed), False
+        for p, (e, b) in edited.items():
+            d, read = _dj_rb_diff(p, e, b, stamps)
+            reread = reread or read
+            if d:
+                rb_diff[p] = d
+        if reread:
+            _dj_rb_compare_save(set(edited))
         # Metadaten (Titel, Interpret, ...): TrackTab gegen Rekordbox, ohne eigene Merkung.
         # bpm_half (halbes/doppeltes Tempo) ist nur ein Hinweis, nichts zu uebertragen.
         # rb_tag_fields: welche Metadaten im Einzelnen (Tooltip der Spalte Rekordbox).
@@ -5993,7 +6809,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({**base, "row": None,
                         **({"issues": new_issues} if new_issues is not None else {})})
             return
-        self._json({**base, "row": compact})
+        self._json({**base, "row": compact,
+                    "music_queued": self._queue_music_tags(cfg, path, row, fields)})
 
     def _post_fix_tag_issues(self) -> None:
         """Sicher automatisch behebbare Auffaelligkeiten (Steuerzeichen,
@@ -6003,6 +6820,9 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self._body(100_000).decode("utf-8"))
             path = str(payload["path"])
+            codes = payload.get("codes")
+            codes = [str(c) for c in codes] if isinstance(codes, list) else None
+            skip = [str(f) for f in payload.get("skip_fields") or []]
         except (ValueError, KeyError, TypeError) as exc:
             self._fail(f"Ungültige Anfrage: {exc}")
             return
@@ -6012,7 +6832,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
 
         try:
-            fixed_codes, written_fields = taganomaly_mod.fix_safe(path)
+            fixed_codes, written_fields = taganomaly_mod.fix_safe(path, codes, skip)
         except tags_mod.TagError as exc:
             self._fail(str(exc), 500)
             return
@@ -6023,6 +6843,7 @@ class _Handler(BaseHTTPRequestHandler):
 
         cfg = cfgmod.load()
         new_issues = taganomaly_mod.detect(path, (row["codec_family"] if row else "") or "")
+        row_before = row
 
         if row is None:
             # Noch nicht gescannt -- keine DB-Zeile, der Client pflegt seine
@@ -6053,7 +6874,36 @@ class _Handler(BaseHTTPRequestHandler):
         compact = report_mod.rows_to_payload(
             [row], cfg, ignored, corrected, rekordbox, music_added,
             dup_dismissed, genremood)[0]
-        self._json({"ok": True, "row": compact, "fixed": fixed_codes})
+        self._json({"ok": True, "row": compact, "fixed": fixed_codes,
+                    "music_queued": self._queue_music_tags(cfg, path, row_before, written_fields or {})})
+
+    def _post_fix_tag_issues_preview(self) -> None:
+        """Vorschau des Quick Fix: was /api/fix-tag-issues je Datei schreiben
+        wuerde (taganomaly.plan_safe(), liest nur Tags, schreibt nichts).
+        {"items": [{"path", "codes": [...]}]} -> {"plans": {pfad: plan}} --
+        'codes' je Pfad, weil der Client je Track ignorierte Auffaelligkeiten
+        weglaesst (wie beim Schreiben). Nur Pfade mit etwas zu tun; unbekannte
+        fallen still heraus wie bei /api/file-writable. Ohne Lock (reine
+        Dateilesezugriffe)."""
+        try:
+            payload = json.loads(self._body(2_000_000).decode("utf-8"))
+            items = [(str(i["path"]), [str(c) for c in i.get("codes") or []])
+                     for i in payload["items"]][:500]
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        plans = {}
+        for path, codes in items:
+            if not self._authorize_fast(path) or not os.path.exists(path):
+                continue
+            try:
+                plan = taganomaly_mod.plan_safe(path, codes)
+            except Exception as exc:                      # Datei unlesbar: Vorschau ohne diesen Teil
+                plans[path] = {"error": str(exc)}
+                continue
+            if plan["codes"]:
+                plans[path] = plan
+        self._json({"ok": True, "plans": plans})
 
     def _rename_tag_value(self, field: str, old_label: str, paths_fn, new: str,
                            media_setter) -> None:
@@ -6108,36 +6958,110 @@ class _Handler(BaseHTTPRequestHandler):
             if updated:
                 self._rebuild(cfg)
 
+        # Rekordbox: nur vormerken. Der Schreibzugriff (master.db oeffnen +
+        # Backup) laeuft gebuendelt ueber "Rekordbox abgleichen", nicht je
+        # Zusammenfuehrung. VOR dem Music-Schritt: sortiert Music.app Dateien
+        # um, zieht db.move_path() die Vormerkung mit auf den neuen Pfad.
+        to_sync_rb = [p for p in updated if p in rb_paths]
+        if to_sync_rb:
+            with self.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    db_mod.rekordbox_pending_add(conn, to_sync_rb)
+                finally:
+                    conn.close()
+
         # Music.app: best-effort wie _post_cover()'s Cover-Abgleich -- schlaegt
         # es fehl, bleiben die bereits geschriebenen Dateien/DB-Zeilen gueltig,
         # nur ein weicher Hinweis statt eines Fehlers.
         music_result = {"attempted": 0, "matched": 0, "error": None}
         to_sync_music = [p for p in updated if p in music_map]
+        relinked: list[dict] = []
         if to_sync_music:
             music_result["attempted"] = len(to_sync_music)
+            moves: list[tuple[str, str]] = []
             try:
                 music_result["matched"] = media_setter(
                     [(p, titles.get(p, "")) for p in to_sync_music], new,
-                    old_label)
+                    old_label, moves)
             except Exception as exc:                       # noqa: BLE001
                 music_result["error"] = str(exc)
+            relinked = self._apply_music_moves(cfg, to_sync_music, moves)
 
-        # Rekordbox: nur vormerken. Der Schreibzugriff (master.db oeffnen +
-        # Backup) laeuft gebuendelt ueber "Rekordbox abgleichen", nicht je
-        # Zusammenfuehrung.
-        to_sync_rb = [p for p in updated if p in rb_paths]
         rekordbox_result = {"pending": 0, "queued": len(to_sync_rb)}
         with self.lock:
             conn = db_mod.connect(cfg)
             try:
-                if to_sync_rb:
-                    db_mod.rekordbox_pending_add(conn, to_sync_rb)
-                rekordbox_result["pending"] = db_mod.rekordbox_pending_count(conn)
+                rekordbox_result["pending"] = (db_mod.rekordbox_pending_count(conn)
+                                               + db_mod.rekordbox_stem_pending_count(conn))
             finally:
                 conn.close()
 
         self._json({"ok": True, "updated": len(updated), "failed": failed,
-                     "music": music_result, "rekordbox": rekordbox_result})
+                     "music": music_result, "rekordbox": rekordbox_result,
+                     "relinked": relinked})
+
+    def _apply_music_moves(self, cfg: dict, synced: list[str],
+                           moves: list[tuple[str, str]]) -> list[dict]:
+        """Nach einem Sammel-Setzen in Music.app (Zusammenfuehren von Interpret/Album/
+        Genre): Music.app sortiert die Dateien seines Medienordners dabei um und
+        schreibt die Werte in die Datei zurueck. moves = was das Skript gemeldet hat
+        (alt, neu). Was danach trotzdem fehlt, wird wie bei Auto-Relocate gesucht
+        (scanner.find_moved()) -- vorher standen diese Zeilen als "Datei fehlt", bis
+        jemand den Knopf drueckte. Zieht DB und Rekordbox nach, liefert die Zeilen im
+        Format von /api/relink ({"old", "new", "row"})."""
+        by_key = {db_mod.path_norm_key(p): p for p in synced}
+        pairs: dict[str, str] = {}
+        for old, new in moves:
+            old_db = by_key.get(db_mod.path_norm_key(old))
+            new = unicodedata.normalize("NFC", new)
+            if old_db and db_mod.path_norm_key(new) != db_mod.path_norm_key(old_db) \
+                    and os.path.isfile(new):
+                pairs[old_db] = new
+        gone = [p for p in synced if p not in pairs and not os.path.isfile(p)]
+        if gone:
+            conn = db_mod.connect(cfg)
+            try:
+                known = {r["path"] for r in conn.execute("SELECT path FROM files")}
+                missing = [{"path": p, "size": r["size"], "duration_s": r["duration_s"],
+                            "artist": r["artist"], "title": r["title"]}
+                           for p in gone if (r := db_mod.row_for_path(conn, p)) is not None]
+            finally:
+                conn.close()
+            try:
+                pairs.update(scanner.find_moved(cfg, missing, known)["matches"])
+            except Exception as exc:                       # noqa: BLE001
+                errlog.log("music-moves", exc)
+        relinked: list[dict] = []
+        changed = False
+        with self.lock:
+            conn = db_mod.connect(cfg)
+            try:
+                rekordbox_before = db_mod.rekordbox_paths(conn)
+                # Nicht verschoben, aber von Music.app beschrieben: Groesse/mtime
+                # nachziehen, sonst misst der naechste Scan die Datei ohne Not neu.
+                for p in synced:
+                    if p not in pairs:
+                        changed = db_mod.refresh_external(conn, p) or changed
+                done = []
+                for old, new in pairs.items():
+                    if db_mod.move_path(conn, old, new):
+                        audit_log.log("verschoben", new, f"vorher {old} (Music.app)")
+                        done.append((old, new))
+                if done:
+                    rows = self._compact_rows(conn, cfg, [n for _, n in done])
+                    relinked = [{"old": o, "new": n, "row": row}
+                                for (o, n), row in zip(done, rows) if row is not None]
+            finally:
+                conn.close()
+            self._invalidate_path(*synced, *pairs.values())
+            if done or changed:
+                self._rebuild(cfg)
+        rb_moves = [{"path": n, "prior_path": o} for o, n in done if o in rekordbox_before]
+        if rb_moves:
+            _rekordbox_relocate(cfg, rb_moves)
+        return relinked
+
 
     def _post_genre_rename(self) -> None:
         """
@@ -6779,23 +7703,7 @@ class _Handler(BaseHTTPRequestHandler):
             for r in relinked if r["old"] in rekordbox_before
         ] + retry_moves
 
-        rekordbox_result = None
-        if rekordbox_moves:
-            conn = db_mod.connect(cfg)
-            try:
-                metadata = {m["path"]: db_mod.row_for_path(conn, m["path"])
-                            for m in rekordbox_moves}
-                metadata = {k: v for k, v in metadata.items() if v is not None}
-            finally:
-                conn.close()
-            try:
-                with self._rekordbox_lock:
-                    result = rekordbox_mod.update_relocated_tracks(rekordbox_moves, metadata)
-                rekordbox_result = {"running": False, **result}
-                for p in result["updated"]:
-                    audit_log.log("rekordbox-korrigiert", p, "nach Verschiebung")
-            except rekordbox_mod.RekordboxRunning:
-                rekordbox_result = {"running": True, "moves": rekordbox_moves}
+        rekordbox_result = _rekordbox_relocate(cfg, rekordbox_moves) if rekordbox_moves else None
 
         self._json({"ok": True, "relinked": relinked,
                     "ambiguous": [{"old": k, "candidates": v}
@@ -7505,6 +8413,31 @@ class _Handler(BaseHTTPRequestHandler):
             return
         self._json({"ok": True, **saved})
 
+    def _post_replace_rules(self) -> None:
+        """Gespeicherte Ersetzungsregeln (Suchen & Ersetzen) am Stueck ersetzen.
+        Unter self.lock wie _post_generator_curves(). Ignorierungen geloeschter
+        oder inhaltlich geaenderter Regeln (settings.stale_rule_codes()) fallen
+        mit weg, die Antwort nennt deren Codes ('ignored_cleared')."""
+        try:
+            payload = json.loads(self._body(200_000).decode("utf-8"))
+            with self.lock:
+                old = list(cfgmod.load().get("replace_rules") or [])
+                rules = settings_mod.save_replace_rules(payload.get("rules") or [])
+                cleared = settings_mod.stale_rule_codes(old, rules)
+                if cleared:
+                    conn = db_mod.connect(cfgmod.load())
+                    try:
+                        db_mod.clear_ignored_issue_codes(conn, cleared)
+                    finally:
+                        conn.close()
+        except ValueError as exc:
+            self._fail(str(exc))
+            return
+        except (KeyError, TypeError) as exc:
+            self._fail(f"Ungültige Anfrage: {exc}")
+            return
+        self._json({"ok": True, "replace_rules": rules, "ignored_cleared": cleared})
+
     def _post_generator_curves(self) -> None:
         """Eigene Energiekurven des Generators am Stueck ersetzen (anlegen,
         ueberschreiben, loeschen). Unter self.lock wie die Spalten-Endpunkte:
@@ -7710,6 +8643,34 @@ class _Handler(BaseHTTPRequestHandler):
         self._json({"ok": True, "row": row})
 
 
+def _backfill_cover_hashes_bg(cfg: dict, chunk: int = 200) -> None:
+    """Cover-Fingerabdruecke ohne Scan nachtragen (NULL oder altes MD5-Format,
+    siehe coverhash.py) -- sonst vergleicht die Oberflaeche bis zum naechsten
+    Scan neue mit alten Werten und meldet gleiche Cover als verschieden.
+    Lock-Regel: Dateien ohne Lock lesen, je Abschnitt kurz unter Lock
+    schreiben. Danach einmal Report-Neubau. Best effort, stumm bei Fehlern."""
+    try:
+        conn = db_mod.connect(cfg)
+        try:
+            paths = db_mod.paths_without_cover_hash(conn)
+        finally:
+            conn.close()
+        if not paths:
+            return
+        for start in range(0, len(paths), chunk):
+            hashes = {p: tags_mod.read_cover_hash(p) for p in paths[start:start + chunk]}
+            with _Handler.lock:
+                conn = db_mod.connect(cfg)
+                try:
+                    db_mod.set_cover_hashes(conn, hashes)
+                finally:
+                    conn.close()
+        _auth_cache.clear()
+        REPORT.mark_dirty(cfg)
+    except Exception as exc:                              # noqa: BLE001
+        errlog.log("cover-hash-backfill", exc)
+
+
 def serve(console, port: int = 8756, open_browser: bool = True) -> int:
     global _HTTPD
     cfg = cfgmod.load()
@@ -7738,6 +8699,8 @@ def serve(console, port: int = 8756, open_browser: bool = True) -> int:
     REPORT.start()
     # Vorschau-Dateien eines frueheren Laufs, die niemand freigegeben hat.
     stemjob_mod.cleanup_all()
+    threading.Thread(target=_backfill_cover_hashes_bg, args=(cfg,),
+                     name="cover-hash-backfill", daemon=True).start()
 
     url = f"http://127.0.0.1:{port}/tracktab.html"
     console.print(f"[bold green]Report läuft:[/bold green] {url}")
@@ -7756,6 +8719,13 @@ def serve(console, port: int = 8756, open_browser: bool = True) -> int:
     finally:
         _HTTPD = None
         httpd.server_close()
+        # Vorgemerkte Tag-Aenderungen fuer Music.app jetzt abschicken: die
+        # Vormerkung liegt nur im Speicher und waere mit dem Prozess weg
+        # (Beenden innerhalb des Sammelfensters von _MusicTagSync).
+        try:
+            MUSIC_TAGS.run(None)
+        except Exception as exc:                       # noqa: BLE001
+            console.print(f"[dim]Music-Abgleich beim Beenden uebersprungen: {exc}[/dim]")
         # Zuerst: einen noch offenen Report-Neubau wegschreiben. Sonst
         # startet die naechste Sitzung mit einem Stand, dem die letzten
         # Aenderungen dieser Sitzung fehlen -- und das Backup unten wuerde

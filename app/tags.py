@@ -747,11 +747,11 @@ def read_compilation(path: str) -> int:
 
 
 def read_cover_hash(path: str) -> str:
-    """MD5 der Bilddaten des ersten eingebetteten Covers ('' = keins oder nicht
-    lesbar). Dient nur dem Vergleich zwischen Dateien (gleiches Bild bei
-    verschiedenen Alben = Auffaelligkeit duplicate_cover), nie der Sicherheit.
-    Best effort wie read_extra()."""
-    import hashlib
+    """Fingerabdruck des ersten eingebetteten Covers ('' = keins oder nicht
+    lesbar): Mini-Bild des Bildinhalts (cover_fingerprint()), NICHT der Bytes
+    (Music.app kodiert Cover beim Setzen neu, siehe coverhash.py). Dient nur
+    dem Vergleich zwischen Dateien (Cover-Auffaelligkeiten), nie der
+    Sicherheit. Best effort wie read_extra()."""
     suffix = Path(path).suffix.lower()
     try:
         data = b""
@@ -767,7 +767,21 @@ def read_cover_hash(path: str) -> str:
             from mutagen.flac import FLAC
             pics = FLAC(path).pictures
             data = bytes(pics[0].data) if pics else b""
-        return hashlib.md5(data).hexdigest() if data else ""
+        return cover_fingerprint(data) if data else ""
+    except Exception:                                  # noqa: BLE001
+        return ""
+
+
+def cover_fingerprint(data: bytes) -> str:
+    """Mini-Bild des Covers: 8x8 Pixel RGB (Flaechenmittel), als Hex-Text --
+    Format und Vergleich siehe coverhash.py. '' bei unlesbarem Bild oder
+    fehlendem Pillow."""
+    try:
+        import io
+        from PIL import Image
+        im = Image.open(io.BytesIO(data))
+        im.draft("RGB", (64, 64))        # JPEG: verkleinert schon beim Dekodieren
+        return im.convert("RGB").resize((8, 8), Image.BOX).tobytes().hex()
     except Exception:                                  # noqa: BLE001
         return ""
 

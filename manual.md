@@ -50,6 +50,7 @@ Other documents:
 - [Key](#key)
 - [Beat grid and phrases](#beat-grid-and-phrases)
 - [Editing tags](#editing-tags)
+- [Find & replace](#find--replace)
 - [Issues (metadata problems)](#issues-metadata-problems)
 - [Converter MP3, AAC, AIFF](#converter-mp3-aac-aiff)
 - [Single check of new files (not in the library)](#single-check-of-new-files-not-in-the-library)
@@ -267,6 +268,15 @@ For the most reliable playback of all supported formats, **Safari** is therefore
 
  **“Sync Music.app”** does the same sync for the Music.app library. Both buttons only appear if the respective program is selected in the settings.
 
+Before the sync, a window with two switches for cleaning up the Music.app library opens. Both are off when it opens; the sync itself always runs:
+
+- **Remove entries without a file** — entries whose file no longer exists (shown with an exclamation mark in Music.app). Only the entry is removed.
+- **Remove duplicate entries** — several entries pointing to the same file. The entry in the most playlists is kept, then the one with the most plays, then the oldest. The file stays. If a duplicate entry is in a playlist the kept one is missing from, it is locked, because it would otherwise disappear from that playlist.
+
+Checking the library takes about half a minute. A preview then lists everything found so you can untick entries; nothing changes until “Remove from Music.app”.
+
+When you move a track to the Trash in TrackTab, TrackTab also removes it from Music.app. If it cannot find it there, for example because Music.app never picked up a title changed in TrackTab, a notice appears. “Remove entries without a file” cleans up such an entry later.
+
  > [!tip]
 > For this button to be shown, “Music.app” must be selected as a program in the settings.
 
@@ -339,7 +349,7 @@ Each branch only appears if the respective program is chosen in the settings —
 
 The **Duplicates** list shows tracks that exist twice — either as an exact copy or as the same song in different quality (e.g. once as MP3, once as FLAC). The same song means the same artist and title with at most 3 seconds difference in length, so the same song on a single and on a compilation is found too. Small differences in spelling do not count: “Rather Be (feat. Jess Glynne)” and “Rather Be feat. Jess Glynne”, “Jubel [Radio Edit]” and “Jubel (Radio Edit)”, “How Long - Throttle Remix” and “How Long (Throttle Remix)”, “Bengang” and “Bengang (Original Mix)” or “LMFAO feat. Lil Jon” and “LMFAO” count as equal. Different remixes stay different, and so does a radio edit next to an extended version (usually clearly different length). Every group is a card: at the top artist and title, below it what the copies differ in (“Differences: album, genre …” or “Exactly the same file, just in a different place”). In the rows, cells with differing values are highlighted yellow; which columns are visible is determined by the column view as everywhere.
 
-**Keep:** The “Keep” column right after the selection checkbox (the same in all three views) marks the copies that should stay (green tick, row tinted green). The best copy is preselected: an existing file before a missing one, then the actually higher quality (lossless before lossy; a file recognised as fake or suspicious counts with its measured instead of its declared bitrate), then more metadata (cover, genre, BPM, key, year, album, album artist, composer, track number, comment), already in Rekordbox or Music.app and lastly the larger file. It is always at the top of the group. You can keep any number of copies, at least one must remain. **Rest to Trash** and **Not a duplicate** are always on the right in the group header. “Rest to Trash” moves all copies without a tick to the Trash after a confirmation.
+**Keep:** The “Keep” column right after the selection checkbox (the same in all three views) marks the copies that should stay (green tick, row tinted green). The best copy is preselected: an existing file before a missing one, then the actually higher quality (lossless before lossy; a file recognised as fake or suspicious counts with its measured instead of its declared bitrate), then more metadata (cover, genre, BPM, key, year, album, album artist, composer, track number, comment), already in Rekordbox or Music.app and lastly the larger file. It is always at the top of the group. You can keep any number of copies, at least one must remain. **Rest to Trash** and **Not a duplicate** are always on the right in the group header. “Rest to Trash” moves all copies without a tick to the Trash after a confirmation. When you move a file to the Trash (here or via the trash icon of a row), the track also disappears from the Music.app library and, if Rekordbox is set up, from the Rekordbox collection. If Rekordbox is open at that moment, TrackTab queues the removal; “Sync Rekordbox” carries it out.
 
 **Open / Not a duplicate tabs:** At the top of the list, two tabs separate the open groups from those you confirmed with **Not a duplicate**. Confirmed groups are collapsed, a click on the header expands them, **Check again** brings them back to the open ones. If a new copy is added to a confirmed group, it automatically appears among the open ones again.
 
@@ -510,7 +520,7 @@ The same goes for **`/No`**: it only negates what directly follows. `/No Acapell
 
 **Hidden tracks** you reach with `/Hidden` — the parameter needs no value. Conversely `/No /Hidden` hides them in every list. And `/Status` narrows to a review result (`/Status Fake`, `/Status susp`, `/No /Status OK`); as soon as you have typed `/Status`, all possible values appear for selection.
 
-**Search bar:** recognised parameters and default filters appear as badges right in the search field, with the number of hits next to them on the right. Filtering happens while typing. With Enter, every typed parameter becomes a badge and disappears from the field, so you can type the next one right away (free search text stays in the field). Backspace at the start of the field turns the last badge back into text, badge by badge. Shift+left arrow selects badges from right to left, Cmd+A selects all, Delete removes the selected ones; the × on a badge takes the filter out. Next to the field are **Advanced**, the search help (i), **group by album** (record icon, coloured = on) and **Export** with CSV and playlist export.
+**Search bar:** recognised parameters and default filters appear as badges right in the search field, with the number of hits next to them on the right. Filtering happens while typing. With Enter, every typed parameter becomes a badge and disappears from the field, so you can type the next one right away (free search text stays in the field). Backspace at the start of the field turns the last badge back into text, badge by badge. Shift+left arrow selects badges from right to left, Cmd+A selects all, Delete removes the selected ones; the × on a badge takes the filter out. Next to the field are **Advanced**, the search help (i), **group by album** (record icon, coloured = on) and **Export** with CSV and playlist export. When grouping by album, compilations with all their artists and multi-disc albums with all their discs appear under one shared header.
 
 **Advanced search:** the **Advanced** button unfolds all parameters as input fields, arranged by groups: Track, Mix, File and review, State. Filled fields have a coloured outline. The fields write the same parameters into the search bar, and conversely typed parameters fill the fields. So you can mix both. The number on the button shows how many fields are currently filled; **Clear fields** takes all field parameters out again, your free search text stays. Exclusions with `/No` (except for the yes/no fields such as Cover) you keep writing directly into the search bar.
 
@@ -890,6 +900,32 @@ In the search field below the fields, artist and title are already entered; “S
 
 If several tracks are selected, the same dialog opens in multi mode: only the fields you actually change are overwritten for all selected files.
 
+## Find & replace
+
+The icon next to the search help (before the album toggle) opens **Find & replace**. It is disabled in the Player view. It works on the tracks currently in the list: the open list including search and filters, or only the selected ones if any are selected. The single checks don't have this button (they have [Apply rules](#replace-rules)).
+
+- **Find:** one or more terms, separated by commas, e.g. `ft, ft., feat, FEAT.`. The **?** behind the label “Find” shows the short syntax help as a tooltip.
+  - Without marks the whole word counts: “ft” matches “Artist ft X”, but not “Loft”.
+  - `*nervo*` finds a part anywhere in a word, `nervo*` the start of a word, `*mix` the end of a word.
+  - `"Original Mix"` in quotes is an exact phrase and may contain spaces and commas.
+- **Fields:** pick any number as chips: title, artist, album, album artist, composer, genre, comment and **Own tags** (stored only in TrackTab, never in the file: Music.app and Rekordbox are left alone), or **All fields** with one click. This lets you replace in artist and album artist together, for example. TrackTab remembers the choice until you reload. The file name is not included; use [automatic renaming](#renaming-files-automatically) for that.
+- **Options:** two switches, both off by default: **Match case** and **Match accents**. Off means “nervo” finds “Nervo”, “NERVO” and “Nérvo”. Further options will be added in the same place.
+- **Replace with:** the new text, written exactly like this. If it ends with a punctuation mark that already follows the match, it isn't doubled (“ft” → “feat.” turns “ft. X” into “feat. X”). **Left empty**, the dialog removes the match together with one adjacent space (“Song (Original Mix) X” → “Song X”); the preview marks the spot with ∅. If a field would end up empty, it isn't changed.
+
+The preview groups by track: a track changed in several places appears once with title and artist in the header, and one row per field below with before (match red) and after (green). The header is tinted; its check (as in the duplicates list: circle with a check, empty circle, circle with a dash for a partial selection) selects or deselects all changes of that track, the checks below single fields. Clicking the row is enough. “All” and “None” set all of them. If the search in the dialog matches a saved rule exactly, tracks for which that rule is ignored under Issues are left out (the header line gives the number). Missing and locked files are greyed out and can't be selected, nor can a change that would leave a field empty.
+
+Before writing, TrackTab asks and names the number of files, the fields and where the change is synced to. Then the new values are in the files and in the library, Music.app is updated and Rekordbox too (TrackTab makes a backup first). If Rekordbox is running, the change is queued and applied with “Sync Rekordbox”. This can't be undone; every change is in the change log with its old and new value. If a value changed between preview and writing (e.g. in a second window), that file is skipped.
+
+### Replace rules
+
+“Save as rule” keeps the current search including fields and options, “Load rule …” brings a saved one back. Under ⚙ Settings → File names → **Replace rules**, each rule has its own card: find → replace with, below it the same field and option chips as in the dialog. There you can switch rules on and off, delete them or add new ones. Active rules work in three places:
+
+- **Issues:** every active rule appears as **its own category** (bubble “Rule: ft … → feat.”, on its own line behind the label “Replace rules”; “Ignored issues” comes first) with a quick fix, one track at a time or for all tracks via the bubble. The eye ignores the issue for a track; the quick fix doesn't apply an ignored rule there. If you change a rule's find or replace text in the settings, it counts as a new rule: its ignored issues are dropped and all affected tracks show up again. Deleting a rule deletes its ignored issues as well. Switching a rule on/off, fields and options don't affect this.
+- **Tags dialog:** below the affected field, “Apply suggestion” shows the value after all rules, also while you type. The tooltip names the rule.
+- **Single checks:** “Apply rules” (before “Import into Music library”) shows the same preview for the selected files and can rename them automatically afterwards.
+
+The former check “Featuring not in the chosen notation” no longer exists. Create a rule for it instead, e.g. `ft, ft., feat, featuring` → `feat.` in the artist.
+
 ## Issues (metadata problems)
 
 Besides the question “is the bitrate right?”, TrackTab also checks every file for **metadata problems** — damaged or untidily set tags that do not affect the audio quality but can cause trouble, e.g. when exporting as a playlist, when sorting or in other programs. These issues are a category of their own, **independent** of OK/Suspicious/Fake/Unclear: a track with the verdict “OK” can still have tag problems, and vice versa.
@@ -900,7 +936,7 @@ The trigger for this function was a real find: a track had an invisible line-bre
 *Identified issues can be edited in an extra column, manually or, depending on the problem, automatically.*
 
 
-**Same cover on different albums:** The same image file is in tracks of at least two different albums, almost always a wrongly embedded cover. Several tracks of the same album with the same cover are normal and are never reported; as in Apple Music, an album is album title plus album artist (if that is missing, the artist); compilations marked as “Compilation” count by album title only. Only the albums that deviate from the rest are reported: the album with the most tracks for this image counts as the right one (with a tie, all are reported). Tracks without an album tag count as an album of their own per file. Two issues of their own check whether all tracks of an album carry the same image: **Cover differs from the rest of the album** (different image) and **Cover missing, other tracks of the album have one** (no image at all). The image that most tracks have counts as correct; Quick Fix (sparkle icon) copies it into the other tracks. With a tie (e.g. two tracks with different images) there is no Quick Fix: choose the cover by hand in the tags dialog. For compilations, in the tags dialog (also with several tracks at the same time) you set the field “Compilation” to “Yes”, then the record counts as one album, no matter which artists the tracks have. If you click the “Cover” column heading, equal images sit next to each other; in the Issues list with the filter “Duplicate cover” this is already so without sorting of its own. This cannot be fixed automatically: with the bubble you filter the hits, select them and swap or delete the cover in the tags dialog (also for several tracks at once). For albums whose cover is deliberately shared, you hide the tracks. On the first scan after the update, TrackTab re-reads the images of all files once (about 15 seconds for roughly 11,000 files).
+**Same cover on different albums:** The same image file is in tracks of at least two different albums, almost always a wrongly embedded cover. Several tracks of the same album with the same cover are normal and are never reported; as in Apple Music, an album is album title plus album artist (if that is missing, the artist); compilations marked as “Compilation” count by album title only. Only the albums that deviate from the rest are reported: the album with the most tracks for this image counts as the right one (with a tie, all are reported). Tracks without an album tag count as an album of their own per file. Two issues of their own check whether all tracks of an album carry the same image: **Cover differs from the rest of the album** (different image) and **Cover missing, other tracks of the album have one** (no image at all). Each of the two filters only shows albums with its own finding, together with the album's other tracks for comparison; under “Cover differs” the tracks without a cover are left out. The image that most tracks have counts as correct; Quick Fix (sparkle icon) copies it into the other tracks. With a tie (e.g. two tracks with different images) there is no Quick Fix: choose the cover by hand in the tags dialog. For compilations, in the tags dialog (also with several tracks at the same time) you set the field “Compilation” to “Yes”, then the record counts as one album, no matter which artists the tracks have. If you click the “Cover” column heading, equal images sit next to each other; in the Issues list with the filter “Duplicate cover” this is already so without sorting of its own. This cannot be fixed automatically: with the bubble you filter the hits, select them and swap or delete the cover in the tags dialog (also for several tracks at once). For albums whose cover is deliberately shared, you hide the tracks. On the first scan after the update, TrackTab re-reads the images of all files once (about 15 seconds for roughly 11,000 files).
 
 ### Where to find them
 
@@ -915,7 +951,7 @@ In addition, via the column icon a column of its own, **Issues**, can be shown, 
 
 Every problem found belongs to one of two groups:
 
-- **✨ Quick Fix** — safely fixable without ambiguity, TrackTab corrects it at the push of a button without asking about the content (only a confirmation of how many files are affected). For a file, a Quick Fix always fixes **all** of its safely fixable problems at once, not only the one clicked.
+- **✨ Quick Fix** — safely fixable without ambiguity, TrackTab corrects it at the push of a button. The icon of a single row does this right away and fixes all safely fixable problems of that file. For several tracks (✨ on a bubble or “Fix issues” in the bulk bar) a **preview** opens first, as in [Find & replace](#find--replace): every change per track with before and after. Use the circles to deselect single changes or whole tracks, “All”/“None” toggle everything; nothing is written until you click “Fix …”. The ✨ on a bubble fixes only that one issue, the bulk bar all issues of the selected tracks. Ignored issues are left alone. The ID3 version is raised with every tag change anyway, even if you deselect that entry.
 - **✎ Edit manually** — requires a decision only you can make (e.g. which year is correct). The button directly opens the familiar tags dialog — for a single row for exactly this file, for a bubble in bulk mode for all affected files at once.
 
 ### The messages in detail
@@ -946,13 +982,13 @@ Every problem found belongs to one of two groups:
 | **Underscores or double spaces in tag** | A single underscore becomes a space (or hyphen), a double one becomes “ - ” (adjustable: “ - ”, “ – ”, “ | ” or space), multiple spaces become one, spaces and underscores at the edge are dropped. “Daft_Punk__Get_Lucky” thus becomes “Daft Punk - Get Lucky” (not in the comment). | ✨ Quick Fix |
 | **Track number in the title** / **Artist repeated in the title** | “01 - Title” or “Artist - Title” when the artist tag is set. The cleaned title is stored as a suggestion. | ✎ Manual |
 | **Remix not in the chosen notation** | “Title (X Remix)”, “Title [X Remix]” and “Title - X Remix” are recognised; what deviates from the chosen notation (round, square or hyphen at the end) is reported. A remix note is an addition that ends with a word from the list **Words that mark a remix note** (remix, mix, edit, bootleg, rework, vip, dub, version; extendable). Only the title is checked. | ✎ Manual |
-| **Featuring not in the chosen notation** | “ft.”, “feat”, “feat.” and “featuring”, with and without brackets, in title or artist. The word (feat. / ft. / featuring) and the bracket in the title (none / round / square) are chosen; in the artist field it is never in brackets. | ✎ Manual |
+| **Rule: … → …** | A field changes when an active [replace rule](#replace-rules) is applied, e.g. “ft.” instead of “feat.” in the artist. Each rule has its own category. | ✨ Quick Fix |
 | **Title/album: capitalisation differs from the target** | Off by default (can be intentional). Target: every word capitalised (“Get Lucky”), only the first word capitalised, UPPER CASE or lower case. With the first two, only values written entirely in upper or entirely in lower case are reported, with the last two every deviation. | ✎ Manual |
 | **Quotes/apostrophes differ from the chosen style** | “Straight” means the plain characters `'` and `"`, “typographic” the curly ones (’ ‘ “ ”). The target form is chosen; the default is straight, the check is off by default. | ✎ Manual |
 
 Each of these rules can be switched off individually under ⚙ Settings → File names → **Title clean-up**; the word lists and the target notations are there too. After a change, run “Re-check issues”.
 
-In the tags dialog, an **Apply suggestion** button appears under title, artist and album, which puts the completely cleaned value (all rules together) into the field.
+In the tags dialog, an **Apply suggestion** button appears under title, artist and album, which puts the completely cleaned value (all rules together) into the field. Active [replace rules](#replace-rules) provide such suggestions for all text fields.
 
 ### Re-checking
 
@@ -988,6 +1024,8 @@ For a file that is not yet in the library there are two different ways — both 
 
 - **Drag & drop** — if you drag an audio file onto the page, it is measured and shown immediately: a pure quick analysis. In the row only limited actions are available (Play, Delete, shop search).
 - **“Open files”** — the “Open file” icon in the header (or the button in the Single checks area) opens a file selection dialog. Only this way do you get the full scope of functions: edit metadata, re-measure, convert, rename automatically and — via “Import into Music library” — afterwards add the track to your Music.app library (the button only appears if the Music app is chosen in the settings); TrackTab takes over the new location automatically.
+
+If there are active [replace rules](#replace-rules), the **Apply rules** button sits before “Import into Music library”.
 
 ![Single check via “Open files” with full scope of functions](docs/017-einzelpruefung.png)
 
@@ -1103,5 +1141,5 @@ When TrackTab is quit, a backup of your analysis data is created automatically. 
 - 224 kbps and 256 kbps cannot be told apart.
 - The Trash cannot be emptied from within TrackTab — that is deliberately left to the Finder.
 - Playback in the player depends on the browser: AIFF and ALAC only play reliably in Safari (see [Supported file formats](#supported-file-formats)).
-- Tag changes do not update Music.app immediately — the import continues to show the old metadata there until Music.app re-reads it itself.
+- TrackTab passes tag changes on to Music.app when saving (title, artist, album, album artist, composer, genre, year, BPM as a whole number, comment, track number, compilation). Music.app has no field for key and mood. If Music.app moves the file into a new folder while doing so, TrackTab follows the new path. If TrackTab cannot find a track in Music.app, a notice appears and the old tags remain there.
 - Online metadata suggestions rarely deliver a BPM.

@@ -56,7 +56,10 @@ UNDERSCORE_SPACES = "underscore_spaces"
 TRACKNO_IN_TITLE = "trackno_in_title"
 ARTIST_IN_TITLE = "artist_in_title"
 REMIX_NOTATION = "remix_notation"
-FEAT_NOTATION = "feat_notation"
+# Frueher "feat_notation" (eingebaute Featuring-Pruefung) -- abgeloest durch
+# eigene Ersetzungsregeln (Suchen & Ersetzen, Nutzervorgabe). Alte Meldungen
+# in der DB filtert enabled_issues() weg, bis die Datei neu geprueft wird.
+_RETIRED_CODES = {"feat_notation"}
 CASE_ALL = "case_all"
 TYPO_QUOTES = "typo_quotes"
 
@@ -75,7 +78,7 @@ MANUAL_ONLY = {MOJIBAKE, UNBALANCED_BRACKETS, TAG_EQUALS_FILENAME,
                MISSING_ARTIST, MISSING_COVER,
                CORRUPT_COVER, EXT_CODEC_MISMATCH,
                TRACKNO_IN_TITLE, ARTIST_IN_TITLE, REMIX_NOTATION,
-               FEAT_NOTATION, CASE_ALL, TYPO_QUOTES}
+               CASE_ALL, TYPO_QUOTES}
 
 # Zielgroesse fuer uebergrosse eingebettete Cover -- laengere Kante,
 # Seitenverhaeltnis bleibt erhalten.
@@ -152,7 +155,7 @@ _EXPECTED_SUFFIXES = {
 # den bereinigten Wert an.
 _RULE_DEFAULTS = {
     "tagclean_web": True, "tagclean_video": True, "tagclean_spaces": True,
-    "tagwatch_trackno": True, "tagwatch_remix": True, "tagwatch_feat": True,
+    "tagwatch_trackno": True, "tagwatch_remix": True,
     "tagwatch_case": False, "tagwatch_quotes": False,
 }
 
@@ -169,7 +172,7 @@ def _cfg() -> dict:
 _RULE_CODES = {
     "tagclean_web": WEB_JUNK, "tagclean_video": VIDEO_WORDS, "tagclean_spaces": UNDERSCORE_SPACES,
     "tagwatch_trackno": TRACKNO_IN_TITLE, "tagwatch_remix": REMIX_NOTATION,
-    "tagwatch_feat": FEAT_NOTATION, "tagwatch_case": CASE_ALL, "tagwatch_quotes": TYPO_QUOTES,
+    "tagwatch_case": CASE_ALL, "tagwatch_quotes": TYPO_QUOTES,
 }
 
 
@@ -178,8 +181,8 @@ def enabled_issues(issues: list[dict], cfg: dict) -> list[dict]:
     In der DB steht der Stand der letzten Pruefung; wer eine Regel danach abschaltet, soll die
     Meldung sofort loswerden, ohne neu zu pruefen (Anzeige, nicht Speicherung)."""
     off = {code for key, code in _RULE_CODES.items()
-           if not bool(cfg.get(key, _RULE_DEFAULTS[key]))}
-    return [i for i in issues if i.get("code") not in off] if off else issues
+           if not bool(cfg.get(key, _RULE_DEFAULTS[key]))} | _RETIRED_CODES
+    return [i for i in issues if i.get("code") not in off]
 
 
 def _rules() -> dict:
@@ -193,8 +196,6 @@ _CHOICES = {
     "tagclean_underscore_single": ("space", "hyphen"),
     "tagclean_underscore_double": ("dash", "endash", "pipe", "space"),
     "tagwatch_remix_style": ("round", "square", "dash"),
-    "tagwatch_feat_word": ("feat", "ft", "featuring"),
-    "tagwatch_feat_bracket": ("none", "round", "square"),
     "tagwatch_case_style": ("title", "sentence", "upper", "lower"),
     "tagwatch_quotes_style": ("straight", "typographic"),
 }
@@ -204,7 +205,6 @@ _LIST_KEYS = ("tagclean_web_words", "tagclean_web_tlds", "tagclean_video_remove"
 _VIDEO_FILLER = {"free", "music", "out", "now"}
 _UNDERSCORE_SINGLE = {"space": " ", "hyphen": "-"}
 _UNDERSCORE_DOUBLE = {"dash": " - ", "endash": " \u2013 ", "pipe": " | ", "space": " "}
-_FEAT_WORDS = {"feat": "feat.", "ft": "ft.", "featuring": "featuring"}
 _RS_CACHE: list = [None, None]
 
 
@@ -257,8 +257,6 @@ def _ruleset() -> SimpleNamespace:
         remix_dash=re.compile(
             r"\s+[-\u2013]\s+((?:(?!\s[-\u2013]\s)[^()\[\]])*?\b(?:" + remix_alt + r"))\s*$", re.I),
         remix_trailing=re.compile(r"\s*[(\[]" + inner + r"[)\]]\s*$", re.I),
-        feat_word=_FEAT_WORDS[vals["tagwatch_feat_word"]],
-        feat_bracket=vals["tagwatch_feat_bracket"],
         case_style=vals["tagwatch_case_style"],
         quotes_style=vals["tagwatch_quotes_style"],
     )
@@ -327,13 +325,6 @@ def _fix_spaces(value: str, field: str) -> str:
 
 _TRACKNO_TITLE_RE = re.compile(
     r"^(?:(?:0\d{1,2}|\d{1,3})\s*[-\u2013._)]\s+|0\d{1,2}\s*[-\u2013._)])(?=\S)")
-_FEAT_WORD_RE = re.compile(r"\b(?:ft\.?|featuring|feat\.?)(?=\s)", re.I)
-# Klammerform "(feat. X)" bzw. nackte Form "feat. X" (bis zur naechsten
-# Klammer, einem " - " oder dem Ende); Namen enthalten nie Klammern.
-_FEAT_STRUCT_RE = re.compile(
-    r"[(\[]\s*(?:ft|feat|featuring)\.?\s+([^()\[\]]+?)\s*[)\]]"
-    r"|(?<![(\[\w.])\b(?:ft|feat|featuring)\.?\s+([^()\[\]]+?)(?=\s[(\[]|\s[-\u2013]\s|$)",
-    re.I)
 _TYPO_MAP = str.maketrans({"\u2019": "'", "\u2018": "'", "\u00b4": "'", "`": "'",
                            "\u201c": '"', "\u201d": '"', "\u201e": '"',
                            "\u201a": "'", "\u00ab": '"', "\u00bb": '"'})
@@ -363,25 +354,6 @@ def _remix_clean(title: str) -> str:
     other = rs.remix_square if rs.remix_style == "round" else rs.remix_round
     v = other.sub(lambda m: f"{o}{m.group(1)}{c}", v)
     return rs.remix_dash.sub(lambda m: f" {o}{m.group(1)}{c}", v)
-
-
-def _feat_clean(value: str, field: str = "title") -> str:
-    """Featuring in die gewaehlte Schreibweise (Wort + Klammer) bringen.
-    Im Interpretenfeld nie mit Klammer."""
-    rs = _ruleset()
-    word = rs.feat_word
-    bracket = "none" if field == "artist" else rs.feat_bracket
-
-    def render(m: re.Match) -> str:
-        names = (m.group(1) or m.group(2) or "").strip()
-        text = f"{word} {names}"
-        if bracket == "round":
-            return f"({text})"
-        if bracket == "square":
-            return f"[{text}]"
-        return text
-    v = _FEAT_STRUCT_RE.sub(render, value)
-    return _FEAT_WORD_RE.sub(word, v)
 
 
 def _title_case(value: str) -> str:
@@ -468,10 +440,6 @@ def _check_cleanup(artist: str, title: str, fields: dict) -> list[dict]:
             c = _remix_clean(cur)
             if c != cur:
                 add(REMIX_NOTATION, c)
-        if rules["tagwatch_feat"] and field in ("title", "artist"):
-            c = _feat_clean(cur, field)
-            if c != cur:
-                add(FEAT_NOTATION, c)
         if (rules["tagwatch_case"] and field in ("title", "album")
                 and " " in cur.strip()):
             letters = [ch for ch in cur if ch.isalpha()]
@@ -779,30 +747,58 @@ def detect(path: str, codec_family: str = "") -> list[dict]:
     return issues
 
 
-def fix_safe(path: str) -> tuple[list[str], dict]:
-    """Behebt alle sicher automatisch behebbaren Probleme (AUTO_FIXABLE) in
-    einem einzigen write_tags()-Aufruf. Liefert (behobene Codes, geschriebene
-    Feldwerte) -- Letzteres, damit Aufrufer (server.py) sowohl die DB-Spalten
-    als auch eine Drop-Zeile ohne DB-Eintrag direkt auf den neuen Stand
-    bringen koennen, ohne die Datei erneut zu lesen. Wirft tags.TagError wie
-    write_tags() selbst, wenn das Schreiben fehlschlaegt."""
-    found = detect(path)
-    auto = [i for i in found if i["code"] in AUTO_FIXABLE]
-    if not auto:
-        return [], {}
+def plan_safe(path: str, codes=None, skip_fields=()) -> dict:
+    """Was fix_safe() an dieser Datei aendern wuerde, ohne zu schreiben (Vorschau
+    des Quick Fix, /api/fix-tag-issues-preview). 'codes' grenzt auf diese
+    Auffaelligkeiten ein (None = alle sicher behebbaren), 'skip_fields' laesst
+    Felder aus -- Textfelder mit ihrem Namen, dazu "id3" (Versionsanhebung)
+    und "cover" (Verkleinern).
 
+    Liefert {"codes": [...], "fields": {feld: neu}, "old": {feld: alt},
+    "field_codes": {feld: [codes]}, "other": {"id3"|"cover": [codes]}}.
+    Die ID3-Anhebung passiert beim Schreiben eines beliebigen Felds ohnehin
+    mit (write_tags() erzwingt v2.3), "id3" auszulassen wirkt also nur, wenn
+    sonst nichts geschrieben wird."""
+    found = detect(path)
+    allow = set(codes) if codes is not None else None
+    skip = set(skip_fields or ())
     fields: dict = {}
-    fixed_codes: set[str] = set()
-    for issue in auto:
+    old: dict = {}
+    field_codes: dict = {}
+    other: dict = {}
+    fixed: set[str] = set()
+
+    def note(field, code, value):
+        old.setdefault(field, value or "")
+        lst = field_codes.setdefault(field, [])
+        if code not in lst:
+            lst.append(code)
+        fixed.add(code)
+
+    for issue in found:
         code, field = issue["code"], issue["field"]
+        if code not in AUTO_FIXABLE or (allow is not None and code not in allow):
+            continue
         if code in (ID3_V1_ONLY, ID3_V22):
-            fixed_codes.add(code)
+            if "id3" in skip:
+                continue
+            other.setdefault("id3", []).append(code)
+            fixed.add(code)
+            continue
+        if code == OVERSIZED_COVER:
+            # Eigener Schreibweg (write_cover()), erst fix_safe() verkleinert.
+            if "cover" in skip:
+                continue
+            other.setdefault("cover", []).append(code)
+            fixed.add(code)
+            continue
+        if not field or field in skip:
             continue
         if code == UNRESOLVED_GENRE_CODE:
             fields["genre"] = issue["suggestion"] or ""
-            fixed_codes.add(code)
+            note("genre", code, issue.get("value"))
             continue
-        if field and field in _STRING_FIELDS:
+        if field in _STRING_FIELDS:
             current = fields.get(field, issue.get("value"))
             if current is None:
                 continue
@@ -815,27 +811,40 @@ def fix_safe(path: str) -> tuple[list[str], dict]:
             elif code == UNDERSCORE_SPACES:
                 cleaned = _fix_spaces(cleaned, field)
             fields[field] = cleaned
-            fixed_codes.add(code)
-        elif code == DUPLICATE_FRAMES and field:
+            note(field, code, issue.get("value"))
+        elif code == DUPLICATE_FRAMES:
             # Feld stand nicht schon oben (kein Steuerzeichen/Whitespace/NFC-
             # Problem) -- trotzdem in 'fields' aufnehmen, damit setall() beim
             # Schreiben greift und die Mehrfach-Frames einsammelt.
             fields.setdefault(field, issue.get("value") or "")
-            fixed_codes.add(code)
-        elif code == OVERSIZED_COVER:
-            # Eigener Schreibweg (write_cover() statt write_tags()) -- laeuft
-            # deshalb sofort statt erst am Ende gesammelt mit den Textfeldern.
-            cover = tags_mod.read_cover(path)
-            if cover is None:
-                continue
-            resized = _resize_cover(cover[0])
-            if resized is None:
-                continue                                 # eigentlich CORRUPT_COVER
-            tags_mod.write_cover(path, resized[0], resized[1])
-            fixed_codes.add(code)
+            note(field, code, issue.get("value"))
+    return {"codes": sorted(fixed), "fields": fields, "old": old,
+            "field_codes": field_codes, "other": other}
 
-    if not fields and not any(
-            c in (ID3_V1_ONLY, ID3_V22, OVERSIZED_COVER) for c in fixed_codes):
+
+def fix_safe(path: str, codes=None, skip_fields=()) -> tuple[list[str], dict]:
+    """Behebt die sicher automatisch behebbaren Probleme (AUTO_FIXABLE, ggf.
+    eingegrenzt wie plan_safe()) in einem einzigen write_tags()-Aufruf.
+    Liefert (behobene Codes, geschriebene Feldwerte) -- Letzteres, damit
+    Aufrufer (server.py) sowohl die DB-Spalten als auch eine Drop-Zeile ohne
+    DB-Eintrag direkt auf den neuen Stand bringen koennen, ohne die Datei
+    erneut zu lesen. Wirft tags.TagError wie write_tags() selbst, wenn das
+    Schreiben fehlschlaegt. Die Rechnung steht nur in plan_safe() -- Vorschau
+    und Schreiben duerfen nie auseinanderlaufen."""
+    plan = plan_safe(path, codes, skip_fields)
+    if not plan["codes"]:
+        return [], {}
+    fixed_codes = set(plan["codes"])
+    fields = plan["fields"]
+    if "cover" in plan["other"]:
+        cover = tags_mod.read_cover(path)
+        resized = _resize_cover(cover[0]) if cover is not None else None
+        if resized is None:
+            fixed_codes.discard(OVERSIZED_COVER)         # eigentlich CORRUPT_COVER
+        else:
+            tags_mod.write_cover(path, resized[0], resized[1])
+
+    if not fields and not (fixed_codes & {ID3_V1_ONLY, ID3_V22, OVERSIZED_COVER}):
         return [], {}
 
     tags_mod.write_tags(path, fields)

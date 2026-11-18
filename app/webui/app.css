@@ -758,6 +758,11 @@
      hier bewusst gar nicht auf -- die raeumt der Nutzer in Rekordbox selbst
      auf, siehe server._post_rekordbox_scan(). */
   .rbfixrow { padding:8px 10px; }
+  /* Abschnittskopf in der Music-Aufraeum-Vorschau (#musicFixOverlay). */
+  .picksub { padding:8px 10px 4px; font-size:11px; font-weight:600; letter-spacing:.04em;
+    text-transform:uppercase; color:var(--dim); }
+  .picksub + .rbfixrow { border-top:0; }
+  .rbfixrow label:has(input:disabled) { cursor:default; opacity:.6; }
   .rbfixrow + .rbfixrow { border-top:1px solid var(--line); }
   .rbfixrow label { display:flex; align-items:center; gap:6px; cursor:pointer; }
   .rbfixrow .path { color:var(--dim); font-size:12px; margin:2px 0 0 22px;
@@ -1621,6 +1626,8 @@ body.overlay-open { overflow:hidden; }
 .linkpick .lpdir { color:var(--dim); }
 /* Macht sonst unsichtbaren Leerraum (fuehrend/folgend/doppelt) sichtbar --
    siehe visualizeMergeValue() in app.js. */
+.mergediff { background:var(--susp-bg); color:var(--susp); border-radius:3px; font-weight:700;
+  box-shadow:0 0 0 1px var(--susp-bg); }
 .ws-marker { background:var(--susp-bg); color:var(--susp); border-radius:3px;
              outline:1px solid var(--susp); outline-offset:-1px; }
 
@@ -1734,6 +1741,11 @@ button.act.failed { border-color:var(--fake); color:var(--fake); background:var(
   color:var(--accent); cursor:pointer; line-height:1; }
 .tagsreset:hover { background:color-mix(in srgb, var(--accent) 15%, transparent); }
 .tagsreset svg { width:13px; height:13px; }
+/* Mehrfachbearbeitung: "Bei allen Tracks leeren" -- dezent, rot erst beim Ueberfahren;
+   sobald das Feld markiert ist (.chg), steht der Zuruecksetzen-Knopf dort. */
+.tagsreset.tagsclear { color:var(--dim); }
+.tagsreset.tagsclear:hover { color:var(--fake); background:color-mix(in srgb, var(--fake) 15%, transparent); }
+.setfield.chg > label .tagsclear { display:none; }
 /* Tempowechsel in den Titel (syncTagsTempoBtn()): wie der Bereinigungsvorschlag ein
    Knopf unter dem Feld, "on" = uebernommen, Klick nimmt es zurueck. */
 .tagsuggest.on { background:color-mix(in srgb, var(--accent) 14%, var(--bg)); border-style:solid; }
@@ -1763,7 +1775,7 @@ button.act.primary:hover { background:color-mix(in srgb, var(--accent) 85%, #000
 .tagscover.dragover .tagscover-empty { border-color:var(--accent); color:var(--accent);
                     background:var(--accent-bg); }
 .tagscover.dragover img { outline:2px dashed var(--accent); outline-offset:2px; }
-.tagscover-actions { display:flex; justify-content:center; gap:6px; width:100%; }
+.tagscover-actions { display:flex; flex-wrap:wrap; justify-content:center; gap:6px; width:100%; }
 /* Feste 4-Spalten-Aufteilung statt des auto-fit-Rasters von .setfields
    (Einstellungen-Dialog) -- braucht definierte Spaltenbreiten fuer die
    Viertelfelder Jahr/BPM. Ohne eigene Klasse ist ein Feld eine Spalte breit
@@ -3308,3 +3320,91 @@ body.listloading #tb { display:none; }
 .shopfav .shopfav-fb { display:none; }
 .shopfav.nofav img { display:none; }
 .shopfav.nofav .shopfav-fb { display:inline-flex; }
+
+/* ── Suchen & Ersetzen (#replaceOverlay, replace.js) ─────────────────── */
+.confirmbox.replacebox { max-width:860px; width:94vw; }
+.replacescope { color:var(--dim); font-size:13px; margin:-6px 0 12px; }
+.replaceinputs { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:12px 10px; }
+.replaceinputs > label, .rpfind { display:flex; flex-direction:column; gap:4px; font-size:13px; }
+.rpfindlabel { display:flex; align-items:center; gap:2px; }
+.rpfindlabel .sethelpq { margin-left:2px; }
+.replaceinputs input[type=text], .replaceruletools select {
+  background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:7px;
+  padding:7px 9px; font:inherit; font-size:14px; min-width:0; }
+.replaceruletools select { appearance:none; -webkit-appearance:none;
+  background:var(--bg) var(--select-arrow) no-repeat right 10px center / 13px; padding-right:30px; }
+.rpgroupline, .rrgroup { grid-column:1 / -1; display:grid; grid-template-columns:72px minmax(0,1fr); gap:10px; align-items:start; }
+.rplabel, .rrlabel { font-size:12px; color:var(--dim); padding-top:6px; }
+/* Chips: Feld- und Optionsauswahl (Dialog und Einstellungen); weitere Optionen
+   kommen nur als Eintrag in replaceOptionDefs() dazu. */
+.rpchips { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.rpchip { display:inline-flex; align-items:center; gap:6px; padding:5px 11px; border:1px solid var(--line); border-radius:6px;
+  background:transparent; color:var(--dim); font:inherit; font-size:13px; cursor:pointer; line-height:1.4; }
+.rpchip:hover { border-color:var(--accent); color:var(--fg); }
+.rpchip.on { background:color-mix(in srgb, var(--accent) 14%, var(--bg)); border-color:var(--accent); color:var(--fg); }
+.rpchipk { font-weight:600; font-size:11px; padding:0 5px; border-radius:4px; background:color-mix(in srgb, var(--fg) 9%, transparent); }
+.rpchip.on .rpchipk { background:var(--accent); color:var(--on-accent); }
+.rpchipsep { width:1px; height:18px; background:var(--line); margin:0 2px; }
+.replacetools .act, .replacetools select { height:32px; box-sizing:border-box; }
+.replacetools .act { padding-top:0; padding-bottom:0; font-size:13px; }
+.replacetools { display:flex; flex-wrap:wrap; align-items:center; gap:6px; margin:12px 0 8px; }
+.replaceruletools { display:flex; align-items:center; gap:6px; margin-right:auto; }
+.replaceruletools select { font-size:13px; padding-top:0; padding-bottom:0; max-width:260px; }
+.replacecount { color:var(--dim); font-size:13px; margin-left:8px; font-variant-numeric:tabular-nums; }
+.replacelist { max-height:46vh; overflow-y:auto; border:1px solid var(--line); border-radius:8px; }
+.rpgroup { border-bottom:1px solid var(--line); }
+.rpgroup:last-child { border-bottom:none; }
+.rphead { display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer; font-size:13px; position:sticky; top:0; z-index:1;
+  background:color-mix(in srgb, var(--fg) 6%, var(--card)); border-bottom:1px solid var(--line); }
+.rpgroup.off .rphead { cursor:default; color:var(--dim); background:var(--card); border-bottom-color:var(--line); }
+/* Haken wie in der Duplikate-Liste (.dupkeep): Kreis, bei Auswahl gruen */
+.rpcheck { border:none; background:none; border-radius:999px; padding:3px; line-height:0; cursor:pointer;
+  display:inline-flex; align-items:center; color:var(--dim); }
+.rpcheck svg { width:18px; height:18px; }
+.rpcheck.on { color:var(--ok); }
+.rpcheck.mixed { color:var(--accent); }
+.rpcheck:hover { color:var(--fg); background:rgba(127,127,127,.14); }
+.rpcheck.on:hover { color:var(--ok); }
+.rptitle { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rpartist { color:var(--dim); }
+.rpbadge { flex:0 0 auto; font-size:12px; color:var(--dim); }
+.rpchanges { padding:2px 0 6px 0; }
+.rpchange { display:grid; grid-template-columns:26px 104px minmax(0,1fr) 14px minmax(0,1fr); gap:8px; align-items:center;
+  padding:3px 12px 3px 30px; font-size:13px; cursor:pointer; }
+.rpchange:hover:not(.off) { background:rgba(127,127,127,.07); }
+.rpchange > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.rpchange .rpfield, .rpchange .rparrow { color:var(--dim); }
+.rpchange.off { cursor:default; color:var(--dim); }
+.rphead .rpicon { display:inline-flex; color:var(--dim); width:15px; }
+.rphead .rpicon svg { width:14px; height:14px; }
+.rpstate { color:var(--susp); font-size:12px; }
+/* Quick-Fix-Vorschau: Eintraege ohne Vorher/Nachher-Wert (ID3, Cover, doppelte Frames) */
+.rpnote { color:var(--dim); font-style:italic; }
+mark.rpold { background:color-mix(in srgb, var(--fake) 22%, transparent); color:inherit; border-radius:3px; padding:0 1px; }
+mark.rpnew { background:color-mix(in srgb, var(--ok) 24%, transparent); color:inherit; border-radius:3px; padding:0 1px; }
+mark.rpcut { font-size:11px; padding:0 4px; }
+.rpempty, .rpmore { padding:14px 12px; color:var(--dim); font-size:13px; }
+.replacerename { display:flex; align-items:center; gap:8px; margin-top:12px; font-size:13px; cursor:pointer; }
+@media (max-width:720px) {
+  .replaceinputs { grid-template-columns:1fr; }
+  .rpchange { grid-template-columns:22px minmax(0,1fr) minmax(0,1fr); padding-left:22px; }
+  .rpchange .rpfield, .rpchange .rparrow { display:none; }
+}
+/* Einstellungen -> Ersetzungsregeln: je Regel eine Karte */
+.rrcard { border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:10px; display:flex; flex-direction:column; gap:10px; background:var(--bg); }
+.rrcard.off { opacity:.6; }
+.rrline { display:grid; grid-template-columns:24px minmax(0,1fr) 16px minmax(0,1fr) 32px; gap:8px; align-items:center; }
+.rrarrow { text-align:center; color:var(--dim); }
+.rrline input[type=text] { background:var(--card); color:var(--fg); border:1px solid var(--line);
+  border-radius:7px; padding:7px 9px; font:inherit; font-size:14px; min-width:0; }
+.rrline input[type=checkbox] { justify-self:center; }
+.rrcard .rrgroup { grid-template-columns:64px minmax(0,1fr); }
+/* Innenabstand fuer Bloecke ohne .setfield (Knoepfe, Karten) im Einstellungs-Dialog */
+.setpad { padding:12px 12px 14px; }
+.setactions { display:flex; gap:10px; align-items:center; margin-top:4px; }
+/* Auffaelligkeiten: eigene Kategorie der Ersetzungsregeln in der Bubble-Reihe */
+.rulegroupbreak { flex:0 0 100%; height:0; }
+.rulegrouplabel { align-self:center; font-size:12px; color:var(--dim); margin-right:2px; }
+.genrebubble.rulebubble .rbicon { display:inline-flex; color:var(--accent); }
+.genrebubble.rulebubble .rbicon svg { width:13px; height:13px; }
+.genrebubble.rulebubble.active .rbicon { color:var(--on-accent); }

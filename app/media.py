@@ -13,6 +13,7 @@ import os
 import re
 import shutil
 import subprocess
+import unicodedata
 import webbrowser
 from functools import lru_cache
 from pathlib import Path
@@ -1138,8 +1139,14 @@ def music_set_location(persistent_id: str, new_path: str) -> None:
             or "Music.app konnte den Ort nicht ändern")
 
 
-def remove_from_music_library(path: str, title: str | None = None) -> tuple[int, bool]:
+def remove_from_music_library(path: str, title: str | list[str] | None = None) -> tuple[int, bool]:
     """
+    'title' darf eine Liste sein (aktueller Titel, Dateiname, zuletzt an Music.app
+    gegebener Titel): Music.app kennt den Track unter dem Titel, den es zuletzt
+    gesehen hat -- hat TrackTab ihn danach geaendert und Music.app das nie
+    erfahren, findet der aktuelle Titel nichts (so entstanden 14 Karteileichen,
+    siehe server._post_trash(), Rueckfall dort ueber music_file_tracks()).
+
     Entfernt den Track mit dieser 'location' aus der Music.app-Bibliothek --
     Gegenstueck zu add_to_music_library(), aufgerufen wenn eine Datei in den
     Papierkorb wandert und eine Music App eingestellt ist (server._post_trash(),
@@ -1174,74 +1181,233 @@ def remove_from_music_library(path: str, title: str | None = None) -> tuple[int,
     _CLOUD_LIBRARY_STATUSES) -- server._post_trash() gibt das als Hinweis an
     die Oberflaeche weiter, NICHT als Fehler.
     """
-    if not title:
+    titles = [title] if isinstance(title, str) else list(title or [])
+    titles = list(dict.fromkeys(t for t in titles if t))
+    if not titles:
+        return 0, False
+    # Suche ueber music_find_tracks(): erkennt auch einen Track, den Music.app
+    # beim Lesen seines Orts gerade umsortiert hat (Tags kurz vorher geaendert).
+    hits = music_find_tracks([{"path": path, "titles": titles}])[0]
+    if not hits:
         return 0, False
     script = (
         'on run argv\n'
-        '  set thePath to item 1 of argv\n'
-        '  set theTitle to item 2 of argv\n'
-        '  set candidates to {}\n'
-        '  tell application "Music"\n'
-        '    try\n'
-        '      set candidates to (every track of library playlist 1 whose name is theTitle)\n'
-        '    end try\n'
-        '  end tell\n'
-        '  set theMatches to {}\n'
-        '  set theStatuses to {}\n'
-        '  repeat with c in candidates\n'
-        '    set theLoc to missing value\n'
+        '  set out to {}\n'
+        '  repeat with pid in argv\n'
         '    tell application "Music"\n'
         '      try\n'
-        '        set theLoc to location of c\n'
-        '      end try\n'
-        '    end tell\n'
-        '    if theLoc is not missing value then\n'
-        '      try\n'
-        '        set locPath to POSIX path of theLoc\n'
-        '        if locPath is thePath then\n'
-        '          set end of theMatches to c\n'
-        '          set theStatus to "unknown"\n'
-        '          tell application "Music"\n'
-        '            try\n'
-        '              set theStatus to (cloud status of c) as string\n'
-        '            end try\n'
-        '          end tell\n'
-        '          set end of theStatuses to theStatus\n'
-        '        end if\n'
-        '      end try\n'
-        '    end if\n'
-        '  end repeat\n'
-        '  set n to count of theMatches\n'
-        '  if n > 0 then\n'
-        '    tell application "Music"\n'
-        '      repeat with m in theMatches\n'
+        '        set m to (first track of library playlist 1 whose persistent ID is (pid as text))\n'
+        '        set theStatus to "unknown"\n'
         '        try\n'
-        '          delete m\n'
+        '          set theStatus to (cloud status of m) as string\n'
         '        end try\n'
-        '      end repeat\n'
+        '        delete m\n'
+        '        set end of out to theStatus\n'
+        '      end try\n'
         '    end tell\n'
-        '  end if\n'
+        '  end repeat\n'
         '  set AppleScript\'s text item delimiters to ","\n'
-        '  set statusLine to theStatuses as text\n'
-        '  set AppleScript\'s text item delimiters to ""\n'
-        '  return (n as text) & "|" & statusLine\n'
+        '  return out as text\n'
         'end run'
     )
-    result = subprocess.run(["osascript", "-e", script, str(path), str(title)],
+    result = subprocess.run(["osascript", "-e", script, *[pid for pid, _ in hits]],
                             capture_output=True, timeout=30)
     if result.returncode != 0:
         raise MediaToolMissing(
             result.stderr.decode("utf-8", "replace").strip()[:250]
             or "Music.app konnte den Track nicht entfernen")
+    statuses = [s.strip().lower() for s in result.stdout.decode("utf-8", "replace").split(",")
+                if s.strip()]
+    cloud_flag = bool(set(statuses) & _CLOUD_LIBRARY_STATUSES)
+    return len(statuses), cloud_flag
+
+
+def music_file_tracks() -> list[dict]:
+    """
+    Alle Datei-Tracks der Music.app-Bibliothek in EINEM Durchgang: je Track
+    {"pid", "path" ('' = Datei fehlt, in Music.app das Ausrufezeichen), "name",
+    "artist", "added" (Unix-Zeit), "plays"}.
+
+    Anders als music_added_dates() (ein Apple Event je Track, an ~11.000 Tracks
+    rund 6 Minuten) geht das hier als Sammelabfrage ueber 'every FILE track':
+    der Fehler -1728, an dem 'location of every track' scheitert, kommt von den
+    Cloud-Eintraegen ('shared track' ohne Eigenschaft 'location') -- die sind
+    keine 'file track' und fallen so heraus. Ein Track mit verschwundener Datei
+    liefert in der Liste 'missing value'. Gemessen an 10.857 Tracks: ~22 s.
+    Pfad- und Datumsumwandlung ausserhalb des tell-Blocks (siehe
+    add_to_music_library()/music_added_dates()).
+    """
+    script = (
+        'tell application "Music"\n'
+        '  set locList to location of every file track of library playlist 1\n'
+        '  set pidList to persistent ID of every file track of library playlist 1\n'
+        '  set nameList to name of every file track of library playlist 1\n'
+        '  set artistList to artist of every file track of library playlist 1\n'
+        '  set dateList to date added of every file track of library playlist 1\n'
+        '  set countList to played count of every file track of library playlist 1\n'
+        'end tell\n'
+        'set epoch to (current date)\n'
+        'set year of epoch to 1970\n'
+        'set month of epoch to 1\n'
+        'set day of epoch to 1\n'
+        'set time of epoch to 0\n'
+        'set out to {}\n'
+        'repeat with i from 1 to (count of pidList)\n'
+        '  set x to item i of locList\n'
+        '  set thePath to ""\n'
+        '  if x is not missing value then\n'
+        '    try\n'
+        '      set thePath to POSIX path of x\n'
+        '    end try\n'
+        '  end if\n'
+        '  set secs to 0\n'
+        '  try\n'
+        '    set secs to ((item i of dateList) - epoch) div 1\n'
+        '  end try\n'
+        '  set end of out to (item i of pidList) & tab & thePath & tab & (secs as text) & tab & '
+        '((item i of countList) as text) & tab & (item i of artistList) & tab & (item i of nameList)\n'
+        'end repeat\n'
+        'set AppleScript\'s text item delimiters to linefeed\n'
+        'return out as text\n'
+    )
+    result = subprocess.run(["osascript", "-e", script], capture_output=True, timeout=600)
+    if result.returncode != 0:
+        raise MediaToolMissing(
+            result.stderr.decode("utf-8", "replace").strip()[:300]
+            or "Music.app-Bibliothek konnte nicht gelesen werden")
+    tracks: list[dict] = []
+    for line in result.stdout.decode("utf-8", "replace").split("\n"):
+        parts = line.split("\t", 5)
+        if len(parts) < 6 or not parts[0]:
+            continue
+        try:
+            added = float(parts[2].replace(",", "."))
+            plays = int(parts[3] or 0)
+        except ValueError:
+            added, plays = 0.0, 0
+        tracks.append({"pid": parts[0], "path": parts[1], "added": added, "plays": plays,
+                       "artist": parts[4], "name": parts[5]})
+    return tracks
+
+
+def music_playlists_of(pids: list[str]) -> dict[str, list[str]]:
+    """Normale Playlisten (keine smarten, keine Sonderlisten), in denen diese
+    Tracks stehen: {pid: [Playlist-Name, ...]}. Fuer die Duplikat-Pruefung --
+    entfernt man einen Bibliothekseintrag, verschwindet er auch aus allen
+    Playlisten. Eine Abfrage je Playlist und Track (an 13 Playlisten < 1 s)."""
+    if not pids:
+        return {}
+    script = (
+        'on run argv\n'
+        '  set out to {}\n'
+        '  tell application "Music"\n'
+        '    set ps to every user playlist whose smart is false\n'
+        '    repeat with p in ps\n'
+        '      try\n'
+        '        if special kind of p is none then\n'
+        '          repeat with pid in argv\n'
+        '            if (count of (every track of p whose persistent ID is (pid as text))) > 0 then '
+        'set end of out to (pid as text) & tab & (name of p)\n'
+        '          end repeat\n'
+        '        end if\n'
+        '      end try\n'
+        '    end repeat\n'
+        '  end tell\n'
+        '  set AppleScript\'s text item delimiters to linefeed\n'
+        '  return out as text\n'
+        'end run'
+    )
+    result = subprocess.run(["osascript", "-e", script, *pids], capture_output=True, timeout=300)
+    if result.returncode != 0:
+        raise MediaToolMissing(
+            result.stderr.decode("utf-8", "replace").strip()[:300]
+            or "Music.app-Playlisten konnten nicht gelesen werden")
+    found: dict[str, list[str]] = {}
+    for line in result.stdout.decode("utf-8", "replace").split("\n"):
+        pid, sep, name = line.partition("\t")
+        if sep:
+            found.setdefault(pid, []).append(name)
+    return found
+
+
+def music_delete_tracks(pids: list[str]) -> list[str]:
+    """Entfernt Bibliothekseintraege ueber ihre persistent ID und liefert die
+    tatsaechlich entfernten IDs. Achtung: liegt die Datei im Medienordner von
+    Music.app, legt Music.app sie dabei SELBST in den Papierkorb und raeumt den
+    leeren Ordner weg (an einer Testdatei bestaetigt) -- wer nur einen von zwei
+    Eintraegen derselben Datei entfernen will, muss die Datei vorher sichern
+    (siehe server._post_music_cleanup())."""
+    if not pids:
+        return []
+    script = (
+        'on run argv\n'
+        '  set out to {}\n'
+        '  repeat with pid in argv\n'
+        '    tell application "Music"\n'
+        '      try\n'
+        '        set ts to (every track of library playlist 1 whose persistent ID is (pid as text))\n'
+        '        if (count of ts) > 0 then\n'
+        '          delete item 1 of ts\n'
+        '          set end of out to (pid as text)\n'
+        '        end if\n'
+        '      end try\n'
+        '    end tell\n'
+        '  end repeat\n'
+        '  set AppleScript\'s text item delimiters to linefeed\n'
+        '  return out as text\n'
+        'end run'
+    )
+    result = subprocess.run(["osascript", "-e", script, *pids], capture_output=True, timeout=600)
+    if result.returncode != 0:
+        raise MediaToolMissing(
+            result.stderr.decode("utf-8", "replace").strip()[:300]
+            or "Music.app konnte die Einträge nicht entfernen")
+    return [p for p in result.stdout.decode("utf-8", "replace").split("\n") if p]
+
+
+def music_track_location(pid: str) -> str | None:
+    """POSIX-Pfad eines Bibliothekseintrags ('' = Datei fehlt, None = Eintrag
+    unbekannt). Kontrolle nach dem Entfernen eines Duplikats."""
+    script = (
+        'on run argv\n'
+        '  set x to missing value\n'
+        '  tell application "Music"\n'
+        '    set ts to (every track of library playlist 1 whose persistent ID is (item 1 of argv))\n'
+        '    if (count of ts) = 0 then return "-"\n'
+        '    try\n'
+        '      set x to location of item 1 of ts\n'
+        '    end try\n'
+        '  end tell\n'
+        '  if x is missing value then return ""\n'
+        '  return "/" & (POSIX path of x)\n'
+        'end run'
+    )
+    result = subprocess.run(["osascript", "-e", script, pid], capture_output=True, timeout=60)
+    if result.returncode != 0:
+        raise MediaToolMissing(result.stderr.decode("utf-8", "replace").strip()[:300])
     out = result.stdout.decode("utf-8", "replace").strip()
-    count_part, _, status_part = out.partition("|")
-    try:
-        count = int(count_part)
-    except ValueError:
-        count = 0
-    statuses = {s.strip().lower() for s in status_part.split(",") if s.strip()}
-    cloud_flag = bool(statuses & _CLOUD_LIBRARY_STATUSES)
-    return count, cloud_flag
+    if out == "-":
+        return None
+    return out[1:] if out.startswith("/") else ""
+
+
+def music_set_location(pid: str, path: str) -> None:
+    """Ort eines Bibliothekseintrags fest auf diese Datei setzen (nach dem
+    Entfernen eines Duplikats, siehe server._post_music_cleanup()).
+    Koerzierung ausserhalb des tell-Blocks."""
+    script = (
+        'on run argv\n'
+        '  set f to (POSIX file (item 2 of argv)) as alias\n'
+        '  tell application "Music"\n'
+        '    set t to item 1 of (every track of library playlist 1 whose persistent ID is (item 1 of argv))\n'
+        '    set location of t to f\n'
+        '  end tell\n'
+        'end run'
+    )
+    result = subprocess.run(["osascript", "-e", script, pid, path], capture_output=True, timeout=60)
+    if result.returncode != 0:
+        raise MediaToolMissing(result.stderr.decode("utf-8", "replace").strip()[:300]
+                               or "Ort in Music.app konnte nicht gesetzt werden")
 
 
 def music_added_date_for(path: str, title: str | None) -> float | None:
@@ -2066,8 +2232,24 @@ def set_track_artwork(path: str, title: str, data: bytes, mime: str) -> int:
         return 0
 
 
+def _parse_set_result(stdout: bytes, moves: list | None) -> int:
+    """Ausgabe der Setz-Skripte: erste Zeile die Zahl gesetzter Tracks, danach je
+    Zeile "alter Pfad<TAB>neuer Pfad" fuer Dateien, die Music.app dabei umsortiert
+    hat (Interpret/Album bestimmen den Ordner in seinem Medienordner)."""
+    lines = stdout.decode("utf-8", "replace").split("\n")
+    if moves is not None:
+        for line in lines[1:]:
+            old, sep, new = line.rstrip("\r").partition("\t")
+            if sep and old and new:
+                moves.append((old, new))
+    try:
+        return int(lines[0].strip())
+    except ValueError:
+        return 0
+
+
 def _set_tracks_field_by_old(items: list[tuple[str, str]], value: str, prop: str,
-                             old_value: str) -> int:
+                             old_value: str, moves: list | None = None) -> int:
     """
     Schneller Weg fuer _set_tracks_field(): EINE Abfrage "alle Tracks, deren
     <prop> noch der alte Wert ist" statt einer 'whose name is'-Abfrage ueber
@@ -2095,21 +2277,28 @@ def _set_tracks_field_by_old(items: list[tuple[str, str]], value: str, prop: str
         '    end try\n'
         '  end tell\n'
         '  set matchedCount to 0\n'
+        '  set moved to ""\n'
         '  repeat with i from 1 to (count of locs)\n'
         '    set locPath to ""\n'
         '    try\n'
         '      set locPath to POSIX path of (item i of locs)\n'
         '    end try\n'
         '    if locPath is in thePaths then\n'
+        '      set newLoc to missing value\n'
         '      tell application "Music"\n'
         '        try\n'
         f'          set {prop} of (item i of cands) to theValue\n'
         '          set matchedCount to matchedCount + 1\n'
+        '          set newLoc to location of (item i of cands)\n'
         '        end try\n'
         '      end tell\n'
+        '      try\n'
+        '        set newPath to POSIX path of newLoc\n'
+        '        if newPath is not locPath then set moved to moved & locPath & tab & newPath & linefeed\n'
+        '      end try\n'
         '    end if\n'
         '  end repeat\n'
-        '  return (matchedCount as text)\n'
+        '  return (matchedCount as text) & linefeed & moved\n'
         'end run'
     )
     result = subprocess.run(
@@ -2117,14 +2306,11 @@ def _set_tracks_field_by_old(items: list[tuple[str, str]], value: str, prop: str
         capture_output=True, timeout=120)
     if result.returncode != 0:
         return 0
-    try:
-        return int(result.stdout.decode("utf-8", "replace").strip())
-    except ValueError:
-        return 0
+    return _parse_set_result(result.stdout, moves)
 
 
 def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str,
-                      old_value: str | None = None) -> int:
+                      old_value: str | None = None, moves: list | None = None) -> int:
     """
     Setzt eine Music.app-Track-Eigenschaft (genre/album/artist) bereits
     importierter Tracks direkt -- gemeinsame Grundlage fuer
@@ -2140,7 +2326,10 @@ def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str,
     Tracks ohne Titel werden uebersprungen (kein Vorfilter moeglich, wie bei
     set_track_artwork() -- "ohne Titel sofort 0 statt Voll-Scan").
 
-    Liefert die Gesamtzahl getroffener Tracks ueber alle Paare.
+    Liefert die Gesamtzahl getroffener Tracks ueber alle Paare. moves (optional):
+    Liste, an die (alter Pfad, neuer Pfad) der dabei von Music.app umsortierten
+    Dateien angehaengt wird -- der Ort wird direkt nach dem Setzen gelesen, wie in
+    music_update_tracks().
     """
     items = [(p, t) for p, t in items if t]
     if not items:
@@ -2148,7 +2337,7 @@ def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str,
     if old_value:
         # Schnellweg zuerst; trifft er nichts (Music.app fuehrt den Wert
         # anders als die Datei), greift der Titel-Abgleich unten wie bisher.
-        fast = _set_tracks_field_by_old(items, value, prop, old_value)
+        fast = _set_tracks_field_by_old(items, value, prop, old_value, moves)
         if fast:
             return fast
     paths_text = "\n".join(p for p, _ in items)
@@ -2163,6 +2352,7 @@ def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str,
         '  set theTitles to text items of theTitlesText\n'
         '  set AppleScript\'s text item delimiters to ""\n'
         '  set matchedCount to 0\n'
+        '  set moved to ""\n'
         '  repeat with i from 1 to (count of thePaths)\n'
         '    set thePath to item i of thePaths\n'
         '    set theTitle to item i of theTitles\n'
@@ -2183,18 +2373,24 @@ def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str,
         '        try\n'
         '          set locPath to POSIX path of theLoc\n'
         '          if locPath is thePath then\n'
+        '            set newLoc to missing value\n'
         '            tell application "Music"\n'
         '              try\n'
         f'                set {prop} of c to theValue\n'
         '                set matchedCount to matchedCount + 1\n'
+        '                set newLoc to location of c\n'
         '              end try\n'
         '            end tell\n'
+        '            try\n'
+        '              set newPath to POSIX path of newLoc\n'
+        '              if newPath is not locPath then set moved to moved & locPath & tab & newPath & linefeed\n'
+        '            end try\n'
         '          end if\n'
         '        end try\n'
         '      end if\n'
         '    end repeat\n'
         '  end repeat\n'
-        '  return (matchedCount as text)\n'
+        '  return (matchedCount as text) & linefeed & moved\n'
         'end run'
     )
     result = subprocess.run(
@@ -2204,25 +2400,242 @@ def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str,
         raise MediaToolMissing(
             result.stderr.decode("utf-8", "replace").strip()[:300]
             or f"Music.app-{prop.capitalize()} konnte nicht gesetzt werden")
-    try:
-        return int(result.stdout.decode("utf-8", "replace").strip())
-    except ValueError:
-        return 0
+    return _parse_set_result(result.stdout, moves)
 
 
 def set_tracks_genre(items: list[tuple[str, str]], genre: str,
-                      old: str | None = None) -> int:
-    return _set_tracks_field(items, genre, "genre", old)
+                      old: str | None = None, moves: list | None = None) -> int:
+    return _set_tracks_field(items, genre, "genre", old, moves)
 
 
 def set_tracks_album(items: list[tuple[str, str]], album: str,
-                      old: str | None = None) -> int:
-    return _set_tracks_field(items, album, "album", old)
+                      old: str | None = None, moves: list | None = None) -> int:
+    return _set_tracks_field(items, album, "album", old, moves)
 
 
 def set_tracks_artist(items: list[tuple[str, str]], artist: str,
-                      old: str | None = None) -> int:
-    return _set_tracks_field(items, artist, "artist", old)
+                      old: str | None = None, moves: list | None = None) -> int:
+    return _set_tracks_field(items, artist, "artist", old, moves)
+
+
+# Tag-Feld (wie /api/tags) -> (Music.app-Eigenschaft, Art). Tonart, Stimmung
+# und Cover kennt Music.app hier nicht (Cover laeuft ueber set_track_artwork()).
+MUSIC_TAG_PROPS = {
+    "title": ("name", "text"), "artist": ("artist", "text"), "album": ("album", "text"),
+    "album_artist": ("album artist", "text"), "composer": ("composer", "text"),
+    "genre": ("genre", "text"), "comment": ("comment", "text"),
+    "year": ("year", "int"), "bpm": ("bpm", "int"),
+    "track_no": ("track number", "int"), "track_total": ("track count", "int"),
+    "compilation": ("compilation", "bool"),
+}
+
+
+def music_tag_values(fields: dict) -> dict:
+    """Die Felder eines Tag-Speicherns, die nach Music.app gehen. BPM nur als
+    ganze Zahl: Music.app fuehrt BPM ganzzahlig und schreibt sie beim Setzen
+    in die Datei zurueck -- 127,5 wuerde dort zu 128."""
+    out = {}
+    for key, value in fields.items():
+        if key not in MUSIC_TAG_PROPS:
+            continue
+        if key == "bpm" and value and float(value) != int(float(value)):
+            continue
+        out[key] = value
+    return out
+
+
+def music_find_tracks(items: list[dict]) -> list[list[tuple[str, str]]]:
+    """
+    Sucht zu jedem Eintrag ({"path", "titles": [...]}) die Music.app-Tracks
+    dieser Datei und liefert positionsgleich [(persistent ID, aktueller Pfad)].
+    Titel-Vorfilter ('whose name is'), dann Pfadvergleich in Python.
+
+    Falle (an Testdatei bestaetigt): Liest man 'location' eines Tracks, dessen
+    Datei sich seit dem letzten Lesen geaendert hat (TrackTab hat gerade die
+    Tags geschrieben), liest Music.app die Tags neu aus der Datei, sortiert sie
+    im Medienordner um und liefert schon den NEUEN Pfad. Ein reiner
+    Pfadvergleich gegen den alten Pfad scheitert dann -- so meldete der
+    Tag-Abgleich "nicht gefunden", obwohl Music.app die neuen Tags hatte, und
+    die Datenbank blieb auf dem alten, nicht mehr vorhandenen Pfad stehen.
+    Deshalb wird vorher die Inode jeder Datei gemerkt: Umsortieren ist ein
+    Umbenennen auf demselben Volume, die Inode bleibt gleich.
+    """
+    if not items:
+        return []
+    inodes: list[int | None] = []
+    for it in items:
+        try:
+            inodes.append(os.stat(it["path"]).st_ino)
+        except OSError:
+            inodes.append(None)
+    argv: list[str] = []
+    for it in items:
+        titles = [t for t in dict.fromkeys(it.get("titles") or []) if t]
+        argv.append(str(len(titles)))
+        argv.extend(titles)
+    script = (
+        'on run argv\n'
+        '  set out to {}\n'
+        '  set k to 1\n'
+        '  repeat while k <= (count of argv)\n'
+        '    set n to (item k of argv) as integer\n'
+        '    set end of out to "#"\n'
+        '    repeat with j from 1 to n\n'
+        '      set tt to item (k + j) of argv\n'
+        '      set cands to {}\n'
+        '      tell application "Music"\n'
+        '        try\n'
+        '          set cands to (every track of library playlist 1 whose name is tt)\n'
+        '        end try\n'
+        '      end tell\n'
+        '      repeat with c in cands\n'
+        '        set theLoc to missing value\n'
+        '        set thePid to ""\n'
+        '        tell application "Music"\n'
+        '          try\n'
+        '            set thePid to persistent ID of c\n'
+        '            set theLoc to location of c\n'
+        '          end try\n'
+        '        end tell\n'
+        '        if theLoc is not missing value then\n'
+        '          try\n'
+        '            set end of out to thePid & tab & (POSIX path of theLoc)\n'
+        '          end try\n'
+        '        end if\n'
+        '      end repeat\n'
+        '    end repeat\n'
+        '    set k to k + n + 1\n'
+        '  end repeat\n'
+        '  set AppleScript\'s text item delimiters to linefeed\n'
+        '  return out as text\n'
+        'end run'
+    )
+    result = subprocess.run(["osascript", "-e", script, *argv],
+                            capture_output=True, timeout=60 + 3 * len(items))
+    if result.returncode != 0:
+        raise MediaToolMissing(
+            result.stderr.decode("utf-8", "replace").strip()[:300]
+            or "Music.app-Tracks konnten nicht gesucht werden")
+    groups: list[list[tuple[str, str]]] = []
+    for line in result.stdout.decode("utf-8", "replace").split("\n"):
+        if line == "#":
+            groups.append([])
+        elif groups and "\t" in line:
+            pid, _, path = line.partition("\t")
+            groups[-1].append((pid, path))
+    groups += [[] for _ in range(len(items) - len(groups))]
+    found: list[list[tuple[str, str]]] = []
+    for it, ino, cands in zip(items, inodes, groups):
+        want = unicodedata.normalize("NFC", it["path"]).casefold()
+        seen: dict[str, str] = {}
+        for pid, path in cands:
+            seen.setdefault(pid, path)
+        hits = [(pid, path) for pid, path in seen.items()
+                if unicodedata.normalize("NFC", path).casefold() == want]
+        if not hits and ino is not None:
+            for pid, path in seen.items():
+                try:
+                    if os.stat(path).st_ino == ino:
+                        hits.append((pid, path))
+                except OSError:
+                    pass
+        found.append(hits)
+    return found
+
+
+def music_update_tracks(items: list[dict]) -> list[str | None]:
+    """
+    Setzt Tags bereits importierter Music.app-Tracks -- beliebig viele Tracks in
+    ZWEI osascript-Aufrufen (Start von osascript + Music-Abfrage kostet je Aufruf
+    spuerbar, ein Sammel-Speichern im Tags-Dialog schickt viele Tracks).
+
+    items: [{"path", "titles": [alt, neu], "fields": {feld: wert}}], Felder
+    wie MUSIC_TAG_PROPS. Erst music_find_tracks() (Titel + Pfad, bei von Music.app
+    gerade umsortierten Dateien ueber die Inode), dann Setzen ueber die persistent
+    ID. Liefert positionsgleich je Eintrag den Pfad, unter dem Music.app die Datei
+    NACH dem Setzen fuehrt (Music.app sortiert ihren Medienordner nach Interpret/
+    Album um, der Pfad kann sich also aendern), oder None = nicht gefunden.
+    Eigenschaftsnamen stehen fest im Skript (nur aus MUSIC_TAG_PROPS), alle
+    Werte kommen als argv -- nie in den Skripttext.
+    """
+    if not items:
+        return []
+    found = music_find_tracks(items)
+    argv: list[str] = []
+    blocks: list[str] = []
+
+    def arg(value) -> int:
+        argv.append(str(value))
+        return len(argv)
+
+    for it, hits in zip(items, found):
+        if not hits:
+            blocks.append('  set out to out & "-" & linefeed\n')
+            continue
+        sets = []
+        for key, value in it["fields"].items():
+            prop, kind = MUSIC_TAG_PROPS[key]
+            if kind == "int":
+                n = arg(int(float(value or 0)))
+                expr = f"((item {n} of argv) as integer)"
+            elif kind == "bool":
+                n = arg(1 if value else 0)
+                expr = f"((item {n} of argv) is \"1\")"
+            else:
+                n = arg(value or "")
+                expr = f"(item {n} of argv)"
+            sets.append(f'        try\n          set {prop} of m to {expr}\n        end try\n')
+        pids = [arg(pid) for pid, _ in hits]
+        pid_list = "{" + ", ".join(f"item {n} of argv" for n in pids) + "}"
+        blocks.append(
+            f'  set found to {{}}\n'
+            f'  repeat with thePid in {pid_list}\n'
+            '    tell application "Music"\n'
+            '      try\n'
+            '        set end of found to (first track of library playlist 1 whose persistent ID is (thePid as text))\n'
+            '      end try\n'
+            '    end tell\n'
+            '  end repeat\n'
+            '  if found is {} then\n'
+            '    set out to out & "-" & linefeed\n'
+            '  else\n'
+            '    repeat with m in found\n'
+            '      tell application "Music"\n'
+            + "".join(sets) +
+            '      end tell\n'
+            '    end repeat\n'
+            '    set newLoc to missing value\n'
+            '    tell application "Music"\n'
+            '      try\n'
+            '        set newLoc to location of (item 1 of found)\n'
+            '      end try\n'
+            '    end tell\n'
+            '    set newPath to ""\n'
+            '    try\n'
+            '      set newPath to POSIX path of newLoc\n'
+            '    end try\n'
+            '    set out to out & "+" & newPath & linefeed\n'
+            '  end if\n')
+    script = (
+        'on run argv\n'
+        '  set out to ""\n'
+        + "".join(blocks) +
+        '  return out\n'
+        'end run'
+    )
+    result = subprocess.run(["osascript", "-e", script, *argv],
+                            capture_output=True, timeout=60 + 3 * len(items))
+    if result.returncode != 0:
+        raise MediaToolMissing(
+            result.stderr.decode("utf-8", "replace").strip()[:300]
+            or "Music.app-Tags konnten nicht gesetzt werden")
+    lines = result.stdout.decode("utf-8", "replace").split("\n")
+    out: list[str | None] = []
+    for i, (it, hits) in enumerate(zip(items, found)):
+        line = lines[i] if i < len(lines) else "-"
+        fallback = hits[0][1] if hits else it["path"]
+        out.append(None if not line.startswith("+") else (line[1:] or fallback))
+    return out
 
 
 def clear_track_artwork(path: str, title: str) -> int:

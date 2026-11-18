@@ -15,6 +15,7 @@ import functools
 import os
 import threading
 import time
+import uuid
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -423,25 +424,6 @@ GROUPS = [
             {"key": "tagwatch_remix_words", "type": "list", "width": "half", "break": False,
              "label": "Wörter, die eine Remix-Angabe kennzeichnen",
              "help": "Ein Zusatz in Klammern oder nach „ - “ gilt als Remix-Angabe, wenn er mit einem dieser Wörter endet, z. B. „(Club Remix)“, „(Radio Edit)“, „- Extended Mix“. „(Live)“ bleibt unberührt. Gesucht wird nur im Titel."},
-        ],
-    },
-    {
-        "id": "tagclean_feat", "title": "Titel-Bereinigung: Featuring-Schreibweise",
-        "fields": [
-            {"key": "tagwatch_feat", "type": "bool", "width": "full", "break": True,
-             "label": "Featuring-Schreibweise",
-             "help": "Erkennt „ft.“, „feat“, „feat.“, „featuring“ (auch in Klammern) und meldet Abweichungen von der gewählten Schreibweise."},
-            {"key": "tagwatch_feat_word", "type": "select", "width": "half", "break": True,
-             "label": "Featuring schreiben als",
-             "options": [{"value": "feat", "label": "feat."},
-                         {"value": "ft", "label": "ft."},
-                         {"value": "featuring", "label": "featuring"}]},
-            {"key": "tagwatch_feat_bracket", "type": "select", "width": "half", "break": False,
-             "label": "Featuring-Klammer",
-             "options": [{"value": "none", "label": "Keine: feat. X"},
-                         {"value": "round", "label": "Rund: (feat. X)"},
-                         {"value": "square", "label": "Eckig: [feat. X]"}],
-             "help": "Gilt für Titel; im Interpreten-Feld steht „feat.“ immer ohne Klammer."},
         ],
     },
     {
@@ -867,6 +849,7 @@ def describe() -> dict:
             "column_widths": cfgmod.load().get("column_widths", {"edit": {}, "player": {}}),
             "column_views": cfgmod.load().get("column_views", []),
             "generator_curves": cfgmod.load().get("generator_curves", []),
+            "replace_rules": cfgmod.load().get("replace_rules", []),
             "column_view_assign": cfgmod.load().get("column_view_assign", {}),
             "column_view_default": cfgmod.load().get("column_view_default", ""),
             "column_view_music_default": cfgmod.load().get("column_view_music_default", ""),
@@ -1311,6 +1294,86 @@ def save_generator_curves(items: list) -> list[dict]:
     clean = validate_generator_curves(items)
     _write_local({"generator_curves": clean})
     return clean
+
+
+MAX_REPLACE_RULES = 200
+# Felder, in denen eine Regel suchen darf (Textfelder des Tags-Dialogs). Eine Regel
+# haelt eine Liste davon ('fields'); alte Regeln mit einem einzelnen 'field'
+# ("all" = alle) werden beim Pruefen umgewandelt.
+REPLACE_TEXT_FIELDS = ("title", "artist", "album", "album_artist",
+                       "composer", "genre", "comment")
+# "user_tags" = eigene Tags (nur Datenbank, nie in der Datei).
+REPLACE_RULE_FIELDS = REPLACE_TEXT_FIELDS + ("user_tags",)
+
+
+def validate_replace_rules(items: list) -> list[dict]:
+    """Ersetzungsregeln pruefen: Suchbegriffe (Syntax wie im Dialog, siehe
+    parseReplaceTerms() in app.js -- hier nur Text), mindestens ein Feld aus
+    REPLACE_RULE_FIELDS, Ersatztext (darf leer sein = Treffer entfernen) und
+    die Optionen 'case'/'accents' (beachten). Weitere Optionen: hier und in
+    REPLACE_OPTIONS (replace.js) ergaenzen. Zeilen ohne Suchbegriff fallen
+    still heraus (frisch angelegte, nie ausgefuellte Zeilen). Neue Regeln
+    bekommen eine zufaellige Kennung -- an ihr haengt die Auffaelligkeit
+    'rule:<id>' samt den dort ignorierten Tracks, sie darf nie wieder vergeben
+    werden."""
+    if not isinstance(items, list):
+        raise ValueError("Regeln müssen eine Liste sein.")
+    clean: list[dict] = []
+    ids: set[str] = set()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        terms = str(item.get("terms") or "").strip()[:500]
+        if not terms:
+            continue
+        raw = item.get("fields")
+        if raw is None:
+            old = str(item.get("field") or "all")
+            raw = list(REPLACE_TEXT_FIELDS) if old == "all" else [old]
+        if not isinstance(raw, list):
+            raise ValueError("Felder müssen eine Liste sein.")
+        fields = [f for f in REPLACE_RULE_FIELDS if f in raw]
+        unknown = [f for f in raw if f not in REPLACE_RULE_FIELDS]
+        if unknown:
+            raise ValueError(f"Unbekanntes Feld „{unknown[0]}“.")
+        if not fields:
+            raise ValueError(f"Regel „{terms}“ braucht mindestens ein Feld.")
+        replace = str(item.get("replace") or "")[:500]
+        rid = str(item.get("id") or "").strip()[:40]
+        if not rid or rid in ids:
+            rid = "r" + uuid.uuid4().hex[:8]
+        ids.add(rid)
+        clean.append({"id": rid, "on": item.get("on", True) is not False, "terms": terms,
+                      "fields": fields, "replace": replace,
+                      "case": bool(item.get("case", False)),
+                      "accents": bool(item.get("accents", False))})
+        if len(clean) > MAX_REPLACE_RULES:
+            raise ValueError(f"Höchstens {MAX_REPLACE_RULES} Regeln.")
+    return clean
+
+
+def save_replace_rules(items: list) -> list[dict]:
+    """Die Liste der Ersetzungsregeln am Stueck ersetzen (wie save_generator_curves)."""
+    clean = validate_replace_rules(items)
+    _write_local({"replace_rules": clean})
+    return clean
+
+
+def stale_rule_codes(old: list, new: list) -> list[str]:
+    """Auffaelligkeits-Codes 'rule:<id>', deren Ignorierungen nach einem
+    Speichern nicht mehr gelten: Regel geloescht oder Suchbegriff bzw. Ersatz
+    geaendert (dann meint die Meldung etwas anderes als beim Ignorieren).
+    Ein-/Ausschalten, Felder und Optionen behalten die Ignorierungen."""
+    after = {r.get("id"): r for r in new if isinstance(r, dict)}
+    out: list[str] = []
+    for r in old or []:
+        if not isinstance(r, dict) or not r.get("id"):
+            continue
+        n = after.get(r["id"])
+        if (n is None or str(n.get("terms") or "").strip() != str(r.get("terms") or "").strip()
+                or str(n.get("replace") or "") != str(r.get("replace") or "")):
+            out.append("rule:" + str(r["id"]))
+    return out
 
 
 def validate_column_views(items: list) -> list[dict]:

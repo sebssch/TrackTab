@@ -43,7 +43,6 @@ tagclean_video: true     # "(Official Video)", "[HD]", "(Free Download)"
 tagclean_spaces: true    # Unterstriche und Doppelleerzeichen
 tagwatch_trackno: true   # "01 - Titel", "Interpret - Titel" im Titel
 tagwatch_remix: true     # "Titel - X Remix" / "[X Remix]" -> "(X Remix)"
-tagwatch_feat: true      # ft./featuring/feat -> feat.
 tagwatch_case: false     # Titel/Album komplett GROSS oder klein
 tagwatch_quotes: false   # typografische Apostrophe/Anfuehrungszeichen
 # Listen (Gross/Klein egal) und Ziel-Schreibweisen -- Vorgaben stehen in config.py:
@@ -52,7 +51,6 @@ tagwatch_quotes: false   # typografische Apostrophe/Anfuehrungszeichen
 # tagclean_underscore_single: space | hyphen    "_" -> Leerzeichen bzw. "-"
 # tagclean_underscore_double: dash | endash | pipe | space   "__" -> " - ", " – ", " | " oder " "
 # tagwatch_remix_words, tagwatch_remix_style: round | square | dash
-# tagwatch_feat_word: feat | ft | featuring,  tagwatch_feat_bracket: none | round | square
 # tagwatch_case_style: title | sentence | upper | lower
 # tagwatch_quotes_style: straight | typographic
 

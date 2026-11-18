@@ -237,7 +237,6 @@ def defaults() -> dict:
         "tagclean_spaces": True,
         "tagwatch_trackno": True,
         "tagwatch_remix": True,
-        "tagwatch_feat": True,
         "tagwatch_case": False,
         "tagwatch_quotes": False,
         # Wortlisten und Ziel-Schreibweisen der Titel-Bereinigung.
@@ -259,8 +258,6 @@ def defaults() -> dict:
         "tagwatch_remix_words": ["remix", "mix", "edit", "bootleg", "rework",
                                   "vip", "dub", "version"],
         "tagwatch_remix_style": "round",         # round | square | dash
-        "tagwatch_feat_word": "feat",            # feat | ft | featuring
-        "tagwatch_feat_bracket": "none",         # none | round | square
         "tagwatch_case_style": "title",          # title | sentence | upper | lower
         "tagwatch_quotes_style": "straight",     # straight | typographic
 
@@ -476,6 +473,13 @@ def defaults() -> dict:
         # die Punkte werden beim Anwenden auf die Slotzahl des jeweiligen
         # Generators umgerechnet (generator.js, genPresetValue()).
         "generator_curves": [],
+
+        # Gespeicherte Ersetzungsregeln (Suchen & Ersetzen, Einstellungen ->
+        # Dateien -> Ersetzungsregeln). Je Eintrag {id, on, terms, field,
+        # replace, case, accents}; die Treffer-Logik steht nur in app.js
+        # (replaceInValue()). Aktive Regeln melden Abweichungen als
+        # Auffaelligkeit und liefern Vorschlaege im Tags-Dialog.
+        "replace_rules": [],
 
         # Frueher: globale Standard-Spaltenansicht fuer Bearbeiten UND Player.
         # Wird nicht mehr gesetzt -- settings.migrate_column_view_default()
@@ -729,6 +733,8 @@ def _normalize_columns(cfg: dict) -> None:
         cfg["column_views"] = []
     if not isinstance(cfg.get("generator_curves"), list):
         cfg["generator_curves"] = []
+    if not isinstance(cfg.get("replace_rules"), list):
+        cfg["replace_rules"] = []
     if not isinstance(cfg.get("column_view_assign"), dict):
         cfg["column_view_assign"] = {}
     if not isinstance(cfg.get("column_view_default"), str):

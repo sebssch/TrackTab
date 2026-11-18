@@ -195,6 +195,16 @@ CREATE TABLE IF NOT EXISTS rekordbox_stem_pending (
     ts          REAL
 );
 
+-- In den Papierkorb gelegte Tracks, die noch in Rekordbox' Sammlung stehen,
+-- weil Rekordbox beim Loeschen lief. Abgearbeitet ueber "Rekordbox abgleichen".
+-- Bewusst weder in _PATH_TABLES noch in _PRUNE_TABLES: die Datei ist weg, der
+-- Eintrag soll genau deshalb stehen bleiben. Liegt die Datei beim Abarbeiten
+-- wieder da (aus dem Papierkorb zurueckgeholt), wird nichts entfernt.
+CREATE TABLE IF NOT EXISTS rekordbox_remove_pending (
+    path TEXT PRIMARY KEY,
+    ts   REAL
+);
+
 -- Datum, an dem ein Track laut Music.app zur Bibliothek hinzugefuegt wurde.
 -- Eigener Cache wie 'rekordbox', bewusst getrennt davon (kein gemeinsamer
 -- Abgleich): music_added_dates() liest die ganze Music.app-Bibliothek in
@@ -771,9 +781,12 @@ def paths_without_key(conn: sqlite3.Connection) -> list[str]:
 
 def paths_without_cover_hash(conn: sqlite3.Connection) -> list[str]:
     """Zeilen mit Cover, deren Bild-Hash noch nie gelesen wurde (NULL, vor
-    diesem Feature gescannt). Ohne Cover steht sofort '' (siehe set_cover_hashes)."""
+    diesem Feature gescannt) oder noch im alten Format steht (MD5 der Bytes,
+    32 Zeichen statt der 384 des Mini-Bilds, siehe coverhash.py). Ohne Cover steht sofort ''
+    (siehe set_cover_hashes)."""
     return [r["path"] for r in conn.execute(
-        "SELECT path FROM files WHERE cover_hash IS NULL")]
+        "SELECT path FROM files WHERE cover_hash IS NULL "
+        "OR (cover_hash != '' AND length(cover_hash) != 384)")]
 
 
 def paths_without_compilation(conn: sqlite3.Connection) -> list[str]:
@@ -962,14 +975,54 @@ def move_path(conn: sqlite3.Connection, old_path: str, new_path: str) -> bool:
         # Groesse/mtime nachziehen: der Cache-Schluessel ist (Pfad, Groesse,
         # mtime), und beim Kopieren aendert Music.app die mtime -- sonst
         # misst der naechste Scan die unveraenderte Datei ohne Not neu.
-        try:
-            st = os.stat(new_path)
-            conn.execute("UPDATE files SET size = ?, mtime = ? WHERE path = ?",
-                         (st.st_size, st.st_mtime, new_path))
-        except OSError:
-            pass
+        refresh_external(conn, new_path)
     conn.commit()
     return moved_file_row
+
+
+def refresh_external(conn: sqlite3.Connection, path: str) -> bool:
+    """Eine Datei, die ein anderes Programm (Music.app) angefasst hat, ohne die
+    Audio-Messung nachziehen: Groesse/mtime neu, und nur wenn die sich geaendert
+    haben, Tags und Cover-Fingerabdruck frisch aus der Datei lesen (mutagen, ms).
+
+    Grund: Music.app schreibt beim Umsortieren und beim Setzen von Tags/Artwork
+    eigene Werte in die Datei. Wuerden nur Groesse/mtime uebernommen, stuende
+    der alte Tag-Stand in der Zeile fest -- der naechste Scan haelt die Datei
+    fuer unveraendert (so blieb ein altes Cover als "weicht vom Album ab"
+    stehen). True = Datei hatte sich geaendert."""
+    row = conn.execute("SELECT size, mtime FROM files WHERE path = ?", (path,)).fetchone()
+    if row is None:
+        return False
+    try:
+        st = os.stat(path)
+    except OSError:
+        return False
+    if row["size"] == st.st_size and row["mtime"] == st.st_mtime:
+        return False
+    conn.execute("UPDATE files SET size = ?, mtime = ? WHERE path = ?",
+                 (st.st_size, st.st_mtime, path))
+    _reread_tags(conn, path)
+    conn.commit()
+    return True
+
+
+def _reread_tags(conn: sqlite3.Connection, path: str) -> None:
+    """Tag-Spalten, Cover-Kennzeichen und Cover-Fingerabdruck einer Zeile aus
+    der Datei nachlesen, ohne die Audio-Messung anzufassen (siehe move_path()).
+    Liest die Datei nicht (kein Audio-Objekt), bleibt alles unveraendert --
+    ein Lesefehler soll keine vorhandenen Werte leeren."""
+    from . import tags as tags_mod
+    ident = tags_mod.read_identity(path)
+    if ident["duration_s"] <= 0:
+        return
+    extra = tags_mod.read_extra(path)
+    fields = {k: extra[k] for k in _TAG_FIELDS if k in extra}
+    for k in ("artist", "title", "album"):
+        if ident.get(k):
+            fields[k] = ident[k]
+    update_tags(conn, path, fields)
+    conn.execute("UPDATE files SET has_cover = ?, cover_hash = ? WHERE path = ?",
+                 (1 if extra.get("has_cover") else 0, extra.get("cover_hash", ""), path))
 
 
 def path_norm_key(path: str) -> str:
@@ -1485,6 +1538,16 @@ def set_issues_ignored(conn: sqlite3.Connection, items: list[tuple[str, str]], f
     return len(items)
 
 
+def clear_ignored_issue_codes(conn: sqlite3.Connection, codes: list[str]) -> int:
+    """Alle Ignorierungen der genannten Codes entfernen (alle Tracks), z. B.
+    'rule:<id>' einer geloeschten oder inhaltlich geaenderten Ersetzungsregel."""
+    if not codes:
+        return 0
+    cur = conn.executemany("DELETE FROM ignored_issues WHERE code = ?", [(c,) for c in codes])
+    conn.commit()
+    return cur.rowcount
+
+
 def merge_dismissed_pairs(conn: sqlite3.Connection, field: str) -> set[tuple[str, str]]:
     """Ausgeblendete Zusammenfuehrungs-Vorschlaege eines Feldes (genre/album/
     artist), als Menge kanonisch sortierter Paare."""
@@ -1868,7 +1931,9 @@ def rekordbox_pending_add(conn: sqlite3.Connection, paths: list[str]) -> None:
     """Merkt Tracks fuer den naechsten gebuendelten Tag-Abgleich mit Rekordbox vor."""
     now = time.time()
     conn.executemany(
-        "INSERT OR REPLACE INTO rekordbox_pending (path, ts) VALUES (?, ?)",
+        # Kein REPLACE: eine schon vorgemerkte Pfadkorrektur (prior_path) bliebe sonst weg.
+        "INSERT INTO rekordbox_pending (path, ts) VALUES (?, ?) "
+        "ON CONFLICT(path) DO UPDATE SET ts = excluded.ts",
         [(p, now) for p in paths],
     )
     conn.commit()
@@ -1899,7 +1964,28 @@ def rekordbox_pending_list(conn: sqlite3.Connection) -> list[dict]:
 
 
 def rekordbox_pending_count(conn: sqlite3.Connection) -> int:
-    return conn.execute("SELECT COUNT(*) FROM rekordbox_pending").fetchone()[0]
+    """Vorgemerkte Tag-/Pfadkorrekturen plus vorgemerktes Entfernen (Papierkorb)."""
+    return (conn.execute("SELECT COUNT(*) FROM rekordbox_pending").fetchone()[0]
+            + conn.execute("SELECT COUNT(*) FROM rekordbox_remove_pending").fetchone()[0])
+
+
+def rekordbox_remove_pending_add(conn: sqlite3.Connection, paths: list[str]) -> None:
+    now = time.time()
+    conn.executemany(
+        "INSERT OR REPLACE INTO rekordbox_remove_pending (path, ts) VALUES (?, ?)",
+        [(p, now) for p in paths])
+    conn.commit()
+
+
+def rekordbox_remove_pending_list(conn: sqlite3.Connection) -> list[str]:
+    return [r["path"] for r in conn.execute(
+        "SELECT path FROM rekordbox_remove_pending ORDER BY ts, path")]
+
+
+def rekordbox_remove_pending_clear(conn: sqlite3.Connection, paths: list[str]) -> None:
+    conn.executemany("DELETE FROM rekordbox_remove_pending WHERE path = ?",
+                     [(p,) for p in paths])
+    conn.commit()
 
 
 def rekordbox_pending_clear(conn: sqlite3.Connection, paths: list[str]) -> None:

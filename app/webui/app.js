@@ -97,9 +97,10 @@ document.addEventListener("DOMContentLoaded", () => {
   // Tags-Dialog: Symbole der Kopfzeile, des Covers und der Online-Suche.
   for (const [id, name] of [["tagsCopyIcon", "copy"], ["tagsRevealIcon", "folder-open"],
       ["tagsPrevIcon", "chevron-left"], ["tagsNextIcon", "chevron-right"],
-      ["tagsCoverPickIcon", "image-up"], ["tagsCoverPasteIcon", "clipboard-paste"], ["tagsLookupIcon", "globe"]]) {
+      ["tagsCoverPickIcon", "image-up"], ["tagsCoverCopyIcon", "copy"], ["tagsCoverPasteIcon", "clipboard-paste"], ["tagsLookupIcon", "globe"]]) {
     document.getElementById(id).innerHTML = SVG(LUCIDE_ICONS[name]);
   }
+  document.getElementById("tagsCoverCopyBtn").onclick = copyTagsCover;
   document.getElementById("tagsRenameIcon").innerHTML = ICONS.renameFile;
   document.getElementById("tagsCoverResetIcon").innerHTML = ICONS.fieldReset;
   document.getElementById("tagsLockIcon").innerHTML = ICONS.lock;
@@ -258,6 +259,7 @@ let GENERATOR_CURVES = [];
 let USER_TAGS = new Map(Object.entries((META && META.userTags) || {}));
 function adoptUserTags(obj) {
   USER_TAGS = new Map(Object.entries(obj || {}));
+  resetRuleIssueCache();       // Ersetzungsregeln auf Tags (replace.js)
 }
 
 // Alle Tags einer Zeile: erkannte Stimmungen und DJ-Stimmungen, dann die
@@ -923,6 +925,9 @@ function syncLayoutSwitch() {
     b.classList.toggle("on", b.dataset.layout === state.layout);
     if (b.dataset.layout !== "edit") b.disabled = !!scanRunning;
   });
+  // Suchen & Ersetzen aendert Tags -- in der Player-Ansicht nicht verfuegbar (replace.js).
+  const rep = document.getElementById("btnReplace");
+  if (rep) rep.disabled = state.layout === "player";
 }
 
 function applyLayout(next) {
@@ -1374,6 +1379,7 @@ const ICONS = {
   question: SVG('<path d="M9.5 9a2.5 2.5 0 114.7 1.2c-.9.8-1.7 1.4-1.7 2.8"/>' +
                 '<line x1="12.5" y1="17" x2="12.5" y2="17.01"/>'),
   trash: SVG(LUCIDE_ICONS["trash"]),
+  albumIgnore: SVG(LUCIDE_ICONS["disc-album"]),   // Vorschlag: "ganzes Album ignorieren"
   cloudDownload: SVG(LUCIDE_ICONS["cloud-download"]),
   delete: SVG(LUCIDE_ICONS["delete"]),
   uncorrect: SVG(LUCIDE_ICONS["circle-dashed-check"]),
@@ -1383,6 +1389,7 @@ const ICONS = {
   chevronDown: SVG(LUCIDE_ICONS["chevron-down"]),
   dupKeep: SVG(LUCIDE_ICONS["circle-check"]),
   dupKeepOff: SVG(LUCIDE_ICONS["circle"]),
+  checkMixed: SVG(LUCIDE_ICONS["circle-minus"]),   // Haken halb gewaehlt (Suchen & Ersetzen)
   chevronRight: SVG(LUCIDE_ICONS["chevron-right"]),
   squareX: SVG(LUCIDE_ICONS["square-x"]),
   // Generisch statt App-gebunden — das Programm dahinter ist frei wählbar.
@@ -1410,6 +1417,8 @@ const ICONS = {
   stemStop: SVG(LUCIDE_ICONS["square"], "currentColor"),
   stemMinimize: SVG(LUCIDE_ICONS["minimize-2"]),
   keySync: SVG(LUCIDE_ICONS["replace"]),
+  replaceAll: SVG(LUCIDE_ICONS["replace-all"]),   // Suchen & Ersetzen (Nutzerwahl)
+  fileMissing: SVG(LUCIDE_ICONS["file-x"]),
   renameFile: SVG(LUCIDE_ICONS["file-type-corner"]),
   // Tags-Dialog: geaendertes Feld auf den Stand beim Oeffnen zuruecksetzen.
   fieldReset: SVG(LUCIDE_ICONS["undo-2"]),
@@ -1919,10 +1928,36 @@ function albumCoverMap() {
   return albumCoverCache;
 }
 const albumCoverIssueOf = r => albumCoverMap().get(r) || null;
+// Filter "Cover weicht ab"/"Cover fehlt" aktiv: Tabelle gruppiert und sortiert nach demselben
+// Album-Schluessel wie die Pruefung (albumIdentityKey(): Disc-Zusatz entfernt, Sampler ohne
+// Interpret). Sonst zerfiele eine Compilation in je eine Gruppe pro Interpret, alphabetisch
+// verstreut -- man saehe einen einzelnen "Cover passt"-Track ohne die abweichenden daneben.
+const albumCoverGrouping = view => view.id === "tag_issues" && ALBUM_COVER_CODES.has(state.tagIssueFilter);
+// Filter "Cover weicht ab" / "Cover fehlt": zeigt das Album mit, damit man sieht, welches Bild
+// die anderen Tracks tragen (die Zeilen ohne Meldung stehen mit ihrem Cover dazwischen). Je Code
+// getrennt: "Cover fehlt" nur Alben mit mindestens einem offenen Track ohne Cover (ganzes Album),
+// "Cover weicht ab" nur Alben mit offener Abweichung und darin nur Tracks MIT Cover -- Tracks
+// ohne Bild sind dort kein Vergleich, sie gehoeren zu "Cover fehlt".
+let albumOpenCache = null;     // Map Code -> Set der Album-Schluessel mit NICHT ignorierter Meldung
+const albumCoverShown = (r, code) => {
+  if (!ALBUM_COVER_CODES.has(code) || r.ig || !(r.al || "").trim() || (r.cv && !r.ch)) return false;
+  if (code === "album_cover_mismatch" && !r.cv) return false;
+  if (!albumOpenCache) {
+    albumOpenCache = new Map();
+    for (const [row, is] of albumCoverMap()) {
+      if (issueIgnored(row, is.code)) continue;
+      let set = albumOpenCache.get(is.code);
+      if (!set) albumOpenCache.set(is.code, set = new Set());
+      set.add(albumIdentityKey(row));
+    }
+  }
+  const set = albumOpenCache.get(code);
+  return !!set && set.has(albumIdentityKey(r));
+};
 // Quick-Fix-faehig: feste Codes, oder das Album-Cover mit eindeutiger Mehrheit (issue.source).
-const isAutoFixIssue = i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code) || (ALBUM_COVER_CODES.has(i.code) && !!i.source);
+const isAutoFixIssue = i => isAutoFixCode(i.code) || (ALBUM_COVER_CODES.has(i.code) && !!i.source);
 const rowIssuesAll = r => {
-  const extra = [tempoIssueOf(r), keyIssueOf(r), coverDupIssueOf(r), albumCoverIssueOf(r)].filter(Boolean), own = Array.isArray(r.ti) ? r.ti : [];
+  const extra = [tempoIssueOf(r), keyIssueOf(r), coverDupIssueOf(r), albumCoverIssueOf(r), ...ruleIssuesOf(r)].filter(Boolean), own = Array.isArray(r.ti) ? r.ti : [];
   return extra.length ? [...own, ...extra] : own;
 };
 // Einzeln ignorierte Auffaelligkeiten je Track (Pfad -> Set von Codes), live per syncMarks()
@@ -1930,6 +1965,10 @@ const rowIssuesAll = r => {
 // die ignorierten, die der Track tatsaechlich noch hat (veraltete Eintraege bleiben unsichtbar).
 const IGN_ISSUES = new Map();
 const ISSUE_FILTER_IGNORED = "__ignored__";
+// Album-Cover-Meldungen: "Ignorieren" gilt fuer das ganze Album, aber nur fuer die Tracks, die
+// ZU DIESEM ZEITPUNKT eine Meldung haben -- der Klick ignoriert sie alle einzeln (issueign), ein
+// spaeter hinzugekommener Track hat keinen Eintrag und steht wieder zur Kontrolle da.
+// Rueckgaengig machen hebt umgekehrt alle Eintraege des Albums auf (issueunign).
 const issueIgnored = (r, code) => { const s = IGN_ISSUES.get(r.p); return !!s && s.has(code); };
 const rowIssues = r => {
   const all = rowIssuesAll(r);
@@ -1938,14 +1977,18 @@ const rowIssues = r => {
 const rowIgnoredIssues = r => IGN_ISSUES.has(r.p) ? rowIssuesAll(r).filter(i => issueIgnored(r, i.code)) : [];
 const issueFilterHit = (r, f) => f === ISSUE_FILTER_IGNORED
   ? rowIgnoredIssues(r).length > 0 : rowIssues(r).some(i => i.code === f);
+// Wie issueFilterHit(), nur zeigt der Album-Cover-Filter auch die unauffaelligen Tracks des Albums.
+const issueFilterShows = (r, f) => issueFilterHit(r, f) || albumCoverShown(r, f);
 const hasAnyTagIssues = r => rowIssues(r).length > 0 ||
-  (state.tagIssueFilter === ISSUE_FILTER_IGNORED && rowIgnoredIssues(r).length > 0);
+  (state.tagIssueFilter === ISSUE_FILTER_IGNORED && rowIgnoredIssues(r).length > 0) ||
+  albumCoverShown(r, state.tagIssueFilter);
 async function setIssuesIgnored(items, flag) {
   const res = await fetch("/api/ignore-issues", {method: "POST", headers: {"Content-Type": "application/json"},
     body: JSON.stringify({items, flag})});
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw new Error(data.error || res.statusText);
   for (const {path, code} of items) {
+    albumOpenCache = null;
     let set = IGN_ISSUES.get(path);
     if (flag) { if (!set) IGN_ISSUES.set(path, set = new Set()); set.add(code); }
     else if (set) { set.delete(code); if (!set.size) IGN_ISSUES.delete(path); }
@@ -4701,6 +4744,10 @@ async function syncLinkedPlaylist(pid, interactive) {
   const node = PLAYLISTS.find(n => n.id === pid);
   const links = linksFor(pid);
   if (!node || !links || LINK_RUNNING.has(pid)) return;
+  if (node.kind === "smart") {
+    await DJ_MARKS_READY;
+    if (LINK_RUNNING.has(pid)) return;
+  }
   LINK_RUNNING.add(pid);
   renderPlaylistHeader();
   const sources = Object.keys(links);
@@ -5493,8 +5540,47 @@ function progressToast(text, opts) {
 let MERGE_DISMISSED = {genre: new Set(), artist: new Set(), album: new Set()};
 function mergePairKey(a, b) { return [a, b].sort().join("\u0000"); }
 
-async function syncMarks() {
+// Der Teil aus /api/dj-bpms (Tempo bearbeiteter Grids, Abweichungen zu Rekordbox,
+// Hot Cues). Der Server liest dafuer Rekordbox und braucht nach einem App-Start oder
+// einer Aenderung dort Sekunden -- alles andere in syncMarks() ist sofort da.
+let DJ_MARKS_SEQ = 0;
+// Erfuellt, sobald die Werte zum ersten Mal da sind. Verknuepfte smarte Listen
+// warten darauf (syncLinkedPlaylist()): ihre Regeln koennen hc/rbDiff lesen, und ein
+// Inhalt ohne diese Werte ginge sonst als Aenderung nach Music/Rekordbox.
+var djMarksReady;
+var DJ_MARKS_READY = new Promise(resolve => { djMarksReady = resolve; });
+function applyDjMarks(djb) {
+  djMarksReady();
+  const rbDiff = djb.rb_diff || {}, rbTagFields = djb.rb_tag_fields || {};
+  // Mindestens ein Hot Cue nach der Regel der DJ-Ansicht (server._hot_cue_paths()), fuer /HotCues.
+  const hotCues = new Set(djb.hot_cues || []);
+  RB_COMPARE = djb.rb_compare !== false;
+  for (const r of DATA) {
+    r.djBp = djEditedBpm(djb.bpms[r.p], r.bp);
+    r.gridTempo = djb.tempo[r.p] || null;
+    r.gridSeq = (djb.tempo_seq && djb.tempo_seq[r.p]) || null;
+    r.rbDiff = rbDiff[r.p] || null;
+    r.rbTagFields = rbTagFields[r.p] || null;
+    r.hc = hotCues.has(r.p) ? 1 : 0;
+  }
+}
+
+// djLater (nur der Seitenstart): nicht auf /api/dj-bpms warten, sondern die Liste
+// sofort zeigen und dessen Werte nachtragen, sobald sie da sind. Alle anderen
+// Aufrufer warten wie bisher -- sie zeichnen direkt danach mit diesen Werten.
+async function syncMarks(opts) {
   refreshRekordboxPending();
+  const djLater = !!(opts && opts.djLater);
+  const seq = ++DJ_MARKS_SEQ;
+  const djFetch = fetch("/api/dj-bpms", {cache: "no-store"}).then(r => r.json());
+  if (djLater) {
+    djFetch.then(djb => {
+      if (seq !== DJ_MARKS_SEQ) return;       // ein neuerer Abgleich hat schon alles
+      applyDjMarks(djb);
+      recomputeAllSmart();
+      renderTree(); updateCards(); render();
+    }).catch(err => note(t("toast.marks_load_failed", {error: err.message}), true));
+  }
   try {
     const [ign, cor, ddm, rbx, mad, pls, mgd, djb, igi] = await Promise.all([
       fetch("/api/ignored", {cache: "no-store"}).then(r => r.json()),
@@ -5506,10 +5592,10 @@ async function syncMarks() {
       // den Stand des letzten Report-Neubaus, geaendert wird ohne Rebuild.
       fetch("/api/playlists", {cache: "no-store"}).then(r => r.json()),
       fetch("/api/merge-dismissed", {cache: "no-store"}).then(r => r.json()),
-      fetch("/api/dj-bpms", {cache: "no-store"}).then(r => r.json()),
+      djLater ? null : djFetch,
       fetch("/api/ignored-issues", {cache: "no-store"}).then(r => r.json()),
     ]);
-    IGN_ISSUES.clear();
+    IGN_ISSUES.clear(); albumOpenCache = null;
     for (const [p, codes] of Object.entries(igi.ignored_issues || {})) IGN_ISSUES.set(p, new Set(codes));
     for (const field of ["genre", "artist", "album"]) {
       MERGE_DISMISSED[field] = new Set(
@@ -5520,7 +5606,6 @@ async function syncMarks() {
     rebuildPlaylistIndex();
     rebuildPlaylistViews();
     rebuildMerkViews();
-    recomputeAllSmart();
     if (!VIEWS.some(v => v.id === state.view)) {
       state.view = "all";
       syncColumnsForView();
@@ -5530,10 +5615,6 @@ async function syncMarks() {
     const dupDismissed = new Set(ddm.dup_dismissed || []);
     const rekordbox = new Set(rbx.paths || []);
     const musicAdded = mad.added || {};
-    const rbDiff = djb.rb_diff || {}, rbTagFields = djb.rb_tag_fields || {};
-    // Mindestens ein Hot Cue nach der Regel der DJ-Ansicht (server._hot_cue_paths()), fuer /HotCues.
-    const hotCues = new Set(djb.hot_cues || []);
-    RB_COMPARE = djb.rb_compare !== false;
     for (const r of DATA) {
       r.ig = ignored.has(r.p)   ? 1 : 0;    // auch zurücknehmen, nicht nur setzen
       r.mc = corrected.has(r.p) ? 1 : 0;
@@ -5541,13 +5622,10 @@ async function syncMarks() {
       r.rb = rekordbox.has(r.p) ? 1 : 0;
       r.im = Object.prototype.hasOwnProperty.call(musicAdded, r.p) ? 1 : 0;
       r.da = musicAdded[r.p] || 0;
-      r.djBp = djEditedBpm(djb.bpms[r.p], r.bp);
-      r.gridTempo = djb.tempo[r.p] || null;
-      r.gridSeq = (djb.tempo_seq && djb.tempo_seq[r.p]) || null;
-      r.rbDiff = rbDiff[r.p] || null;
-      r.rbTagFields = rbTagFields[r.p] || null;
-      r.hc = hotCues.has(r.p) ? 1 : 0;
     }
+    if (djb) applyDjMarks(djb);
+    // Erst nach den Markierungen: die Regeln lesen rb/im/ig/hc der Zeilen.
+    recomputeAllSmart();
   } catch (err) {
     note(t("toast.marks_load_failed", {error: err.message}), true);
   }
@@ -5562,7 +5640,8 @@ async function initStorage() {
       // Ohne Server gibt es nichts zu beenden -- dann bleibt der Knopf weg,
       // statt beim Klick in einen Netzwerkfehler zu laufen.
       document.getElementById("btnQuit").style.display = "";
-      await syncMarks();
+      document.getElementById("btnReplace").hidden = false;
+      await syncMarks({djLater: true});
       loadPlaylistLinks().then(() => setTimeout(syncAllLinks, 3000));
       fetch("/api/settings").then(r => r.json()).then(s => {
         // Vor dem Fetch stand hier schon die Browsersprache (siehe
@@ -5703,6 +5782,9 @@ async function initStorage() {
         if (Array.isArray(s.library_roots)) LIBRARY_ROOTS = s.library_roots;
         // Eigene Energiekurven des Generators (generator.js). Ein schon
         // geoeffneter Generator braucht sie fuer seine Verlauf-Auswahl.
+        // Ersetzungsregeln (replace.js): Auffaelligkeiten "rule:<id>" und
+        // Vorschlaege im Tags-Dialog rechnen damit.
+        if (Array.isArray(s.replace_rules)) { adoptReplaceRules(s.replace_rules); updateCards(); render(); }
         if (Array.isArray(s.generator_curves)) {
           GENERATOR_CURVES = s.generator_curves;
           if (typeof GEN !== "undefined" && GEN) genRender();
@@ -6228,6 +6310,9 @@ if (appHome) {
   appHome.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); goHome(); } };
 }
 
+document.getElementById("btnReplace").querySelector(".btnicon").innerHTML = ICONS.replaceAll;
+document.getElementById("btnReplace").onclick = openReplaceDialog;
+
 document.getElementById("btnSearchHelp").onclick = () => {
   document.getElementById("searchHelpBody").innerHTML = SEARCH_HELP_ENTRIES.map(([p, desc, ex]) =>
     `<div class="searchhelprow"><b>${esc(p)}</b> — ${esc(desc)}<div class="path">${esc(ex)}</div></div>`).join("");
@@ -6266,7 +6351,7 @@ function syncSortHeaders() {
         // Welche Auffaelligkeit gerade zuerst kommt und die wievielte das ist.
         const stages = tiSortStages(), pos = Math.max(stages.indexOf(state.tiStage), 0) + 1;
         span.textContent = `${pos}/${stages.length || 1}`;
-        th.title = t("sort.ti_tip", {issue: t("tagissue." + state.tiStage), pos, total: stages.length || 1});
+        th.title = t("sort.ti_tip", {issue: issueLabel(state.tiStage), pos, total: stages.length || 1});
         th.dataset.sortTip = "1";
       } else if (state.sort === "bp" && state.bpStage && state.layout === "dj") {
         span.textContent = "●";
@@ -7837,22 +7922,20 @@ function syncAdvSearch() {
   btn.onclick = () => { state.advOpen = !state.advOpen; saveFilters(); syncAdvSearch(); };
 })();
 
-// Album-Gruppenschluessel wie in Music.app: Albumkuenstler (Fallback Artist)
-// + Album. Kein Album-Tag -> null, wird nie gruppiert (sonst faellt jede
+// Gruppenschluessel der Checkbox "nach Album gruppieren" = derselbe wie die Album-Cover-Pruefung
+// (albumIdentityKey()): Albumkuenstler (Fallback Interpret) + Album, Disc-Zusatz ("[Disc 2]")
+// entfernt, Sampler (r.cl) ohne Interpret -- eine Compilation ist EINE Gruppe ueber alle Discs
+// und Interpreten (Nutzervorgabe). Kein Album-Tag -> null, wird nie gruppiert (sonst faellt jede
 // Datei ohne Album-Tag faelschlich in eine gemeinsame Riesengruppe).
 function albumGroupKey(r) {
-  const artist = (r.aa || r.a || "").trim().toLowerCase();
-  const album = (r.al || "").trim().toLowerCase();
-  if (!album) return null;
-  return artist + " " + album;
+  return (r.al || "").trim() ? albumIdentityKey(r) : null;
 }
 
 // EXAKTE Variante (Gross-/Kleinschreibung zaehlt) fuer die "Aufraeumen"-Liste
 // Album -- dort sollen "Bootleg"/"BOOTLEG" zwei Gruppen bleiben, genau wie in
 // der Bubble-Leiste/den Zusammenfuehrungs-Vorschlaegen (albumGroupCounts()).
-// albumGroupKey() selbst bleibt unveraendert, sie treibt weiterhin die
-// bewusst groszuegigere Checkbox "nach Album gruppieren" in anderen
-// Ansichten.
+// albumGroupKey() treibt dagegen die bewusst grosszuegigere Checkbox
+// "nach Album gruppieren" in anderen Ansichten (Discs/Sampler zusammen).
 function albumGroupKeyExact(r) {
   const artist = r.aa || r.a || "";
   const album = r.al || "";
@@ -7984,12 +8067,13 @@ async function trashDupRest(gid) {
   if (!rest.length) return;
   if (!await askTrashBulk(rest)) return;
   let done = 0, musicErrors = 0, cloudNotes = 0;
+  const rbSession = rbSessionToken();
   for (const r of rest) {
     try {
       stopPlayerFor(r.p);
-      const data = await trashRowApi(r);
+      const data = await trashRowApi(r, rbSession);
       done++;
-      if (data.music_error) musicErrors++;
+      if (data.music_error || data.music_missed) musicErrors++;
       if (data.music_cloud_note) cloudNotes++;
     } catch (err) {
       note(t("toast.bulk_action_failed", {action: t("bulk.action_trash"), name: baseName(r.p), error: err.message}), true);
@@ -8002,12 +8086,45 @@ async function trashDupRest(gid) {
 }
 // Gemeinsamer Kern von Sammel-Papierkorb und trashDupRest(): eine Datei
 // ueber /api/trash, Zeile als entfernt markieren, Duplikate neu rechnen.
-async function trashRowApi(r) {
+// Der Papierkorb nimmt den Track auch aus Rekordbox' Sammlung (server._rekordbox_forget()).
+// Laeuft Rekordbox, merkt der Server das Entfernen vor: Zaehler am Abgleich-Knopf
+// nachziehen und einmal je Aktion melden (auch bei vielen Dateien nur ein Hinweis).
+let trashRbTally = {queued: 0, errors: 0}, trashRbTimer = 0;
+function noteTrashRekordbox(rb) {
+  if (!rb) return;
+  if (rb.queued) {
+    RB_PENDING = rb.pending || RB_PENDING + rb.queued;
+    renderRekordboxSyncButton();
+    trashRbTally.queued += rb.queued;
+  }
+  if (rb.error) trashRbTally.errors++;
+  clearTimeout(trashRbTimer);
+  trashRbTimer = setTimeout(() => {
+    const done = trashRbTally;
+    trashRbTally = {queued: 0, errors: 0};
+    if (done.queued) note(t("toast.trash_rekordbox_queued", {count: done.queued}), "soft");
+    if (done.errors) note(t("toast.trash_rekordbox_failed", {count: done.errors}), "soft");
+  }, 1200);
+}
+// Text der Rueckfrage: was ausser dem Papierkorb noch passiert.
+function trashAlsoNote(rows) {
+  const single = rows.length === 1;
+  const inMusic = rows.filter(r => r.im).length;
+  const inRb = REKORDBOX_NAME ? rows.filter(r => r.rb).length : 0;
+  return [
+    inMusic ? (single ? t("confirm.trash_music_note") : t("confirm.trash_music_note_bulk", {count: inMusic})) : "",
+    inRb ? (single ? t("confirm.trash_rekordbox_note") : t("confirm.trash_rekordbox_note_bulk", {count: inRb})) : "",
+  ].filter(Boolean).join(" ");
+}
+// session: ein Token je Nutzeraktion (rbSessionToken()), damit der Server die
+// master.db bei vielen Dateien nur einmal sichert.
+async function trashRowApi(r, session) {
   const res = await fetch("/api/trash", {method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({path: r.p})});
+    body: JSON.stringify({path: r.p, rb_session: session || ""})});
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  noteTrashRekordbox(data.rekordbox);
   r.removed = 1;
   dupGroupsDirty = true;
   invalidateFieldValueCache();
@@ -8248,7 +8365,7 @@ function filtered() {
     // Bubble-Filter der "Auffaelligkeiten"-Liste (state.tagIssueFilter) --
     // wie state.valueFilter nur wirksam, solange diese Liste aktiv ist.
     (!state.tagIssueFilter || view.id !== "tag_issues" ||
-     issueFilterHit(r, state.tagIssueFilter)) &&
+     issueFilterShows(r, state.tagIssueFilter)) &&
     // Bubble-Filter der Tag-Liste: ALLE gewaehlten Tags muessen passen.
     (!state.tagFilter.length || view.id !== "tags" ||
      (ids => state.tagFilter.every(id => ids.has(id)))(new Set(rowTags(r).map(tg => tg.id))))
@@ -8280,29 +8397,21 @@ function filtered() {
       }
       return cmpText(tk.get(a), tk.get(b));
     });
-  } else if (state.groupAlbums) {
-    // Ungruppierte Zeilen (kein Album-Tag) bekommen einen eindeutigen
-    // Fallback-Schluessel mit Sortierpriorisierung ans Gruppenende ("￿"
-    // sortiert nach jedem normalen Album-Schluessel), statt an einer
-    // zufaelligen Position zu clustern.
-    const fallback = r => "￿" + (r.a||"").toLowerCase() + " " + (r.t||"").toLowerCase();
-    // albumGroupKey() (drei Feldzugriffe, zwei trim(), zwei toLowerCase())
-    // lief bisher in jedem einzelnen Vergleich erneut -- bei 10.822 Zeilen
-    // rund 300.000 mal statt 10.822 mal.
+  } else if (state.groupAlbums || albumCoverGrouping(view)) {
+    // Gruppe (albumGroupKey(), Discs/Sampler zusammen), darin Disc (exakter Albumname), dann
+    // Tracknummer (0/fehlend ans Gruppenende), dann Titel. Zeilen ohne Album-Tag bekommen einen
+    // eindeutigen Rueckfall-Schluessel ans Ende ("\uffff" sortiert nach jedem Album-Schluessel).
+    // Schluessel einmal je Zeile (sortKeys()), nicht je Vergleich.
+    const fallback = r => "\uffff" + (r.a||"").toLowerCase() + " " + (r.t||"").toLowerCase();
     const gk = sortKeys(rows, r => albumGroupKey(r) ?? fallback(r));
+    const dk = sortKeys(rows, r => r.al || "");
     const tk = sortKeys(rows, r => r.t || "");
-    rows.sort((a,b) => {
-      const c = cmpText(gk.get(a), gk.get(b));
-      if (c !== 0) return c;
-      // Innerhalb der Gruppe: Track-Nummer fuehrend, 0/fehlend ans
-      // Gruppenende statt an den Anfang, danach Titel als letzter Fallback.
-      if ((a.tn || 0) !== (b.tn || 0)) {
-        if (!a.tn) return 1;
-        if (!b.tn) return -1;
-        return a.tn - b.tn;
-      }
-      return cmpText(tk.get(a), tk.get(b));
-    });
+    // Roher Vergleich als Gleichstand-Bruch: der Collator ignoriert die Trennzeichen \u0000/\u0002
+    // in albumIdentityKey(), zwei verschiedene Schluessel koennten sonst gleich gelten und ihre
+    // Zeilen sich mischen.
+    const raw = (x, y) => x < y ? -1 : x > y ? 1 : 0;
+    rows.sort((a, b) => cmpText(gk.get(a), gk.get(b)) || raw(gk.get(a), gk.get(b)) ||
+      cmpText(dk.get(a), dk.get(b)) || (a.tn || 1e6) - (b.tn || 1e6) || cmpText(tk.get(a), tk.get(b)));
   } else if (view.id === "grp:genre") {
     // "Aufraeumen"-Liste Genre: Gruppierung nach Genre EXAKT (siehe grp:album
     // oben -- "Bootleg"/"BOOTLEG" bleiben zwei Gruppen, genau wie in der
@@ -8340,16 +8449,11 @@ function filtered() {
       }
       return cmpText(tk.get(a), tk.get(b));
     });
-  } else if (!state.sort && view.id === "tag_issues" &&
-             (state.tagIssueFilter === "duplicate_cover" || ALBUM_COVER_CODES.has(state.tagIssueFilter))) {
-    // "Doppeltes Cover": gleiche Bilder nebeneinander, dann nach Album. "Album-Cover weicht
-    // ab": erst das Album, darin gleiche Bilder nebeneinander.
+  } else if (!state.sort && view.id === "tag_issues" && state.tagIssueFilter === "duplicate_cover") {
+    // "Doppeltes Cover": gleiche Bilder nebeneinander, dann nach Album.
     const ck = sortKeys(rows, r => r.ch || "");
     const ak = sortKeys(rows, r => albumIdentityKey(r));
-    const albumFirst = ALBUM_COVER_CODES.has(state.tagIssueFilter);
-    rows.sort((a, b) => albumFirst
-      ? cmpText(ak.get(a), ak.get(b)) || cmpText(ck.get(a), ck.get(b))
-      : cmpText(ck.get(a), ck.get(b)) || cmpText(ak.get(a), ak.get(b)));
+    rows.sort((a, b) => cmpText(ck.get(a), ck.get(b)) || cmpText(ak.get(a), ak.get(b)));
   } else if (state.sort === "po") {
     // "#" = Grundreihenfolge der Liste, auf- oder absteigend.
     const pos = listPositionMap(view);
@@ -8615,31 +8719,48 @@ const CELL_RENDERERS = {
   // automatisch behebbar ist (AUTO_FIXABLE_TAG_ISSUE_CODES); "Manuell
   // beheben" springt direkt in den bestehenden Tags-Dialog.
   ti: r => {
+    const f = state.view === "tag_issues" ? state.tagIssueFilter : null;
+    // Unter "Cover fehlt" behaelt ein Track mit abweichendem Bild sein Badge (sonst stuende dort
+    // faelschlich "Cover passt"); unter "Cover weicht ab" gibt es keine Tracks ohne Cover.
     const issues = rowIssues(r);
-    const ignMode = state.view === "tag_issues" && state.tagIssueFilter === ISSUE_FILTER_IGNORED;
+    const ignMode = f === ISSUE_FILTER_IGNORED;
     const canIgnore = r._id === undefined && !r.ext && !r.gone;
     if (ignMode && canIgnore) {
       const chips = rowIgnoredIssues(r).map(i => {
-        const label = t("tagissue." + i.code);
+        const label = issueLabel(i.code);
         return `<span class="tichip ign" title="${esc(label)}"><span>${esc(label)}</span>` +
           `<button type="button" class="tibtn" data-issueunign="${esc(r.p)}" data-issuecode="${esc(i.code)}" ` +
-          `title="${esc(t("tagissue.unignore"))}">${ICONS.eyeOff}</button></span>`;
+          `title="${esc(t("tagissue.unignore"))}">${ICONS.eyeOff}</button>` +
+          (ALBUM_COVER_CODES.has(i.code) ? `<button type="button" class="tibtn" data-issueunignalbum="${esc(r.p)}" ` +
+            `data-issuecode="${esc(i.code)}" title="${esc(t("tagissue.unignore_album"))}">${ICONS.albumIgnore}</button>` : "") + `</span>`;
       }).join("");
       return `<td><div class="ticell">${chips}</div></td>`;
     }
-    if (!issues.length) return `<td></td>`;
+    if (!issues.length) {
+      // Album-Cover-Filter zeigt das ganze Album: der Track ohne Meldung traegt ein ruhiges Badge,
+      // an dem sich das Album (wie bei den anderen Tracks) ignorieren laesst.
+      if (canIgnore && albumCoverShown(r, f)) {
+        const label = t("tagissue.album_cover_ok");
+        return `<td><div class="ticell"><span class="tichip ign" title="${esc(t("tagissue.album_cover_ok_tip"))}"><span>${esc(label)}</span>` +
+          `<button type="button" class="tibtn" data-issueignalbum="${esc(r.p)}" data-issuecode="${esc(f)}" ` +
+          `title="${esc(t("tagissue.ignore_album"))}">${ICONS.albumIgnore}</button></span></div></td>`;
+      }
+      return `<td></td>`;
+    }
     // Je Auffaelligkeit ein kleines Badge (Funken = per Quick Fix behebbar, Stift = nur von Hand);
     // das betroffene Feld steht im Tooltip. In Bearbeiten sitzt die Aktion als Symbolknopf IM
     // Badge (Funken: Quick Fix, Stift: Tags-Dialog), sonst steht das Symbol nur davor.
     const edit = cellLayout() === "edit";
     const chips = issues.map(i => {
-      const auto = isAutoFixIssue(i), label = t("tagissue." + i.code);
+      const auto = isAutoFixIssue(i), label = issueLabel(i.code);
       const tip = i.field ? `${label} (${t("field." + i.field) || i.field})` : label;
       const btn = !edit ? ICONS[auto ? "sparkles" : "pencil"]
         : auto ? `<button type="button" class="tibtn" data-tagfixauto="${esc(r.p)}" title="${esc(t("fixtag.auto_fix_button"))}">${ICONS.sparkles}</button>`
                : `<button type="button" class="tibtn" data-tagfixmanual="${esc(r.p)}" title="${esc(t("fixtag.manual_edit_link"))}">${ICONS.pencil}</button>`;
       const ign = canIgnore
-        ? `<button type="button" class="tibtn" data-issueign="${esc(r.p)}" data-issuecode="${esc(i.code)}" title="${esc(t("tagissue.ignore"))}">${ICONS.eye}</button>` : "";
+        ? `<button type="button" class="tibtn" data-issueign="${esc(r.p)}" data-issuecode="${esc(i.code)}" title="${esc(t("tagissue.ignore"))}">${ICONS.eye}</button>` +
+          (ALBUM_COVER_CODES.has(i.code) ? `<button type="button" class="tibtn" data-issueignalbum="${esc(r.p)}" data-issuecode="${esc(i.code)}" title="${esc(t("tagissue.ignore_album"))}">${ICONS.albumIgnore}</button>` : "")
+        : "";
       return `<span class="tichip ${auto ? "auto" : "manual"}" title="${esc(tip)}">${edit ? "" : btn}<span>${esc(label)}</span>${edit ? btn : ""}${ign}</span>`;
     }).join("");
     return `<td><div class="ticell">${chips}</div></td>`;
@@ -9346,6 +9467,14 @@ function rowPlayToggle(cr, tr) {
 }
 
 // Schluessel = dataset-Name des Attributs (data-play-next -> playNext).
+async function issueIgnoreRun(items, flag, toastKey) {
+  if (!items.length) return;
+  try {
+    await setIssuesIgnored(items, flag);
+    updateCards(); render();
+    note(t(toastKey || (flag ? "toast.issue_ignored" : "toast.issue_unignored")));
+  } catch (err) { note(t("error.failed", {error: err.message}), true); }
+}
 const ROW_CLICK_ACTIONS = {
   relink: b => relinkMissing([DATA[+b.dataset.relink].p], b),
   play: b => rowPlayToggle(DATA[+b.dataset.play], b.closest("tr")),
@@ -9375,19 +9504,29 @@ const ROW_CLICK_ACTIONS = {
     const row = DATA.find(x => x.p === b.dataset.tagissues);
     if (row) openTagIssuesPopup(row, false);
   },
-  issueign: async b => {
-    try {
-      await setIssuesIgnored([{path: b.dataset.issueign, code: b.dataset.issuecode}], true);
-      updateCards(); render();
-      note(t("toast.issue_ignored"));
-    } catch (err) { note(t("error.failed", {error: err.message}), true); }
+  // Ignorieren je Track: nur dieser Track, auch bei Album-Cover-Meldungen (Nutzervorgabe:
+  // das Album bleibt stehen, bis jeder Track behoben oder ignoriert ist).
+  issueign: b => issueIgnoreRun([{path: b.dataset.issueign, code: b.dataset.issuecode}], true),
+  issueunign: b => issueIgnoreRun([{path: b.dataset.issueunign, code: b.dataset.issuecode}], false),
+  // Ganzes Album (nur Album-Cover-Meldungen): alle Tracks, die JETZT eine Meldung haben, je
+  // einzeln -- ein spaeter hinzugekommener Track hat keinen Eintrag und erscheint wieder.
+  // data-issuecode schraenkt auf einen Code ein (Ansicht "Cover fehlt" ignoriert keine
+  // Abweichung desselben Albums mit), ohne Code gelten beide Album-Cover-Codes.
+  issueignalbum: b => {
+    const key = albumIdentityKey(DATA.find(x => x.p === b.dataset.issueignalbum) || {});
+    const only = ALBUM_COVER_CODES.has(b.dataset.issuecode) ? b.dataset.issuecode : null;
+    issueIgnoreRun(DATA.flatMap(x => {
+      const is = albumIdentityKey(x) === key ? albumCoverIssueOf(x) : null;
+      return is && (!only || is.code === only) && !issueIgnored(x, is.code) ? [{path: x.p, code: is.code}] : [];
+    }), true, "toast.album_issue_ignored");
   },
-  issueunign: async b => {
-    try {
-      await setIssuesIgnored([{path: b.dataset.issueunign, code: b.dataset.issuecode}], false);
-      updateCards(); render();
-      note(t("toast.issue_unignored"));
-    } catch (err) { note(t("error.failed", {error: err.message}), true); }
+  issueunignalbum: b => {
+    const key = albumIdentityKey(DATA.find(x => x.p === b.dataset.issueunignalbum) || {});
+    const only = ALBUM_COVER_CODES.has(b.dataset.issuecode) ? b.dataset.issuecode : null;
+    issueIgnoreRun(DATA.flatMap(x => {
+      const set = albumIdentityKey(x) === key ? IGN_ISSUES.get(x.p) : null;
+      return set ? [...set].filter(c => ALBUM_COVER_CODES.has(c) && (!only || c === only)).map(c => ({path: x.p, code: c})) : [];
+    }), false, "toast.album_issue_unignored");
   },
   tagfixmanual: b => {
     const row = DATA.find(x => x.p === b.dataset.tagfixmanual);
@@ -9730,8 +9869,9 @@ function render() {
   // unabhaengig von der Checkbox -- filtered() sortiert dafuer bereits nach
   // r.dg). Beide teilen sich dieselbe Header-/Zaehl-Logik, nur Schluessel-
   // und Label-Funktion unterscheiden sich.
+  const coverGroup = albumCoverGrouping(view);
   const groupMode = view.id === "duplicates" ? "dup"
-    : (view.id === "grp:album" || state.groupAlbums) ? "album"
+    : (view.id === "grp:album" || state.groupAlbums || coverGroup) ? "album"
     : view.id === "grp:genre" ? "genre"
     : view.id === "grp:artist" ? "artist"
     : null;
@@ -9783,6 +9923,18 @@ function render() {
       if (key !== null && key !== lastGroupKey) {
         if (groupMode === "dup") {
           groupHeader = dupGroupHeaderHtml(key, groupSpan);
+        } else if (groupMode === "album" && view.id !== "grp:album") {
+          // Ein Kopf fuer alle Discs bzw. alle Interpreten eines Samplers. Umbenennen nur, wenn
+          // die Gruppe genau einen Albumnamen + Interpreten hat (kein Sampler, kein Disc-Zusatz) --
+          // sonst traefe der Knopf nur einen Teil der Gruppe.
+          const full = (r.al || "").trim();
+          const alb = full.replace(ALBUM_COUNT_SUFFIX, "").trim() || full;
+          const single = !r.cl && alb === full;
+          groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(alb)} <span class="albumgroup-artist">— ${esc(r.cl ? t("field.compilation") : (r.aa || r.a || ""))}</span>
+              <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>${single ? `
+              <button type="button" class="genrerename" data-grouprename="album" data-value="${esc(r.al || "")}"
+                      data-groupartist="${esc(r.aa || r.a || "")}"
+                      title="${esc(fieldEditTitle("album"))}">${ICONS.edit}</button>` : ""}</td></tr>`;
         } else if (groupMode === "album") {
           groupHeader = `<tr class="albumgroup"><td colspan="${groupSpan}">${esc(r.al || "")} <span class="albumgroup-artist">— ${esc(r.aa || r.a || "")}</span>
               <span class="path">(${esc(t("group.tracks_count", {count: groupTotals.get(key)}))})</span>
@@ -10080,8 +10232,7 @@ function askTrashBulk(rows) {
     document.getElementById("confirmFacts").innerHTML =
       t("confirm.total_size", {size: (totalSize/1048576).toFixed(1).replace(".",",")});
     const inLibrary = rows.filter(r => r.im).length;
-    document.getElementById("confirmMusicNote").textContent =
-      inLibrary ? t("confirm.trash_music_note_bulk", {count: inLibrary}) : "";
+    document.getElementById("confirmMusicNote").textContent = trashAlsoNote(rows);
     yesBtn.textContent = inLibrary ? t("action.to_trash_and_library") : t("action.to_trash");
     ov.style.display = "flex";
 
@@ -10114,42 +10265,6 @@ function askFixBulk(rows) {
       ov.style.display = "none";
       document.onkeydown = null;
       yesBtn.textContent = t("action.to_trash");
-      resolve(answer);
-    };
-    document.getElementById("confirmNo").onclick = () => done(false);
-    yesBtn.onclick = () => done(true);
-    document.onkeydown = e => { if (e.key === "Escape") done(false); };
-  });
-}
-
-function askFixTagIssuesBulk(rows) {
-  return new Promise(resolve => {
-    const ov = document.getElementById("confirmOverlay");
-    const yesBtn = document.getElementById("confirmYes");
-    document.getElementById("confirmTitle").textContent =
-      t("confirm.fix_tag_issues_bulk_title", {count: rows.length});
-    document.getElementById("confirmFile").textContent = t("confirm.selected_tracks", {count: rows.length});
-    document.getElementById("confirmPath").textContent = "";
-    document.getElementById("confirmFacts").innerHTML =
-      `<span>${esc(t("confirm.fix_tag_issues_bulk_note"))}</span>`;
-    document.getElementById("confirmMusicNote").textContent = "";
-    // .confirmnote spricht vom Papierkorb -- ein Tag-Fix schreibt in-place,
-    // es gibt kein Original, das dorthin wandert (anders als beim
-    // Bitrate-Fix, der denselben Dialog sonst nutzt). Text fuer diesen
-    // Dialog leeren und danach wieder herstellen (gleiches Prinzip wie
-    // askRekordboxQuality()). ":not(.confirmnote-music)" ist noetig, weil
-    // #confirmMusicNote im Markup VOR dieser Notiz steht und ebenfalls die
-    // Klasse "confirmnote" traegt.
-    const noteEl = ov.querySelector(".confirmnote:not(.confirmnote-music)");
-    const noteOriginal = noteEl.textContent;
-    noteEl.textContent = "";
-    yesBtn.textContent = t("fixtag.auto_fix_button");
-    ov.style.display = "flex";
-    const done = answer => {
-      ov.style.display = "none";
-      document.onkeydown = null;
-      yesBtn.textContent = t("action.to_trash");
-      noteEl.textContent = noteOriginal;
       resolve(answer);
     };
     document.getElementById("confirmNo").onclick = () => done(false);
@@ -10309,6 +10424,7 @@ async function analyseBpmKey(rows, isDrop, opts) {
         if (data.status === "written") {
           if (isDrop) Object.assign(r, fieldsToDropRow(data.fields));
           else if (data.row) applyRowUpdate(r.i, data.row);
+          noteMusicTagQueued(data, r.p, true);
           written++;
         } else unchanged++;
         if (isDrop) renderDrops();
@@ -10713,6 +10829,7 @@ async function analyseGenreMood(rows, isDrop, opts) {
           Object.assign(r, genreMoodToRow(data.result), fieldsToDropRow(data.fields || {}));
           renderDrops();
         } else if (data.row) applyRowUpdate(r.i, data.row);
+        noteMusicTagQueued(data, r.p, true);
         done++;
       } catch (err) {
         failed++; lastError = `${baseName(r.p)}: ${err.message}`;
@@ -10832,9 +10949,13 @@ async function bulkApply(kind) {
       note(t("toast.no_tag_fixable"), "soft");
       return;
     }
-    if (!await askFixTagIssuesBulk(rows)) return;
+    // Vorschau (replace.js) statt Rueckfrage: dort laesst sich je Track und
+    // Feld abwaehlen, geschrieben wird auch dort.
+    openQuickFixPreview(rows, {skipped, onDone: () => state.selected.clear()});
+    return;
   }
   if (kind === "trash" && !await askTrashBulk(rows)) return;
+  const bulkRbSession = kind === "trash" ? rbSessionToken() : "";
 
   if (kind === "ignore" || kind === "show" || kind === "correct" || kind === "uncorrect") {
     // Ohne lokale Datei (Music-App-Titel ohne Match, "Datei fehlt") ergeben
@@ -10932,18 +11053,15 @@ async function bulkApply(kind) {
           r.mc = 0;
           await persistCorrected(r.p, false);
         } else if (kind === "trash") {
-          const data = await trashRowApi(r);
-          if (data.music_error) musicErrors++;
+          const data = await trashRowApi(r, bulkRbSession);
+          if (data.music_error || data.music_missed) musicErrors++;
           if (data.music_cloud_note) cloudNotes++;
         } else if (kind === "fix") {
           await rewriteOne(r, r.mk);
-        } else if (kind === "fixtags") {
-          await fixTagIssuesOne(r, false);
         }
       } catch (err) {
         const label = kind === "trash" ? t("bulk.action_trash")
           : kind === "fix" ? t("bulk.action_fix")
-          : kind === "fixtags" ? t("bulk.action_fix_tag_issues")
           : t("action.save");
         note(t("toast.bulk_action_failed", {action: label, name: baseName(r.p), error: err.message}), true);
       }
@@ -10963,9 +11081,6 @@ async function bulkApply(kind) {
   updateCards(); render();
   if (kind === "fix" && skipped) {
     note(t("toast.bulk_fixed", {count: rows.length, skipped}));
-  }
-  if (kind === "fixtags") {
-    note(t("toast.tag_issues_fixed_bulk", {count: rows.length, skipped}));
   }
   if (kind === "trash" && musicErrors) {
     note(t("toast.trash_music_failed", {count: musicErrors}), "soft");
@@ -11091,16 +11206,114 @@ function openFixPopup(r, isDrop) {
   };
 }
 
-// Schreibt die sicher behebbaren Auffaelligkeiten einer Zeile und zieht das
-// Ergebnis lokal nach -- fuer Bibliothekszeilen (DATA, ueber DATA[r.i]) wie
-// fuer Einzelpruefungen (Drops, siehe rewriteDrop()) in einer Funktion, weil
-// der Server fuer beide dasselbe kompakte Format liefert (report.py und
-// fromServerRow() teilen sich dieselben Kurzschluessel a/t/al/...).
-async function fixTagIssuesOne(r, isDrop) {
-  const albumCover = isDrop ? null : albumCoverIssueOf(r);
-  const fixed = (r.ti || []).some(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code)) ? await fixFileTagIssues(r, isDrop) : [];
+// ── Quick Fix: Plan je Zeile ─────────────────────────────────────────────
+// Unter welchem Feld ein Quick-Fix-Eintrag in der Vorschau steht und ueber
+// welchen Schluessel er sich abwaehlen laesst (opts.skip): Textfelder mit
+// ihrem Namen, dazu "key", "cover" (Verkleinern und Album-Cover), "id3" und
+// "user_tags:<alter Tag>" (eigene Tags, je Tag einzeln).
+const QUICK_FIX_ID3_CODES = new Set(["id3_v1_only", "id3_v22"]);
+const quickFixField = i => QUICK_FIX_ID3_CODES.has(i.code) ? "id3"
+  : i.code === "oversized_cover" || ALBUM_COVER_CODES.has(i.code) ? "cover" : i.field;
+// Codes, die ein Quick Fix an dieser Zeile anfassen darf: nicht ignorierte,
+// Quick-Fix-faehige Auffaelligkeiten, ggf. eingegrenzt auf 'codes' (Bubble).
+function quickFixAllowed(r, codes) {
+  const out = new Set();
+  for (const i of rowIssues(r)) if (isAutoFixIssue(i) && (!codes || codes.has(i.code))) out.add(i.code);
+  return out;
+}
+// Datei-seitige Codes (taganomaly.fix_safe(), /api/fix-tag-issues) einer Zeile.
+const quickFixServerCodes = (r, allow, skip) => [...new Set((r.ti || [])
+  .filter(i => AUTO_FIXABLE_TAG_ISSUE_CODES.has(i.code) && allow.has(i.code) && !skip.has(quickFixField(i)))
+  .map(i => i.code))];
+
+// Was der Quick Fix an EINER Zeile aendert -- eine Rechnung fuer Vorschau und
+// Schreiben. 'server' = Plan aus /api/fix-tag-issues-preview (Vorschau: die
+// Datei-Korrektur ist noch nicht geschrieben, ihr Ergebnis ist die Grundlage
+// fuer Tempo und Regeln). Beim Schreiben laeuft sie zweimal ohne 'server':
+// vor /api/fix-tag-issues (welche Codes gehen an den Server) und danach (die
+// Zeile traegt den Stand nach dem Server-Fix schon selbst, 'body' = was ueber
+// /api/tags noch dazukommt). Reihenfolge wie dort: Datei -> Tempo -> Regeln.
+// -> {serverCodes, albumCover, body, tags, changes: Map feld -> {old, new, codes}, clientCodes}
+function quickFixPlan(r, isDrop, opts = {}, server = null) {
+  const allow = opts.allow || quickFixAllowed(r, opts.codes);
+  const skip = opts.skip || new Set();
+  const changes = new Map();
+  const mark = (field, code, old, nv) => {
+    let c = changes.get(field);
+    if (!c) changes.set(field, c = {old, new: nv, codes: new Set()});
+    c.new = nv; c.codes.add(code);
+  };
+  const cur = {};
+  for (const f of replaceFields()) cur[f.key] = r[f.rk] || "";
+  const serverCodes = quickFixServerCodes(r, allow, skip);
+  if (server && !server.error) {
+    for (const [field, nv] of Object.entries(server.fields || {})) {
+      if (!(field in cur)) continue;
+      const old = (server.old && server.old[field]) || cur[field];
+      for (const code of (server.field_codes || {})[field] || []) mark(field, code, old, nv);
+      cur[field] = nv;
+    }
+    for (const [field, codes] of Object.entries(server.other || {})) for (const code of codes) mark(field, code, null, null);
+  }
+  // Album-Cover: das Bild der Album-Mehrheit (nur Bibliothekszeilen).
+  const ac = isDrop ? null : albumCoverIssueOf(r);
+  const albumCover = ac && ac.source && allow.has(ac.code) && !skip.has("cover") ? ac : null;
+  if (albumCover) mark("cover", ac.code, null, null);
+  // Titel (Tempowechsel) und Tonart-Schreibweise laufen ueber den normalen
+  // Tags-Weg (Datei + DB + key_raw). Einzelpruefungen nur mit echtem Pfad
+  // (wie writeKeyToFiles()), den Tempowechsel kennen sie nicht.
+  const body = {}, clientCodes = [];
+  if (!isDrop && allow.has("tempo_change_title") && !skip.has("title") && tempoIssueOf(r)) {
+    const nv = titleWithTempoFor(cur.title || titleStem(r), tempoSequence(r));
+    mark("title", "tempo_change_title", cur.title, nv);
+    cur.title = body.title = nv;
+    clientCodes.push("tempo_change_title");
+  }
+  if (allow.has("key_notation") && !skip.has("key") && keyIssueOf(r) && (!isDrop || r.nativePath)) {
+    body.key = keyLabel(r.ky);
+    mark("key", "key_notation", r.kr || "", body.key);
+    clientCodes.push("key_notation");
+  }
+  // Ersetzungsregeln (replace.js), je Feld auf den bis hier erreichten Stand.
+  const ruleIds = new Set([...allow].filter(isRuleCode).map(c => c.slice(5)));
+  const ruleHit = new Set();
+  let tags = null;
+  if (ruleIds.size && (!isDrop || r.nativePath)) {
+    for (const f of replaceFields()) {
+      if (skip.has(f.key) || !cur[f.key]) continue;
+      const res = applyRulesToValue(cur[f.key], f.key, r, ruleIds);
+      if (!res.rules.length) continue;
+      for (const rule of res.rules) { mark(f.key, "rule:" + rule.id, cur[f.key], res.value); ruleHit.add("rule:" + rule.id); }
+      cur[f.key] = body[f.key] = res.value;
+    }
+    // Eigene Tags (nur DB, nie Einzelpruefungen).
+    if (!isDrop) for (const tag of USER_TAGS.get(r.p) || []) {
+      if (skip.has(REPLACE_TAGS_KEY + ":" + tag)) continue;
+      const res = applyRulesToValue(tag, REPLACE_TAGS_KEY, r, ruleIds);
+      const nv = res.value.trim().replace(/\s+/g, " ");
+      if (!res.rules.length || !nv || nv === tag) continue;
+      const codes = res.rules.map(rule => "rule:" + rule.id);
+      codes.forEach(c => ruleHit.add(c));
+      (tags = tags || []).push({old: tag, new: nv, codes});
+    }
+  }
+  clientCodes.push(...ruleHit);
+  return {allow, serverCodes, albumCover, body, tags, changes, clientCodes, rules: ruleHit.size > 0};
+}
+
+// Schreibt die Quick-Fix-Korrekturen einer Zeile und zieht das Ergebnis lokal
+// nach -- fuer Bibliothekszeilen (DATA, ueber DATA[r.i]) wie fuer
+// Einzelpruefungen (Drops, siehe rewriteDrop()) in einer Funktion, weil der
+// Server fuer beide dasselbe kompakte Format liefert. opts wie quickFixPlan():
+// 'codes' (nur diese Auffaelligkeiten) und 'skip' (abgewaehlte Felder der Vorschau).
+async function fixTagIssuesOne(r, isDrop, opts = {}) {
+  const allow = quickFixAllowed(r, opts.codes);
+  const skip = opts.skip || new Set();
+  const first = quickFixPlan(r, isDrop, {allow, skip});
+  const fixed = first.serverCodes.length ? await fixFileTagIssues(r, isDrop, first.serverCodes, skip) : [];
   // Album-Cover: das Bild, das die meisten Tracks des Albums tragen, in diese Datei kopieren.
-  if (albumCover && albumCover.source) {
+  const albumCover = first.albumCover;
+  if (albumCover) {
     stopPlayerFor(r.p);
     const res = await fetch("/api/cover-copy", {method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({from: albumCover.source, to: [r.p]})});
@@ -11111,30 +11324,34 @@ async function fixTagIssuesOne(r, isDrop) {
     applyRowUpdate(r.i, one.row);
     fixed.push(albumCover.code);
   }
-  // Titel (Tempowechsel) und Tonart-Schreibweise laufen ueber den normalen
-  // Tags-Weg (Datei + DB + key_raw), beide in einem Aufruf. Einzelpruefungen
-  // nur mit echtem Pfad (wie writeKeyToFiles()), den Tempowechsel kennen sie nicht.
-  const body = {};
-  if (!isDrop && tempoIssueOf(r)) body.title = titleWithTempo(r);
-  if (keyIssueOf(r) && (!isDrop || r.nativePath)) body.key = keyLabel(r.ky);
-  if (!Object.keys(body).length) return fixed;
-  stopPlayerFor(r.p);
-  const res = await fetch("/api/tags", {method: "POST", headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({path: r.p, ...body})});
-  const data = await res.json();
-  if (!data.ok) throw new Error(data.error || t("error.unknown"));
-  if (isDrop) Object.assign(r, fieldsToDropRow({key: body.key}));
-  else applyRowUpdate(r.i, data.row);
-  return [...fixed, ...(body.title ? ["tempo_change_title"] : []), ...(body.key ? ["key_notation"] : [])];
+  const plan = quickFixPlan(r, isDrop, {allow, skip});
+  const body = plan.body;
+  if (Object.keys(body).length) {
+    stopPlayerFor(r.p);
+    const res = await fetch("/api/tags", {method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({path: r.p, ...body})});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    noteMusicTagQueued(data, r.p, true);
+    if (isDrop) { Object.assign(r, fieldsToDropRow(body)); dropScopeCache(r); }
+    else {
+      applyRowUpdate(r.i, data.row);
+      // Rekordbox (sofort bzw. vorgemerkt) gebuendelt ueber /api/tag-replace-finish.
+      if (plan.rules && r.rb) noteTagSync(r.p);
+    }
+  }
+  if (plan.tags) await applyRuleTags(r, plan.tags);
+  return [...fixed, ...plan.clientCodes];
 }
 
-async function fixFileTagIssues(r, isDrop) {
+async function fixFileTagIssues(r, isDrop, codes, skip) {
   const res = await fetch("/api/fix-tag-issues", {method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({path: r.p})});
+    body: JSON.stringify({path: r.p, codes, skip_fields: [...(skip || [])]})});
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || t("error.unknown"));
   dropScopeCache(r);
+  noteMusicTagQueued(data, r.p, true);
   if (!isDrop && data.row) {
     applyRowUpdate(r.i, data.row);
   } else if (data.row) {
@@ -11176,7 +11393,7 @@ function openTagIssuesPopup(r, isDrop) {
       const fieldLabel = i.field ? t("field." + i.field) : "";
       const suggestion = i.suggestion
         ? `<div class="dim">${esc(t("fixtag.mojibake_preview_label"))}: „${esc(i.suggestion)}“</div>` : "";
-      return `<div>${auto ? "🔧" : "✋"} ${esc(t("tagissue." + i.code))}` +
+      return `<div>${auto ? "🔧" : "✋"} ${esc(issueLabel(i.code))}` +
         `${fieldLabel ? ` <span class="dim">(${esc(fieldLabel)})</span>` : ""}${suggestion}</div>`;
     }).join("") : `<div>${esc(t("fixtag.no_issues"))}</div>`;
     const canEdit = isDrop || state.layout === "edit";
@@ -11369,7 +11586,7 @@ async function runConvertBatch(rows, target, isDrop, trashOriginal) {
             else applyRowUpdate(row.i, item.row);
           }
           results.converted.push({row, newName: baseName(item.new_path), kept});
-          if (item.rekordbox && item.rekordbox.running) results.rekordbox_pending.push(row);
+          if (noteRekordboxQueued(item.rekordbox, true)) results.rekordbox_pending.push(row);
         } else if (item.status === "skip") {
           results[item.reason === "upscale" ? "skip_upscale" : "skip_already_target"].push(row);
         } else {
@@ -11466,7 +11683,7 @@ function addDropConvertResult(r, freshRow) {
 let fieldValueCache = {};
 let groupCountsCache = {};
 const ALBUM_COUNTS_KEY = "\u0000album";   // kein Zeilenfeld, siehe albumGroupCounts()
-function invalidateFieldValueCache() { fieldValueCache = {}; groupCountsCache = {}; coverDupCache = null; albumCoverCache = null; }
+function invalidateFieldValueCache() { albumOpenCache = null; fieldValueCache = {}; groupCountsCache = {}; coverDupCache = null; albumCoverCache = null; resetRuleIssueCache(); }
 
 // Alle vorkommenden Werte eines Feldes MIT Trackzahl -- Grundlage der
 // Genre-/Album-/Interpret-Bubbleleiste und der Zusammenfuehrungs-Vorschlaege
@@ -11929,7 +12146,61 @@ function setTagsChangeBase(initial) {
 }
 function tagsChangedCount() {
   if (!TAGS_CHANGE_BASE) return 0;
-  return TAGS_BULK_FIELD_MAP.filter(([id]) => document.getElementById(id).value !== TAGS_CHANGE_BASE[id]).length;
+  return TAGS_BULK_FIELD_MAP.filter(([id]) => tagsFieldChanged(id)).length;
+}
+// Mehrfachbearbeitung: Felder, die bei ALLEN Tracks geleert werden sollen
+// (Papierkorb am Label). Noetig, weil ein Feld mit gemischten Werten leer
+// vorbefuellt ist -- "leer" waere dort sonst nicht von "unangetastet" zu
+// unterscheiden. Ein geleertes Feld ist gesperrt, bis es zurueckgesetzt wird.
+let TAGS_CLEAR = new Set();
+function tagsFieldChanged(id) {
+  return TAGS_CLEAR.has(id) || (!!TAGS_CHANGE_BASE && document.getElementById(id).value !== TAGS_CHANGE_BASE[id]);
+}
+function tagsUnclear(ids) {
+  for (const id of ids) {
+    if (!TAGS_CLEAR.delete(id)) continue;
+    const el = document.getElementById(id);
+    el.disabled = false;
+    el.value = TAGS_CHANGE_BASE ? TAGS_CHANGE_BASE[id] : "";
+    el.placeholder = (TAGS_CHANGE_BASE && el.dataset.mixed) ? t("tags.multiple_values_placeholder") : "";
+  }
+}
+// Papierkorb-Knoepfe am Label anlegen (ids = Felder, die einen Wert haben
+// bzw. gemischt sind) bzw. alle entfernen (ids leer, Einzelbearbeitung).
+function setupTagsClear(ids) {
+  TAGS_CLEAR = new Set();
+  document.querySelectorAll("#tagsOverlay .tagsclear").forEach(b => b.remove());
+  for (const [id] of TAGS_BULK_FIELD_MAP) {
+    const el = document.getElementById(id);
+    el.disabled = false;
+    delete el.dataset.mixed;
+  }
+  const done = new Set();
+  for (const [id] of TAGS_BULK_FIELD_MAP) {
+    const field = document.getElementById(id).closest(".setfield");
+    const label = field && field.querySelector(":scope > label");
+    if (!label || done.has(field)) continue;
+    done.add(field);
+    const group = TAGS_BULK_FIELD_MAP.map(([i]) => i).filter(i => document.getElementById(i).closest(".setfield") === field);
+    if (!ids.some(i => group.includes(i)) || group.includes("tagsCompilation")) continue;
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "tagsreset tagsclear";
+    btn.innerHTML = ICONS.trash;
+    btn.title = t("tags.clear_all");
+    btn.onclick = ev => {
+      ev.preventDefault(); ev.stopPropagation();
+      for (const i of group) {
+        const inp = document.getElementById(i);
+        TAGS_CLEAR.add(i);
+        inp.value = "";
+        inp.disabled = true;
+        inp.placeholder = t("tags.clear_placeholder");
+      }
+      refreshTagsChanged();
+    };
+    label.append(btn);
+  }
 }
 // Cover-Vormerkung des offenen Dialogs: beide Dialog-Arten (Einzeltrack,
 // Mehrfachauswahl) halten sie selbst und tragen hier ein, wie man sie
@@ -11989,6 +12260,63 @@ function syncTagsTempoBtn() {
     refreshTagsChanged();
   };
 }
+// Angezeigtes Cover des Tags-Dialogs als PNG in die Zwischenablage (Clipboard
+// kennt verlaesslich nur PNG) -- zum Einfuegen per "Zwischenablage einfuegen"
+// bei einem anderen Track. Gilt auch fuer ein vorgemerktes, noch nicht
+// gespeichertes Bild.
+let TAGS_CLIP_COVER = null;     // {path, size, sig} des zuletzt kopierten Covers
+async function blobSig(blob) {
+  try {
+    const h = await crypto.subtle.digest("SHA-256", await blob.arrayBuffer());
+    return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, "0")).join("");
+  } catch (e) { return ""; }
+}
+// Bild aus der Zwischenablage als File; stammt es von "Cover kopieren", traegt
+// es copyFrom (Quellpfad) und wird beim Speichern als Original uebertragen.
+async function clipCoverFile(blob) {
+  const file = new File([blob], "cover.png", {type: blob.type});
+  const c = TAGS_CLIP_COVER;
+  if (c && c.size === blob.size && c.sig === await blobSig(blob)) file.copyFrom = c.path;
+  return file;
+}
+// Speichert ein vorgemerktes Cover mit copyFrom: Antwort wie /api/cover.
+async function postCoverFrom(from, to) {
+  const res = await fetch("/api/cover-copy", {method: "POST", headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({from, to: [to]})});
+  const data = await res.json();
+  const one = data.ok && data.results && data.results[to];
+  if (!one || !one.ok) return {ok: false, error: (one && one.error) || data.error};
+  return one;
+}
+async function copyTagsCover() {
+  const img = document.getElementById("tagsCoverImg");
+  const status = document.getElementById("tagsStatus");
+  if (!img.getAttribute("src") || img.style.display === "none") {
+    status.textContent = t("tags.cover_copy_none"); status.className = "warn";
+    return;
+  }
+  try {
+    const bmp = await new Promise((ok, fail) => {
+      const im = new Image();
+      im.crossOrigin = "anonymous";
+      im.onload = () => ok(im); im.onerror = () => fail(new Error("load"));
+      im.src = img.src;
+    });
+    const c = document.createElement("canvas");
+    c.width = bmp.naturalWidth; c.height = bmp.naturalHeight;
+    c.getContext("2d").drawImage(bmp, 0, 0);
+    const blob = await new Promise(ok => c.toBlob(ok, "image/png"));
+    await navigator.clipboard.write([new ClipboardItem({"image/png": blob})]);
+    // Quelle merken: beim Einfuegen wird die Original-Datei uebertragen
+    // (/api/cover-copy), nicht das PNG -- sonst weicht der Bild-Hash ab und
+    // das Cover gilt weiter als "anders" (Auffaelligkeiten, Duplikat-Cover).
+    const src = TAGS_ENTRY && !TAGS_ENTRY.cover && !TAGS_ENTRY.isDrop ? TAGS_ENTRY.r.p : "";
+    TAGS_CLIP_COVER = src ? {path: src, size: blob.size, sig: await blobSig(blob)} : null;
+    status.textContent = t("tags.cover_copied"); status.className = "ok";
+  } catch (err) {
+    status.textContent = t("tags.clipboard_unavailable", {error: err.message}); status.className = "warn";
+  }
+}
 function refreshTagsChanged() {
   const base = TAGS_CHANGE_BASE;
   // Felder je .setfield buendeln: "Track" haelt Nr. und Gesamt in einem Feld --
@@ -12002,10 +12330,11 @@ function refreshTagsChanged() {
   }
   let n = 0;
   for (const [field, ids] of groups) {
-    const changed = !!base && ids.some(id => document.getElementById(id).value !== base[id]);
+    const changed = !!base && ids.some(id => tagsFieldChanged(id));
     field.classList.toggle("chg", changed);
-    if (changed) n += ids.filter(id => document.getElementById(id).value !== base[id]).length;
+    if (changed) n += ids.filter(id => tagsFieldChanged(id)).length;
     setTagsFieldReset(field, changed ? tagsOriginalLabel(ids.map(id => base[id])) : "", changed ? () => {
+      tagsUnclear(ids);
       for (const id of ids) document.getElementById(id).value = base[id];
       refreshTagsChanged();
     } : null);
@@ -12137,7 +12466,7 @@ function setTagsWriteLock(reason, text = "") {
   const locked = !!reason;
   document.querySelector("#tagsOverlay .tagsbox").classList.toggle("readonly", locked);
   for (const [id] of TAGS_BULK_FIELD_MAP) document.getElementById(id).disabled = locked;
-  for (const id of ["tagsCoverBtn", "tagsCoverPasteBtn", "tagsCoverDeleteBtn"]) {
+  for (const id of ["tagsCoverBtn", "tagsCoverPasteBtn", "tagsCoverDeleteBtn"]) { // Kopieren liest nur, bleibt frei
     document.getElementById(id).disabled = locked;
   }
   const msg = text || (locked ? t("tags.write_" + reason) : "");
@@ -12183,6 +12512,7 @@ async function saveTagsEntry(e) {
       body: JSON.stringify({path: r.p, ...fields})});
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    noteMusicTagQueued(data, r.p);
     if (isDrop) {
       Object.assign(r, fieldsToDropRow(fields));
       if (data.issues) r.ti = data.issues;
@@ -12205,6 +12535,8 @@ async function saveTagsEntry(e) {
       res2 = await fetch("/api/lookup-cover", {method: "POST",
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({path: r.p, url: cover.url})});
+    } else if (cover.copyFrom && cover.copyFrom !== r.p) {
+      res2 = {json: () => postCoverFrom(cover.copyFrom, r.p)};
     } else {
       res2 = await fetch(`/api/cover?path=${encodeURIComponent(r.p)}`, {
         method: "POST", headers: {"Content-Type": cover.type || "image/jpeg"}, body: cover});
@@ -12238,29 +12570,38 @@ function setTagsHead(name, dir, fullPath) {
   if (fullPath) pathEl.title = fullPath; else pathEl.removeAttribute("title");
 }
 
-// Vorschlaege der Titel-Bereinigung (Auffaelligkeiten) unter Titel/Interpret/
-// Album: die LETZTE Meldung je Feld traegt den vollstaendig bereinigten Wert
-// (taganomaly._check_cleanup()). Ein Klick setzt ihn ins Feld; der Knopf
-// verschwindet, sobald das Feld dem Vorschlag entspricht.
-const TAGS_SUGGEST_IDS = {title: "tagsTitle", artist: "tagsArtist", album: "tagsAlbum"};
+// Vorschlaege unter den Textfeldern des Tags-Dialogs. Zwei Quellen:
+// (1) Titel-Bereinigung (Auffaelligkeiten des Servers): die LETZTE Meldung je
+// Feld traegt den vollstaendig bereinigten Wert (taganomaly._check_cleanup());
+// (2) Ersetzungsregeln (replace.js, tagsRuleSuggestion()): live auf den
+// Server-Vorschlag bzw. den aktuellen Feldinhalt gerechnet, reagiert also
+// beim Tippen. Ein Klick setzt den Wert ins Feld; der Knopf verschwindet,
+// sobald das Feld dem Vorschlag entspricht. Der Mehrfach-Modus ruft mit {}
+// auf -- dort gibt es keine Vorschlaege (Felder leer oder gemischt).
 function renderTagsSuggestions(r) {
   const last = {};
   for (const i of rowIssues(r)) {
-    if (i.suggestion && TAGS_SUGGEST_IDS[i.field]) last[i.field] = i.suggestion;
+    if (i.suggestion && i.field) last[i.field] = i.suggestion;
   }
+  const withRules = !!(r && r.p);
   const sync = () => {
-    for (const [field, id] of Object.entries(TAGS_SUGGEST_IDS)) {
-      const btn = document.getElementById("tagsSuggest" + field[0].toUpperCase() + field.slice(1));
-      const input = document.getElementById(id);
+    for (const f of replaceFields()) {
+      const btn = document.getElementById(f.sug);
+      const input = document.getElementById(f.input);
+      if (!btn || !input) continue;
       input._sugSync = sync;
       if (!input.dataset.sugBound) {
         input.dataset.sugBound = "1";
         input.addEventListener("input", () => { if (input._sugSync) input._sugSync(); });
       }
-      const sug = last[field];
-      if (!sug || input.value === sug) { btn.hidden = true; continue; }
+      const server = last[f.key] || "";
+      const ruled = withRules ? tagsRuleSuggestion(f.key, server || input.value, r) : null;
+      const sug = ruled ? ruled.value : server;
+      if (!sug || input.value === sug) { btn.hidden = true; btn.removeAttribute("title"); continue; }
       btn.hidden = false;
       btn.innerHTML = `${esc(t("tags.suggest_apply"))} <span class="tsval">${esc(sug)}</span>`;
+      if (ruled) btn.title = t("replace.suggest_rule_title", {rules: ruled.rules.map(ruleLabel).join(" · ")});
+      else btn.removeAttribute("title");
       btn.onclick = () => {
         input.value = sug;
         input.dispatchEvent(new Event("input", {bubbles: true}));
@@ -12312,6 +12653,7 @@ function openTagsPopup(r, isDrop) {
   document.getElementById("tagsNav").style.display = "";
   document.querySelector(".tagslookup").style.display = "";
   document.getElementById("tagsCoverEmpty").innerHTML = t("tags.cover_empty");
+  setupTagsClear([]);
   for (const [id] of TAGS_BULK_FIELD_MAP) document.getElementById(id).placeholder = "";
 
   const slash = r.p.lastIndexOf("/");
@@ -12480,7 +12822,16 @@ function openTagsPopup(r, isDrop) {
     document.onkeydown = null;
   };
   document.getElementById("tagsCancel").onclick = close;
-  document.onkeydown = e => { if (e.key === "Escape") close(); };
+  document.onkeydown = e => {
+    if (e.key === "Escape") close();
+    // Cmd + Pfeil links/rechts: voriger/naechster Track (auch im Textfeld -- dort waere es sonst
+    // nur "Zeilenanfang/-ende", im einzeiligen Dialog bewusst ueberschrieben).
+    else if (e.metaKey && !e.altKey && !e.shiftKey && (e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      e.preventDefault();
+      const btn = e.key === "ArrowLeft" ? prevBtn : nextBtn;
+      if (!btn.disabled) btn.click();
+    }
+  };
 
   const coverInput = document.getElementById("tagsCoverInput");
   document.getElementById("tagsCoverBtn").onclick = () => coverInput.click();
@@ -12495,7 +12846,7 @@ function openTagsPopup(r, isDrop) {
       const items = await navigator.clipboard.read();
       for (const item of items) {
         const type = item.types.find(t => t.startsWith("image/"));
-        if (type) { stageCoverFile(await item.getType(type)); return; }
+        if (type) { stageCoverFile(await clipCoverFile(await item.getType(type))); return; }
       }
       status.textContent = t("tags.no_image_clipboard"); status.className = "warn";
     } catch (err) {
@@ -12632,6 +12983,7 @@ function openTagsPopup(r, isDrop) {
         failed.push({e, err});
       }
     }
+    await flushMusicTags();
     if (isDrop) renderDrops(); else render();
 
     // Angezeigten Track neu aufsetzen: gespeichert -> neuer Vergleichsstand
@@ -12733,6 +13085,12 @@ function openTagsPopupBulk(rows, isDrop) {
     el.placeholder = values.size > 1 ? t("tags.multiple_values_placeholder") : "";
     initial[id] = common;
   }
+  // Papierkorb am Label: nur wo es etwas zu leeren gibt (Wert oder gemischt).
+  setupTagsClear(TAGS_BULK_FIELD_MAP.filter(([id, key]) => {
+    const vals = new Set(rows.map(r => key === "ky" ? keyLabel(r.ky) : key === "cl" ? (r.cl ? "1" : "") : String(r[key] ?? "")));
+    if (vals.size > 1) document.getElementById(id).dataset.mixed = "1";
+    return vals.size > 1 || [...vals][0] !== "";
+  }).map(([id]) => id));
 
   // Prev/Next und Online-Suche zielen auf genau einen Track -- im
   // Mehrfach-Modus ausblenden statt anzupassen.
@@ -12833,7 +13191,7 @@ function openTagsPopupBulk(rows, isDrop) {
       const items = await navigator.clipboard.read();
       for (const item of items) {
         const type = item.types.find(t => t.startsWith("image/"));
-        if (type) { stageCoverFile(await item.getType(type)); return; }
+        if (type) { stageCoverFile(await clipCoverFile(await item.getType(type))); return; }
       }
       status.textContent = t("tags.no_image_clipboard"); status.className = "warn";
     } catch (err) {
@@ -12882,7 +13240,7 @@ function openTagsPopupBulk(rows, isDrop) {
     const fields = {};
     for (const [id, key, payloadKey] of TAGS_BULK_FIELD_MAP) {
       const raw = document.getElementById(id).value;
-      if (raw === initial[id]) continue;   // unangetastet -> ueberspringen, Original bleibt je Datei erhalten
+      if (raw === initial[id] && !TAGS_CLEAR.has(id)) continue;   // unangetastet -> ueberspringen, Original bleibt je Datei erhalten
       if (payloadKey === "year") fields.year = raw ? parseInt(raw, 10) : 0;
       else if (payloadKey === "bpm") fields.bpm = raw ? parseFloat(raw) : 0;
       else if (payloadKey === "track_no" || payloadKey === "track_total") fields[payloadKey] = raw ? parseInt(raw, 10) : 0;
@@ -12924,6 +13282,7 @@ function openTagsPopupBulk(rows, isDrop) {
               body: JSON.stringify({path: row.p, ...fields})});
             const data = await res.json();
             if (!data.ok) throw new Error(data.error || t("error.unknown"));
+            noteMusicTagQueued(data, row.p);
             // Einzelprüfungen haben keine DB-Zeile -- data.row ist dort
             // null, uebernommen wird deshalb das, was verschickt wurde.
             if (isDrop) Object.assign(row, fieldsToDropRow(fields));
@@ -12951,12 +13310,13 @@ function openTagsPopupBulk(rows, isDrop) {
               if (data2.music_cover_synced === false) coverSyncMisses++;
             }
           } else if (pendingCover) {
-            const res2 = await fetch(`/api/cover?path=${encodeURIComponent(row.p)}`, {
-              method: "POST",
-              headers: {"Content-Type": pendingCover.type || "image/jpeg"},
-              body: pendingCover,
-            });
-            const data2 = await res2.json();
+            const data2 = pendingCover.copyFrom
+              ? (pendingCover.copyFrom === row.p ? {ok: true, row: null} : await postCoverFrom(pendingCover.copyFrom, row.p))
+              : await (await fetch(`/api/cover?path=${encodeURIComponent(row.p)}`, {
+                method: "POST",
+                headers: {"Content-Type": pendingCover.type || "image/jpeg"},
+                body: pendingCover,
+              })).json();
             if (data2.ok) {
               bumpCoverRev(row.p);
               if (isDrop) row.cv = 1; else applyRowUpdate(row.i, data2.row);
@@ -12971,6 +13331,8 @@ function openTagsPopupBulk(rows, isDrop) {
       }
     };
     await Promise.all([worker(), worker(), worker()]);
+    if (MUSIC_TAG_QUEUE.size) status.textContent = t("tags.music_syncing");
+    await flushMusicTags();
     if (isDrop) renderDrops(); else render();
     if (coverSyncMisses) {
       note(t("toast.cover_music_failed", {count: coverSyncMisses}), "soft");
@@ -12990,6 +13352,10 @@ function openTagsPopupBulk(rows, isDrop) {
     // Zuruecksetzen-Knoepfe weg); nach Fehlern bleibt alles markiert.
     if (!failCount) {
       for (const [id] of TAGS_BULK_FIELD_MAP) initial[id] = document.getElementById(id).value;
+      // Geleerte Felder sind jetzt bei allen Tracks leer (kein "mehrere Werte" mehr).
+      const cleared = [...TAGS_CLEAR];
+      for (const id of cleared) delete document.getElementById(id).dataset.mixed;
+      tagsUnclear(cleared);
     }
     refreshTagsChanged();
     locked = false;
@@ -13100,7 +13466,16 @@ let RENAME_PATTERN = "";
 // an einem laufenden Rekordbox gescheitert sind (siehe relinkMissing()), bis
 // zum naechsten Klick auf "Auto-Relocate" -- der schickt sie automatisch
 // erneut mit, auch wenn dann keine Datei mehr als fehlend gilt.
-let pendingRekordboxMoves = [];
+// Der Server hat eine Rekordbox-Pfadkorrektur vorgemerkt, weil Rekordbox laeuft
+// (server._rekordbox_relocate()): Zaehler am Abgleich-Knopf nachziehen. quiet = ohne
+// Hinweis (der Aufrufer meldet es selbst).
+function noteRekordboxQueued(rb, quiet) {
+  if (!rb || !rb.running) return false;
+  RB_PENDING = rb.pending || RB_PENDING + (rb.queued || 0);
+  renderRekordboxSyncButton();
+  if (!quiet) note(t("toast.rename_lib_rb_pending", {count: rb.queued || 0}), "soft");
+  return true;
+}
 
 // ── Standard-Suchfilter (Einstellungen) ──────────────────────────────────
 // DEFAULT_SEARCH_FILTERS sind die rohen Zeilen aus den Einstellungen (ein
@@ -13182,6 +13557,45 @@ async function openInMik(rows, btn) {
 // den neuen Pfad um und meldet die Paare zurueck; hier ziehen die Zeilen im
 // Browser nach, damit Anhoeren/Tags/Finder danach nicht auf die weggezogene
 // Datei zeigen.
+// Tag-Aenderungen an Music.app: /api/tags merkt im Server nur vor
+// (music_queued, server._MusicTagSync), abgeschickt wird gebuendelt mit EINEM
+// osascript ueber /api/music-tags-flush. Dialoge rufen flushMusicTags() nach
+// ihrem Speichervorgang, Einzelaufrufe (Schnellkorrekturen) sammeln sich ueber
+// autoFlush kurz. Ohne Flush schickt der Server nach 2 s selbst ab, der Client
+// erfaehrt dann aber nichts von umsortierten Dateien.
+const MUSIC_TAG_QUEUE = new Set();
+let musicTagTimer = 0;
+function noteMusicTagQueued(data, path, autoFlush) {
+  if (!data || !data.music_queued) return;
+  MUSIC_TAG_QUEUE.add(path);
+  if (autoFlush) {
+    clearTimeout(musicTagTimer);
+    musicTagTimer = setTimeout(flushMusicTags, 800);
+  }
+}
+async function flushMusicTags() {
+  clearTimeout(musicTagTimer);
+  if (!apiMode || !MUSIC_TAG_QUEUE.size) return null;
+  const paths = [...MUSIC_TAG_QUEUE];
+  MUSIC_TAG_QUEUE.clear();
+  try {
+    const res = await fetch("/api/music-tags-flush", {method: "POST",
+      headers: {"Content-Type": "application/json"}, body: JSON.stringify({paths})});
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    // Music.app sortiert ihren Medienordner nach Interpret/Album um -- die
+    // Zeilen auf den neuen Pfad ziehen (wie Auto-Relocate).
+    if (applyMovedPaths(data.relinked)) { clearUndoStacks(); updateCards(); render(); }
+    noteRekordboxQueued(data.rekordbox);
+    if (data.error) note(t("toast.music_tags_failed", {error: data.error}), "soft");
+    else if (data.missing.length) note(t("toast.music_tags_missing", {count: data.missing.length}), "soft");
+    return data;
+  } catch (err) {
+    note(t("toast.music_tags_failed", {error: err.message}), "soft");
+    return null;
+  }
+}
+
 function applyMovedPaths(moved) {
   if (!moved || !moved.length) return 0;
   for (const m of moved) {
@@ -13679,8 +14093,7 @@ function askTrash(r) {
       <span>${r.fam === "lossless" ? esc(t("field.lossless")) : t("confirm.declared_kbps", {kbps: r.kb})}</span>
       <span>${esc(t("field.confidence"))} <b>${r.cf.toFixed(2).replace(".",",")}</b></span>
       <span><b>${(r.sz/1048576).toFixed(1).replace(".",",")} MB</b></span>`;
-    document.getElementById("confirmMusicNote").textContent =
-      r.im ? t("confirm.trash_music_note") : "";
+    document.getElementById("confirmMusicNote").textContent = trashAlsoNote([r]);
     yesBtn.textContent = r.im ? t("action.to_trash_and_library") : t("action.to_trash");
     ov.style.display = "flex";
 
@@ -13704,6 +14117,7 @@ async function trashTrack(r) {
       body: JSON.stringify({path: r.p})});
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    noteTrashRekordbox(data.rekordbox);
     r.removed = 1;
     dupGroupsDirty = true;
     invalidateFieldValueCache();
@@ -13714,6 +14128,9 @@ async function trashTrack(r) {
       {name: baseName(r.p)}));
     if (data.music_error) {
       note(t("toast.trash_music_failed_one", {name: baseName(r.p), error: data.music_error}), "soft");
+    }
+    if (data.music_missed) {
+      note(t("toast.trash_music_missed_one", {name: baseName(r.p)}), "soft");
     }
     if (data.music_cloud_note) {
       note(t("toast.trash_music_cloud_note_one", {name: baseName(r.p)}), "soft");
@@ -13742,9 +14159,7 @@ async function relinkMissing(paths, btn) {
   try {
     const res = await fetch("/api/relink", {method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({...(paths ? {paths} : {}),
-                             ...(pendingRekordboxMoves.length
-                                 ? {rekordbox_retry: pendingRekordboxMoves} : {})})});
+      body: JSON.stringify(paths ? {paths} : {})});
     const data = await res.json();
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
     // updateCards() zaehlt die fehlenden Dateien neu: ohne das blieb die gelbe
@@ -13758,16 +14173,10 @@ async function relinkMissing(paths, btn) {
     if (data.relinked.length) teile.push(t("toast.relink_relinked", {count: data.relinked.length}));
     if (data.ambiguous.length) teile.push(t("toast.relink_ambiguous", {count: data.ambiguous.length}));
     if (data.unmatched.length) teile.push(t("toast.relink_unmatched", {count: data.unmatched.length}));
-    // Rekordbox-Korrektur (siehe server._post_relink()): laeuft Rekordbox
-    // gerade, bleibt die Liste im Speicher fuer den naechsten Klick auf
-    // diesen Knopf -- ein eigener, klebender Hinweis statt in der
-    // Zusammenfassung unterzugehen, weil er eine Handlung verlangt.
+    // Rekordbox-Korrektur (siehe server._rekordbox_relocate()): laeuft Rekordbox
+    // gerade, merkt der Server sie vor und "Rekordbox abgleichen" schreibt sie.
     if (data.rekordbox) {
-      if (data.rekordbox.running) {
-        pendingRekordboxMoves = data.rekordbox.moves;
-        note(t("toast.rekordbox_relocate_open"), true, true);
-      } else {
-        pendingRekordboxMoves = [];
+      if (!noteRekordboxQueued(data.rekordbox)) {
         if (data.rekordbox.updated.length) {
           teile.push(t("toast.rekordbox_relocate_updated", {count: data.rekordbox.updated.length}));
         }
@@ -14085,7 +14494,7 @@ function showKeyNotationIssues() {
 // Bearbeiten-Dialog markiert (askPlaylistProps()).
 const SETTINGS_LAYOUT = [
   "library", "search", "display", "bpmkey", "stems", "columnviewstd", "columnviews",
-  "music", "rekordbox", "tools", "shops", "rename", "tagclean", "tagclean_video", "tagclean_spaces", "tagclean_trackno", "tagclean_remix", "tagclean_feat", "tagclean_case", "tagclean_quotes", "djview", "autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue",
+  "music", "rekordbox", "tools", "shops", "rename", "replacerules", "tagclean", "tagclean_video", "tagclean_spaces", "tagclean_trackno", "tagclean_remix", "tagclean_case", "tagclean_quotes", "djview", "autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue",
   "analysis", "loudness",
   "backup", "logs",
 ];
@@ -14111,6 +14520,7 @@ function renderSettings() {
     shops: renderShopsBlock, backup: renderBackupBlock, logs: renderLogsBlock,
     autocuehot: renderAutocueHotBlock, autocuemem: renderAutocueMemoryBlock, autocuemodel: renderAutocueModelBlock,
     autocuetrain: renderAutocueTrainBlock,
+    replacerules: renderReplaceRulesBlock,
   };
 
   document.getElementById("settingsBody").innerHTML = SETTINGS_LAYOUT
@@ -14165,6 +14575,7 @@ function renderSettings() {
 
   wireColumnViewsBlock();
   wireShopsBlock();
+  wireReplaceRulesBlock();
   wireAutocueSlotsBlock();
   wireAutocueModelBlock();
   wireAutocueTrainBlock();
@@ -14183,7 +14594,7 @@ const SETTINGS_PAGES = [
   {id: "general", icon: "library-big", nav: "settings.nav_general", label: "settings.page_general",
    groups: ["library", "display", "search"]},
   {id: "views", icon: "table-properties", nav: "settings.nav_general", label: "settings.page_views", groups: ["columnviewstd", "columnviews"]},
-  {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename", "tagclean", "tagclean_video", "tagclean_spaces", "tagclean_trackno", "tagclean_remix", "tagclean_feat", "tagclean_case", "tagclean_quotes"]},
+  {id: "files", icon: "file-pen", nav: "settings.nav_general", label: "settings.page_files", groups: ["rename", "replacerules", "tagclean", "tagclean_video", "tagclean_spaces", "tagclean_trackno", "tagclean_remix", "tagclean_case", "tagclean_quotes"]},
   {id: "djview", icon: "turntable", nav: "settings.nav_general", label: "settings.page_djview", groups: ["djview"]},
   {id: "autocue", icon: "square-sparkles", nav: "settings.nav_general", label: "settings.page_autocue",
    groups: ["autocuehot", "autocuemem", "autocuemodel", "autocuetrain", "autocue"]},
@@ -19051,6 +19462,15 @@ function updateDropHeadButtons() {
     ren.innerHTML = `<span class="btnicon">${ICONS.rename}</span>` +
       esc(n ? t("drop.rename_button_count", {count: n}) : t("drop.rename_button"));
   }
+  // Ersetzungsregeln anwenden (replace.js) -- nur mit mindestens einer aktiven Regel.
+  const rules = document.getElementById("dropRules");
+  if (rules) {
+    const any = compiledRules().rules.length > 0;
+    rules.style.display = any ? "" : "none";
+    rules.disabled = n === 0;
+    rules.innerHTML = `<span class="btnicon">${ICONS.replaceAll}</span>` +
+      esc(n ? t("drop.rules_button_count", {count: n}) : t("drop.rules_button"));
+  }
 }
 
 // Eigene Funktion statt Top-Level-Code in initDropzone(): initDropzone()
@@ -19168,6 +19588,11 @@ function initDropzone() {
     const rows = selectedDrops();
     if (!rows.length) return;
     await renameDrops(rows, document.getElementById("dropRename"));
+  };
+
+  document.getElementById("dropRules").onclick = () => {
+    const rows = selectedDrops();
+    if (rows.length) openReplaceRulesForDrops(rows);
   };
 
   document.getElementById("dropAddLib").onclick = async () => {
@@ -19615,6 +20040,10 @@ document.getElementById("btnSave").onclick = async () => {
   // gehen mit -- sonst verwarf der Neuaufbau nach dem Speichern den Entwurf.
   if (columnViewDraftDirty() && !await saveColumnViewsFromSettings()) {
     document.getElementById("cvStatus").scrollIntoView({block: "center"});
+    return;
+  }
+  if (replaceRulesDirty() && !await saveReplaceRulesFromSettings()) {
+    document.getElementById("rrStatus").scrollIntoView({block: "center"});
     return;
   }
   postSettings("/api/settings", collectSettings());
@@ -20161,6 +20590,8 @@ async function performValueRename(field, oldValue, newValue, groupArtist) {
     const data = await res.json();
     if (!res.ok || !data.ok) throw new Error(data.error || t("error.server_status", {status: res.status}));
     patchRenamedRows(field, rowKey, oldValue, newValue, groupArtist);
+    // Music.app hat Dateien dabei umsortiert: Zeilen auf den neuen Pfad ziehen.
+    if (applyMovedPaths(data.relinked)) { clearUndoStacks(); updateCards(); }
     renameResultToast(data);
     // Der alte Wert existiert danach nicht mehr -- eine noch offene Vorschau
     // auf genau dieses Paar waere sonst eine leere/falsche Einschraenkung.
@@ -20515,26 +20946,35 @@ function renderIssueBubbles() {
       counts.set(i.code, (counts.get(i.code) || 0) + 1);
     }
   }
-  const codes = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
+  // Eigene Ersetzungsregeln ("rule:<id>") bilden eine eigene Kategorie hinter den uebrigen.
+  const bySize = (a, b) => counts.get(b) - counts.get(a) || cmpText(issueLabel(a), issueLabel(b));
+  const codes = [...counts.keys()].filter(c => !isRuleCode(c)).sort(bySize);
+  const ruleCodes = [...counts.keys()].filter(isRuleCode).sort(bySize);
   let ignRows = 0;
   if (IGN_ISSUES.size) for (const r of live()) if (rowIgnoredIssues(r).length) ignRows++;
-  if (!codes.length && !ignRows) { row.hidden = true; return; }
+  if (!codes.length && !ruleCodes.length && !ignRows) { row.hidden = true; return; }
   row.hidden = false;
   const ignBubble = ignRows ? `<span class="genrebubble ignbubble${state.tagIssueFilter === ISSUE_FILTER_IGNORED ? " active" : ""}" data-code="${ISSUE_FILTER_IGNORED}">
       <span>${esc(t("tagissue.ignored_bubble"))}</span>
       <span class="genrecount">(${ignRows})</span>
     </span>` : "";
-  row.innerHTML = codes.map(code => {
+  const bubble = code => {
     const active = state.tagIssueFilter === code;
-    const auto = AUTO_FIXABLE_TAG_ISSUE_CODES.has(code) || ALBUM_COVER_CODES.has(code);
-    return `<span class="genrebubble${active ? " active" : ""}" data-code="${esc(code)}">
-      <span>${esc(t("tagissue." + code))}</span>
+    const auto = isAutoFixCode(code) || ALBUM_COVER_CODES.has(code);
+    const rule = isRuleCode(code);
+    return `<span class="genrebubble${rule ? " rulebubble" : ""}${active ? " active" : ""}" data-code="${esc(code)}">
+      ${rule ? `<span class="rbicon">${ICONS.replaceAll}</span>` : ""}<span>${esc(issueLabel(code))}</span>
       <span class="genrecount">(${counts.get(code)})</span>
       <button type="button" class="genrerename" data-issueedit="${esc(code)}"
               title="${esc(t(auto ? "fixtag.auto_fix_button" : "fixtag.manual_edit_link"))}">${
               auto ? ICONS.sparkles : ICONS.pencil}</button>
     </span>`;
-  }).join("") + ignBubble;
+  };
+  // Reihenfolge: Ignoriert zuerst, dann die Auffaelligkeiten der Dateien, die eigenen
+  // Ersetzungsregeln in einer neuen Zeile.
+  row.innerHTML = ignBubble + codes.map(bubble).join("") +
+    (ruleCodes.length ? `<span class="rulegroupbreak"></span><span class="rulegrouplabel">${
+      esc(t("tagissue.rules_group"))}</span>` + ruleCodes.map(bubble).join("") : "");
   row.querySelectorAll("[data-code]").forEach(el => el.onclick = ev => {
     if (ev.target.closest("[data-issueedit]")) return;
     const code = el.dataset.code;
@@ -20555,14 +20995,12 @@ function renderIssueBubbles() {
   });
 }
 
-// Bearbeitet ALLE Zeilen mit genau diesem Code auf einmal -- sicher
-// automatisch behebbare Codes (AUTO_FIXABLE_TAG_ISSUE_CODES) werden direkt
-// per Quick Fix bereinigt (gleiche 3-Worker-Warteschlange wie
-// bulkApply("fixtags"), aber auf einer festen Zeilenmenge statt der
-// aktuellen Auswahl); alles andere oeffnet den bestehenden
-// Sammel-Tags-Dialog fuer genau diese Zeilen, weil es dort kein
-// automatisierbares "richtig" gibt.
-async function editAllWithIssueCode(code) {
+// Bearbeitet ALLE Zeilen mit genau diesem Code auf einmal -- Quick-Fix-
+// faehige Codes oeffnen die Vorschau (openQuickFixPreview(), replace.js),
+// eingegrenzt auf GENAU diesen Code (andere Auffaelligkeiten derselben Tracks
+// bleiben stehen); alles andere oeffnet den bestehenden Sammel-Tags-Dialog
+// fuer genau diese Zeilen, weil es dort kein automatisierbares "richtig" gibt.
+function editAllWithIssueCode(code) {
   let rows = live().filter(r => rowIssues(r).some(i => i.code === code));
   if (!rows.length) return;
   if (ALBUM_COVER_CODES.has(code)) {
@@ -20570,30 +21008,11 @@ async function editAllWithIssueCode(code) {
     const fixable = rows.filter(r => albumCoverIssueOf(r)?.source);
     if (!fixable.length) { openTagsPopupBulk(rows, false); return; }
     rows = fixable;
-  } else if (!AUTO_FIXABLE_TAG_ISSUE_CODES.has(code)) {
+  } else if (!isAutoFixCode(code)) {
     openTagsPopupBulk(rows, false);
     return;
   }
-  if (!await askFixTagIssuesBulk(rows)) return;
-  let done = 0, failed = 0;
-  const queue = rows.slice();
-  const worker = async () => {
-    while (queue.length) {
-      const r = queue.shift();
-      try {
-        await fixTagIssuesOne(r, false);
-        done++;
-      } catch (err) {
-        failed++;
-        note(t("toast.bulk_action_failed", {
-          action: t("bulk.action_fix_tag_issues"), name: baseName(r.p), error: err.message,
-        }), true);
-      }
-    }
-  };
-  await Promise.all([worker(), worker(), worker()]);
-  updateCards(); render();
-  note(t("toast.tag_issues_fixed_bulk", {count: done, skipped: failed}));
+  openQuickFixPreview(rows, {codes: new Set([code])});
 }
 
 // ── Zusammenfuehrungs-Vorschlaege (Genre/Interpret/Album) ────────────────
@@ -20626,7 +21045,25 @@ function popcount32(x) {
 // 'sameGroup(a,b)' grenzt bei Album auf denselben Interpreten ein -- zwei
 // gleichnamige Alben verschiedener Interpreten sollen nie als
 // Zusammenfuehrung vorgeschlagen werden.
-function findMergeSuggestions(values, dismissedSet, sameGroup = () => true) {
+// Interpreten: Zusammenarbeit (&, and, und, x, Komma) ist untereinander gleichwertig und
+// reihenfolgeunabhaengig -- "Axwell and Ingrosso", "Axwell & Ingrosso" und "Axwell, Ingrosso"
+// ergeben denselben Schluessel. "feat."/"ft."/"featuring" ist untereinander gleich, bedeutet aber
+// etwas anderes als eine Zusammenarbeit (Hauptinterpret + Gast) und bleibt davon getrennt.
+const ARTIST_FEAT_RE = /\s+(?:feat\.?|ft\.?|featuring)\s+/i;
+const ARTIST_COLLAB_RE = /\s*[,&]\s*|\s+(?:and|und|x)\s+/i;
+function artistCollabNorm(s) {
+  const parts = s.split(ARTIST_COLLAB_RE).map(p => p.trim()).filter(Boolean);
+  return parts.sort().join(" & ");
+}
+function artistMergeNorm(s) {
+  const low = normalizeMergeValue(s).toLowerCase();
+  const [main, ...guests] = low.split(ARTIST_FEAT_RE);
+  const key = artistCollabNorm(main) + guests.map(g => " feat. " + artistCollabNorm(g)).join("");
+  return key || low;
+}
+
+function findMergeSuggestions(values, dismissedSet, sameGroup = () => true, isArtist = false) {
+  const normOf = isArtist ? artistMergeNorm : v => normalizeMergeValue(v).toLowerCase();
   const suggestions = [];
   const seenPairs = new Set();
   const addSuggestion = (a, b, kind) => {
@@ -20641,7 +21078,7 @@ function findMergeSuggestions(values, dismissedSet, sameGroup = () => true) {
   // Schluessel, kein paarweiser Vergleich noetig.
   const byNorm = new Map();
   for (const entry of values) {
-    const norm = normalizeMergeValue(entry.value).toLowerCase();
+    const norm = normOf(entry.value);
     if (!byNorm.has(norm)) byNorm.set(norm, []);
     byNorm.get(norm).push(entry);
   }
@@ -20651,8 +21088,9 @@ function findMergeSuggestions(values, dismissedSet, sameGroup = () => true) {
       // Unterschied lag im Leerraum. Unterschiedlich -> es war die
       // Gross-/Kleinschreibung (beide sind hier bereits als Gruppe
       // faellsensitiv-gleich bekannt, siehe byNorm-Schluessel oben).
-      const kind = normalizeMergeValue(group[0].value) === normalizeMergeValue(group[i].value)
-        ? "whitespace" : "case";
+      const na = normalizeMergeValue(group[0].value), nb = normalizeMergeValue(group[i].value);
+      const kind = na === nb ? "whitespace"
+        : na.toLowerCase() === nb.toLowerCase() ? "case" : "separator";
       addSuggestion(group[0], group[i], kind);
     }
   }
@@ -20663,7 +21101,7 @@ function findMergeSuggestions(values, dismissedSet, sameGroup = () => true) {
   // groesser als maxDist ist, das Bucketing ist nur ein Vorfilter.
   const byLenBucket = new Map();
   for (const entry of values) {
-    const norm = normalizeMergeValue(entry.value).toLowerCase();
+    const norm = normOf(entry.value);
     const bucket = Math.floor(norm.length / 2);
     if (!byLenBucket.has(bucket)) byLenBucket.set(bucket, []);
     byLenBucket.get(bucket).push({entry, norm, mask: charMask(norm)});
@@ -20770,6 +21208,7 @@ function toggleMergePreview(field, a, b) {
 const MERGE_REASON_KEY = {
   whitespace: "genres.merge_reason_whitespace",
   case: "genres.merge_reason_case",
+  separator: "genres.merge_reason_separator",
   typo: "genres.merge_reason_typo",
   variant: "genres.merge_reason_variant",
 };
@@ -20786,6 +21225,34 @@ function visualizeMergeValue(value) {
     m => `<span class="ws-marker">${"&nbsp;".repeat(m.length)}</span>`);
 }
 
+// Zeichenweiser Unterschied zweier Werte (kuerzeste gemeinsame Teilfolge, Gross/Klein zaehlt):
+// in "text" werden die Zeichen hervorgehoben, die in "other" fehlen oder anders sind -- bei
+// "Whos" gegen "Who's" also das Apostroph in der einen, bei "Rhytm"/"Rythm" die vertauschten
+// Buchstaben in beiden. Leerraum zaehlt mit (als sichtbarer Block, wie visualizeMergeValue()).
+function mergeDiffHtml(text, other) {
+  const a = Array.from(text), b = Array.from(other);
+  if (!a.length || !b.length || a.length * b.length > 40000) return visualizeMergeValue(text);
+  // LCS-Tabelle von hinten: len[i][j] = Laenge der gemeinsamen Teilfolge von a[i..] und b[j..].
+  const len = Array.from({length: a.length + 1}, () => new Uint16Array(b.length + 1));
+  for (let i = a.length - 1; i >= 0; i--) {
+    for (let j = b.length - 1; j >= 0; j--) {
+      len[i][j] = a[i] === b[j] ? len[i + 1][j + 1] + 1 : Math.max(len[i + 1][j], len[i][j + 1]);
+    }
+  }
+  const diff = new Array(a.length).fill(true);
+  for (let i = 0, j = 0; i < a.length && j < b.length;) {
+    if (a[i] === b[j]) { diff[i] = false; i++; j++; }
+    else if (len[i + 1][j] >= len[i][j + 1]) i++;
+    else j++;
+  }
+  let out = "", open = false;
+  for (let i = 0; i < a.length; i++) {
+    if (diff[i] !== open) { out += open ? "</span>" : '<span class="mergediff">'; open = diff[i]; }
+    out += diff[i] && a[i] === " " ? "&nbsp;" : esc(a[i]);
+  }
+  return out + (open ? "</span>" : "");
+}
+
 function askMergeTarget(field, a, b, kind) {
   return new Promise(resolve => {
     const ov = document.getElementById("mergeChooseOverlay");
@@ -20794,7 +21261,7 @@ function askMergeTarget(field, a, b, kind) {
     const opts = document.getElementById("mergeChooseOptions");
     opts.innerHTML = [a, b].map((v, i) => `
       <button type="button" class="act mergechoose-opt" data-i="${i}">
-        <span>${valueBubbleLabelHtml(field, v, visualizeMergeValue)}</span><span class="path">${esc(t("group.tracks_count", {count: v.count}))}</span>
+        <span>${valueBubbleLabelHtml(field, v, val => mergeDiffHtml(val, [a, b][1 - i].value))}</span><span class="path">${esc(t("group.tracks_count", {count: v.count}))}</span>
       </button>`).join("");
     ov.style.display = "flex";
     const close = result => { ov.style.display = "none"; document.onkeydown = null; resolve(result); };
@@ -20814,7 +21281,7 @@ function mergeSuggestionsFor(field) {
   const hit = mergeSuggestCache[field];
   if (hit && hit.values === values) return hit.list;
   const sameGroup = field === "album" ? (a, b) => a.groupArtist === b.groupArtist : undefined;
-  const list = findMergeSuggestions(values, new Set(), sameGroup);
+  const list = findMergeSuggestions(values, new Set(), sameGroup, field === "artist");
   mergeSuggestCache[field] = {values, list};
   return list;
 }
@@ -20848,10 +21315,10 @@ function renderMergeSuggestions(field, host, tab) {
           ICONS.eye} <span>${esc(t("genres.merge_restore"))}</span></button>`
       : `<button type="button" class="act small" data-mergeaction="dismiss" title="${esc(t("genres.merge_dismiss_title"))}">${
           ICONS.eyeOff} <span>${esc(t("genres.merge_dismiss"))}</span></button>`;
-    const opt = (v, k) => `<button type="button" class="act mergechoose-opt" data-keep="${k}"
+    const opt = (v, k, other) => `<button type="button" class="act mergechoose-opt" data-keep="${k}"
         title="${esc(t(previewing ? "genres.merge_into_title" : "genres.merge_into_preview_first", {value: v.value}))}">
         <span class="mergeopt-main"><span class="mergeopt-icon">${ICONS.merge}</span>
-          <span>${esc(t("genres.merge_into"))} ${valueBubbleLabelHtml(field, v, visualizeMergeValue)}</span></span>
+          <span>${esc(t("genres.merge_into"))} ${valueBubbleLabelHtml(field, v, val => mergeDiffHtml(val, other.value))}</span></span>
         <span class="path">${esc(t("group.tracks_count", {count: v.count}))}</span>
       </button>`;
     return `<div class="mergecard${previewing ? " previewing" : ""}" data-i="${i}" title="${previewing ? "" : esc(t("genres.merge_preview_title"))}">
@@ -20861,7 +21328,7 @@ function renderMergeSuggestions(field, host, tab) {
           ICONS.eyeOff} <span>${esc(t("genres.merge_preview_end"))}</span></button>` : ""}
         ${side}
       </div>
-      <div class="mergecard-opts">${opt(sg.a, 0)}${opt(sg.b, 1)}</div>
+      <div class="mergecard-opts">${opt(sg.a, 0, sg.b)}${opt(sg.b, 1, sg.a)}</div>
     </div>`;
   }).join("");
   host.querySelectorAll(".mergecard").forEach(card => {
@@ -21005,7 +21472,8 @@ async function runRekordboxPendingApply() {
     RB_PENDING = data.pending || 0;
     renderRekordboxSyncButton();
     pt.done(t("sync.rekordbox_pending.done",
-      {count: (data.updated || []).length + (data.stems_added || []).length}));
+      {count: (data.updated || []).length + (data.stems_added || []).length
+        + (data.removed || []).length}));
   } catch (err) {
     pt.fail(t("sync.rekordbox_pending.failed", {error: err.message}));
   }
@@ -21235,23 +21703,126 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("keydown", e => { if (e.key === "Escape") toggleSourcesMenu(false); });
 window.addEventListener("resize", () => toggleSourcesMenu(false));
+// "Music.app abgleichen": der Abgleich (welche Tracks liegen in Music.app) laeuft
+// immer, dazu zwei Schalter zum Aufraeumen (Eintraege ohne Datei, doppelte
+// Eintraege derselben Datei). Schalter beginnen aus wie bei Rekordbox.
+function askMusicSyncOptions() {
+  return new Promise(resolve => {
+    const ov = document.getElementById("musicSyncOverlay");
+    const deadEl = document.getElementById("musicSyncDead");
+    const dupsEl = document.getElementById("musicSyncDups");
+    deadEl.checked = dupsEl.checked = false;
+    ov.style.display = "flex";
+    const done = answer => { ov.style.display = "none"; resolve(answer); };
+    document.getElementById("musicSyncCancel").onclick = () => done(null);
+    document.getElementById("musicSyncStart").onclick = () =>
+      done({dead: deadEl.checked, dups: dupsEl.checked});
+  });
+}
+
+function musicEntryLabel(e) {
+  return e.artist ? `${e.artist} — ${e.name}` : e.name;
+}
+
+// Vorschau: Eintraege ohne Datei vorab angehakt; Duplikate angehakt, ausser sie
+// stehen in einer Playlist, in der der behaltene Eintrag fehlt (gesperrt).
+function askMusicFixPreview(data) {
+  return new Promise(resolve => {
+    const ov = document.getElementById("musicFixOverlay");
+    const listEl = document.getElementById("musicFixList");
+    const dupCount = data.dups.reduce((n, g) => n + g.remove.length, 0);
+    document.getElementById("musicFixSummary").textContent =
+      t("musicfix.summary", {dead: data.dead.length, dups: dupCount});
+    const deadRows = data.dead.map(e => `
+      <div class="rbfixrow" data-kind="dead" data-pid="${esc(e.pid)}">
+        <label><input type="checkbox" checked> ${esc(musicEntryLabel(e))}</label>
+        <div class="path">${esc(t("musicfix.dead_detail", {date: fmtDate(e.added)}))}</div>
+      </div>`);
+    const dupRows = data.dups.flatMap(g => g.remove.map(e => {
+      const blocked = e.blocked && e.blocked.length;
+      const detail = blocked
+        ? t("musicfix.dup_blocked", {lists: e.blocked.join(", ")})
+        : t("musicfix.dup_detail", {date: fmtDate(e.added), kept: fmtDate(g.keep.added)});
+      return `
+      <div class="rbfixrow" data-kind="dup" data-pid="${esc(e.pid)}">
+        <label><input type="checkbox" ${blocked ? "disabled" : "checked"}> ${esc(musicEntryLabel(e))}</label>
+        <div class="path">${esc(shortPath(g.path))}</div>
+        <div class="path">${esc(detail)}</div>
+      </div>`;
+    }));
+    listEl.innerHTML = [
+      deadRows.length ? `<div class="picksub">${esc(t("musicfix.dead_head"))}</div>` : "", ...deadRows,
+      dupRows.length ? `<div class="picksub">${esc(t("musicfix.dups_head"))}</div>` : "", ...dupRows,
+    ].join("");
+    ov.style.display = "flex";
+    const done = answer => { ov.style.display = "none"; resolve(answer); };
+    document.getElementById("musicFixCancel").onclick = () => done(null);
+    document.getElementById("musicFixApply").onclick = () => {
+      const pick = kind => [...listEl.querySelectorAll(`.rbfixrow[data-kind="${kind}"]`)]
+        .filter(row => row.querySelector("input").checked).map(row => row.dataset.pid);
+      done({dead: pick("dead"), dups: pick("dup")});
+    };
+  });
+}
+
+async function runMusicCleanupFlow(choice) {
+  const pt = progressToast(t("musicfix.checking"), {indeterminate: true});
+  let data;
+  try {
+    const res = await fetch("/api/music-check", {method: "POST", body: JSON.stringify(choice)});
+    data = await res.json();
+    if (!data.ok) throw new Error(data.error || t("error.unknown"));
+  } catch (err) {
+    pt.fail(t("musicfix.check_failed", {error: err.message}));
+    return;
+  }
+  const dupCount = data.dups.reduce((n, g) => n + g.remove.length, 0);
+  if (!data.dead.length && !dupCount) { pt.done(t("musicfix.nothing", {checked: data.checked})); return; }
+  pt.done(t("musicfix.found", {dead: data.dead.length, dups: dupCount}));
+  const pick = await askMusicFixPreview(data);
+  if (!pick || (!pick.dead.length && !pick.dups.length)) return;
+  const pt2 = progressToast(t("musicfix.applying"), {indeterminate: true});
+  try {
+    const res = await fetch("/api/music-cleanup", {method: "POST", body: JSON.stringify(pick)});
+    const out = await res.json();
+    if (!out.ok) throw new Error(out.error || t("error.unknown"));
+    // Zaehler im Music-Baum (und eine offene Music-Liste) stammen von vor dem
+    // Aufraeumen -- sonst zeigt der Baum weiter die alte Zahl.
+    if ((out.removed_dead || out.removed_dups) && EXT_TREES.music && EXT_TREES.music.loaded) {
+      await rbRefreshAfterWrite(null, "music");
+    }
+    const msg = t("musicfix.done", {dead: out.removed_dead, dups: out.removed_dups});
+    if (out.errors && out.errors.length) pt2.fail(`${msg} ${t("musicfix.partial", {errors: out.errors.join("; ")})}`);
+    else pt2.done(msg);
+  } catch (err) {
+    pt2.fail(t("musicfix.failed", {error: err.message}));
+  }
+}
+
 document.getElementById("btnMusicAddedSync").onclick = async () => {
+  toggleSourcesMenu(false);
+  const choice = await askMusicSyncOptions();
+  if (!choice) return;
   const btn = document.getElementById("btnMusicAddedSync");
   btn.disabled = true;
   sourceBusy(t("sync.music.running"));
-  const pt = progressToast(t("sync.music.running"), {indeterminate: true});
   try {
-    const res = await fetch("/api/music-added-sync", {method: "POST"});
-    const data = await res.json();
-    if (!data.ok) throw new Error(data.error || t("error.unknown"));
-    await syncMarks();
-    render();
-    pt.done(t("sync.music.done", {matched: data.matched, checked: data.checked}));
-  } catch (err) {
-    pt.fail(t("sync.music.failed", {error: err.message}));
+    if (choice.dead || choice.dups) await runMusicCleanupFlow(choice);
+    const pt = progressToast(t("sync.music.running"), {indeterminate: true});
+    try {
+      const res = await fetch("/api/music-added-sync", {method: "POST"});
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || t("error.unknown"));
+      await syncMarks();
+      render();
+      pt.done(t("sync.music.done", {matched: data.matched, checked: data.checked}));
+    } catch (err) {
+      pt.fail(t("sync.music.failed", {error: err.message}));
+    }
+  } finally {
+    btn.disabled = false;
+    sourceDone();
   }
-  btn.disabled = false;
-  sourceDone();
 };
 
 // ── Beenden ─────────────────────────────────────────────────────────────
