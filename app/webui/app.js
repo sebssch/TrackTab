@@ -5448,10 +5448,14 @@ function toast(text, warn, sticky) {
   el.append(textEl, closeBtn);
   host.appendChild(el);
   requestAnimationFrame(() => el.classList.add("show"));
-  if (!sticky) {
-    setTimeout(dismiss, 8000);
+  // Verweildauer nach Stufe (Nutzervorgabe): ok verschwindet nach 10 s, info
+  // bleibt stehen (kein Prozess-Handle -- der Nutzer schliesst ihn), warn und
+  // error muessen von Hand weggeklickt werden.
+  if (!sticky && toastLevel(text, warn) === "ok") {
+    setTimeout(dismiss, TOAST_OK_MS);
   }
 }
+var TOAST_OK_MS = 10000;
 
 function note(text, warn, sticky) { toast(text, warn, sticky); }
 
@@ -5495,6 +5499,20 @@ function progressToast(text, opts) {
     setTimeout(() => el.remove(), 250);
   }, delayMs);
 
+  // Schliessen-Knopf erst bei warn/error (laufende Toasts bleiben knopflos).
+  const manualClose = () => {
+    if (el.querySelector(".toast-close")) return;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "toast-close";
+    b.setAttribute("aria-label", t("toast.close"));
+    b.textContent = "×";
+    b.onclick = e => { e.stopPropagation(); close(0); };
+    el.classList.add("closable");
+    el.appendChild(b);
+    el.style.pointerEvents = "auto";
+  };
+
   return {
     update(pct, text2) {
       barWrap.classList.remove("indeterminate");
@@ -5516,7 +5534,9 @@ function progressToast(text, opts) {
         el.onclick = () => { close(0); if (opts.onClick) opts.onClick(); };
         return;
       }
-      close(1200);              // voller Balken soll kurz sichtbar bleiben
+      // warn/error: bleibt, bis man ihn wegklickt; sonst wie ein ok-Toast 10 s.
+      if (text2 != null && toastLevel(text2, warn) !== "ok" && toastLevel(text2, warn) !== "info") { manualClose(); return; }
+      close(TOAST_OK_MS);
     },
     fail(text2) {
       barWrap.classList.remove("indeterminate");
@@ -5525,7 +5545,7 @@ function progressToast(text, opts) {
       barEl.style.width = "100%";
       textEl.textContent = text2;
       el.className = "toast progress error show";
-      close(3800);              // wie ein normaler Fehler-Toast
+      manualClose();
     },
   };
 }
@@ -11322,6 +11342,7 @@ async function fixTagIssuesOne(r, isDrop, opts = {}) {
     if (!one || !one.ok) throw new Error((one && one.error) || data.error || t("error.unknown"));
     bumpCoverRev(r.p);
     applyRowUpdate(r.i, one.row);
+    noteMusicTagQueued(one, r.p, true);
     fixed.push(albumCover.code);
   }
   const plan = quickFixPlan(r, isDrop, {allow, skip});
@@ -12547,9 +12568,9 @@ async function saveTagsEntry(e) {
     if (isDrop) r.cv = cover === "delete" ? 0 : 1;
     else applyRowUpdate(r.i, data2.row);
     releaseTagsEntry(e);
-    if (data2.music_cover_synced === false) {
-      note(t("toast.cover_music_failed_one", {name: baseName(r.p), error: data2.music_cover_error}), "soft");
-    }
+    // Cover nach Music.app nur vorgemerkt (wie die Tags), der Dialog schickt
+    // nach dem Speichern gesammelt ab (flushMusicTags()).
+    noteMusicTagQueued(data2, r.p);
   }
 
   if (utDiffers(e.utDraft, e.utInitial)) {
@@ -13271,7 +13292,7 @@ function openTagsPopupBulk(rows, isDrop) {
 
     const queue = rows.filter(x => !blockedPaths.has(x.p));
     const writable = queue.length;
-    let okCount = 0, failCount = 0, coverSyncMisses = 0;
+    let okCount = 0, failCount = 0;
     const worker = async () => {
       while (queue.length) {
         const row = queue.shift();
@@ -13294,7 +13315,7 @@ function openTagsPopupBulk(rows, isDrop) {
             if (data2.ok) {
               bumpCoverRev(row.p);
               if (isDrop) row.cv = 0; else applyRowUpdate(row.i, data2.row);
-              if (data2.music_cover_synced === false) coverSyncMisses++;
+              noteMusicTagQueued(data2, row.p);
             }
           } else if (pendingCover && pendingCover.url) {
             // Bild-URL (Drag&Drop aus dem Browser) -- wie beim Einzeltrack
@@ -13307,7 +13328,7 @@ function openTagsPopupBulk(rows, isDrop) {
             if (data2.ok) {
               bumpCoverRev(row.p);
               if (isDrop) row.cv = 1; else applyRowUpdate(row.i, data2.row);
-              if (data2.music_cover_synced === false) coverSyncMisses++;
+              noteMusicTagQueued(data2, row.p);
             }
           } else if (pendingCover) {
             const data2 = pendingCover.copyFrom
@@ -13320,7 +13341,7 @@ function openTagsPopupBulk(rows, isDrop) {
             if (data2.ok) {
               bumpCoverRev(row.p);
               if (isDrop) row.cv = 1; else applyRowUpdate(row.i, data2.row);
-              if (data2.music_cover_synced === false) coverSyncMisses++;
+              noteMusicTagQueued(data2, row.p);
             }
           }
           okCount++;
@@ -13334,9 +13355,6 @@ function openTagsPopupBulk(rows, isDrop) {
     if (MUSIC_TAG_QUEUE.size) status.textContent = t("tags.music_syncing");
     await flushMusicTags();
     if (isDrop) renderDrops(); else render();
-    if (coverSyncMisses) {
-      note(t("toast.cover_music_failed", {count: coverSyncMisses}), "soft");
-    }
 
     status.textContent = t("tags.bulk_saved", {ok: okCount, total: writable}) +
       (failCount ? t("tags.bulk_failed_suffix", {count: failCount}) : ".") +
@@ -16694,11 +16712,26 @@ async function startScan(force, extra = {}) {
 
 // Laufstatus der Quellen-Aktionen (Rekordbox/Music-Abgleich) in derselben Zeile
 // unter dem Titel; ein Bibliotheks-Scan ueberschreibt sie (pollScan()).
-function sourceBusy(text) {
-  if (scanRunning) return;
-  scanLine(`<span class="bar indet"><i></i></span><span class="phase">${esc(text)}</span>`);
+// pct (0..100) = echter Fortschritt des laufenden Schritts, sonst Balken ohne Ende.
+// Mehrere Schritte eines Ablaufs: sourceStep() setzt "Schritt n von m" davor.
+let SOURCE_STEP = null;
+function sourceBusy(text, pct) {
+  if (text != null) SOURCE_STEP = SOURCE_STEP ? {...SOURCE_STEP, text} : {text};
+  if (scanRunning || !SOURCE_STEP) return;
+  const st = SOURCE_STEP;
+  const label = st.total > 1 ? t("sync.step", {n: st.n, total: st.total, name: st.text}) : st.text;
+  const bar = pct == null
+    ? `<span class="bar indet"><i></i></span>`
+    : `<span class="bar"><i style="width:${Math.max(0, Math.min(100, pct)).toFixed(1)}%"></i></span>`;
+  scanLine(`${bar}<span class="phase">${esc(label)}</span>`);
+}
+// Naechster Schritt eines Ablaufs mit total Schritten (n zaehlt von 1).
+function sourceStep(n, total, text) {
+  SOURCE_STEP = {n, total, text};
+  sourceBusy(null);
 }
 function sourceDone() {
+  SOURCE_STEP = null;
   if (!scanRunning) scanLine("");
 }
 
@@ -21447,11 +21480,23 @@ async function runRekordboxPresenceSync() {
 // Schalter "Metadaten nach Rekordbox": nur Metadaten, nie Beatgrid/Phrasen/Cues
 // (server._post_rekordbox_tags_sync()). Danach die Spalte Rekordbox neu einlesen.
 async function runRekordboxTagsSync() {
+  // Hintergrundlauf im Server (_RekordboxTagsSync): Start, dann Stand je Sekunde.
   const pt = progressToast(t("sync.rekordbox_tags.running"), {indeterminate: true});
   try {
     const res = await fetch("/api/rekordbox-tags-sync", {method: "POST"});
-    const data = await res.json();
+    let data = await res.json();
     if (!data.ok) throw new Error(data.error || t("error.unknown"));
+    for (;;) {
+      if (data.total) {
+        const pct = 100 * data.done / data.total;
+        pt.update(pct, t("sync.rekordbox_tags.progress", {done: data.done, total: data.total}));
+        sourceBusy(null, pct);
+      }
+      if (!data.running) break;
+      await new Promise(r => setTimeout(r, 1000));
+      data = await (await fetch("/api/rekordbox-tags-sync/status")).json();
+    }
+    if (data.error) throw new Error(data.error);
     await syncMarks();
     render();
     const failed = Object.keys(data.errors || {}).length;
@@ -21642,6 +21687,7 @@ async function runRekordboxImport() {
       if (data.next >= data.total || data.next === offset) break;
       offset = data.next;
       pt.update(100 * offset / data.total, t("toast.bpmkey_progress", {done: offset, total: data.total}));
+      sourceBusy(null, 100 * offset / data.total);
     }
     await syncMarks();
     render();
@@ -21679,13 +21725,20 @@ async function openRekordboxSyncFlow() {
   if (!choice || (!choice.presence && !choice.fixPaths && !choice.pending && !choice.load && !choice.tags)) return;
   const btn = document.getElementById("btnRekordboxSync");
   btn.disabled = true;
-  sourceBusy(t("sync.rekordbox.running"));
+  // Reihenfolge wie bisher; jeder Schritt meldet sich unter dem Titel als
+  // "Schritt n von m", die Toasts zeigen den Fortschritt im Schritt.
+  const steps = [
+    choice.pending && ["sync.step_name.pending", runRekordboxPendingApply],
+    choice.presence && ["sync.step_name.presence", runRekordboxPresenceSync],
+    choice.tags && ["sync.step_name.tags", runRekordboxTagsSync],
+    choice.load && ["sync.step_name.load", async () => { await runRekordboxImport(); runGridSeed(); }],
+    choice.fixPaths && ["sync.step_name.fix_paths", runRekordboxFixPathsFlow],
+  ].filter(Boolean);
   try {
-    if (choice.pending) await runRekordboxPendingApply();
-    if (choice.presence) await runRekordboxPresenceSync();
-    if (choice.tags) await runRekordboxTagsSync();
-    if (choice.load) { await runRekordboxImport(); runGridSeed(); }
-    if (choice.fixPaths) await runRekordboxFixPathsFlow();
+    for (const [i, [key, run]] of steps.entries()) {
+      sourceStep(i + 1, steps.length, t(key));
+      await run();
+    }
   } finally {
     btn.disabled = false;
     sourceDone();
@@ -21805,12 +21858,20 @@ document.getElementById("btnMusicAddedSync").onclick = async () => {
   if (!choice) return;
   const btn = document.getElementById("btnMusicAddedSync");
   btn.disabled = true;
-  sourceBusy(t("sync.music.running"));
+  const cleanup = choice.dead || choice.dups;
+  const total = cleanup ? 2 : 1;
   try {
-    if (choice.dead || choice.dups) await runMusicCleanupFlow(choice);
+    if (cleanup) {
+      sourceStep(1, total, t("sync.step_name.music_cleanup"));
+      await runMusicCleanupFlow(choice);
+    }
+    sourceStep(total, total, t("sync.music.running"));
+    // Ein einziges Lesen der Music-Bibliothek (~20 s), kein Zwischenstand moeglich.
     const pt = progressToast(t("sync.music.running"), {indeterminate: true});
     try {
-      const res = await fetch("/api/music-added-sync", {method: "POST"});
+      // Nach dem Aufraeumen ist der Index frisch -- nicht ein zweites Mal lesen.
+      const res = await fetch("/api/music-added-sync", {method: "POST",
+        body: JSON.stringify({reuse_index: cleanup})});
       const data = await res.json();
       if (!data.ok) throw new Error(data.error || t("error.unknown"));
       await syncMarks();

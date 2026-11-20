@@ -571,6 +571,30 @@ class _MusicTagSync:
             self._ensure_watcher()
         return True
 
+    def add_cover(self, path: str, title: str, cover: dict) -> bool:
+        """Cover-Aenderung vormerken ({"op": "set", "data", "mime"} oder {"op":
+        "clear"}), sie laeuft im selben osascript wie die Tags
+        (media.music_update_tracks()). Die juengste Aenderung gilt. 'title' =
+        Titel, unter dem Music.app den Track kennt (ohne Tag: Dateiname)."""
+        with self._lock:
+            item = self._pending.get(path)
+            if item is None:
+                self._pending[path] = {"path": path, "titles": [title, Path(path).stem],
+                                       "fields": {}, "cover": dict(cover)}
+            else:
+                item["cover"] = dict(cover)
+            self._done.pop(path, None)
+            self._last_add = time.monotonic()
+            self._ensure_watcher()
+        return True
+
+    def titles(self, path: str) -> list[str]:
+        """Wie forget(), aber ohne die Vormerkung zu verwerfen -- fuer Abfragen,
+        die Music.app nur befragen (neu analysieren)."""
+        with self._lock:
+            item = self._pending.get(path)
+            return list(item["titles"]) if item else []
+
     def forget(self, path: str) -> list[str]:
         """Vormerkung eines Tracks verwerfen, der gleich geloescht wird, und die
         Titel liefern, unter denen Music.app ihn noch kennen kann (der alte Titel
@@ -607,6 +631,8 @@ class _MusicTagSync:
             else:
                 newer["titles"][0] = item["titles"][0]
                 newer["fields"] = {**item["fields"], **newer["fields"]}
+                if "cover" in item and "cover" not in newer:
+                    newer["cover"] = item["cover"]
                 newer["tries"] = tries
             again = True
         if again:
@@ -655,8 +681,11 @@ class _MusicIndex:
     """Kurzlebiger Zwischenspeicher von media.music_file_tracks() (~22 s je
     Lesen). Gebraucht vom Papierkorb-Rueckfall (findet der Titel nichts, wird
     ueber den Pfad gesucht -- bei einer Sammel-Loeschung sonst 22 s je Datei)
-    und von "Music.app abgleichen" (Pruefen, dann Aufraeumen). Eintraege, die
-    TrackTab selbst entfernt, nimmt drop() sofort heraus."""
+    von "Music.app abgleichen" (Pruefen, dann Aufraeumen) und von "neu
+    analysieren" (_music_dates_checked(): nur dort fehlend = Markierung weg).
+    Eintraege, die TrackTab selbst entfernt, nimmt drop() sofort heraus; nach
+    eigenen Importen, Umbenennen und Umsortieren durch Music.app verwirft
+    invalidate() den Stand."""
     TTL_S = 600.0
 
     def __init__(self) -> None:
@@ -690,6 +719,135 @@ class _MusicIndex:
 
 
 MUSIC_INDEX = _MusicIndex()
+
+
+class _RekordboxTagsSync:
+    """Hintergrundlauf fuer "Metadaten nach Rekordbox" (Muster wie gridstore.SeedJob):
+    TrackTabs Metadaten fuer alle Tracks der Sammlung schreiben, deren Metadaten
+    abweichen (rekordbox.tag_diff_map(), dieselbe Pruefung wie die Spalte Rekordbox).
+    NUR Metadaten -- Beatgrid, Phrasen und Cues bleiben dem Knopf "Rekordbox Update"
+    vorbehalten (Nutzervorgabe). Halbes/doppeltes Tempo schreibt _write_tags() nie,
+    es bleibt als Hinweis stehen. Eine Sicherung fuer den ganzen Lauf
+    (backup_session), der Rekordbox-Lock je Abschnitt, damit andere
+    Rekordbox-Schreibwege zwischendurch drankommen. Frueher eine einzige Anfrage
+    ohne Zwischenstand -- jetzt meldet status() done/total je Abschnitt."""
+    CHUNK = 50
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self.state = self._fresh(False)
+
+    @staticmethod
+    def _fresh(running: bool) -> dict:
+        # phase: "prepare" (Abweichungen bestimmen, total noch 0), dann "write".
+        return {"running": running, "phase": "prepare", "done": 0, "total": 0,
+                "updated": 0, "errors": {}, "stopped": "", "error": None,
+                "sticky": False, "finished": None}
+
+    def status(self) -> dict:
+        with self._lock:
+            out = dict(self.state)
+            out["errors"] = dict(out["errors"])
+            return out
+
+    def start(self, cfg: dict, rekordbox_lock) -> bool:
+        with self._lock:
+            if self.state["running"]:
+                return False
+            self.state = self._fresh(True)
+        threading.Thread(target=self._run, args=(cfg, rekordbox_lock), daemon=True).start()
+        return True
+
+    def _run(self, cfg: dict, rekordbox_lock) -> None:
+        try:
+            rows = _tag_rows(cfg)
+            todo = [p for p, fields in rekordbox_mod.tag_diff_map(rows).items()
+                    if _tag_update_needed(fields)]
+            with self._lock:
+                self.state.update(phase="write", total=len(todo))
+            session = f"tags-sync-{time.time():.0f}"
+            with rekordbox_mod.backup_session(session):
+                for i in range(0, len(todo), self.CHUNK):
+                    chunk = todo[i:i + self.CHUNK]
+                    items = [{"path": p, "cues": None, "beats": None, "phrases": None,
+                              "audio_start_ms": 0, "tags": rows[p]} for p in chunk]
+                    with rekordbox_lock:
+                        result = rekordbox_mod.update_tracks(items)
+                    written = 0
+                    for p, res in result["results"].items():
+                        if res.get("written"):
+                            written += 1
+                            audit_log.log("rekordbox-tags-sync", p, ",".join(res["written"]))
+                    with self._lock:
+                        self.state["done"] += len(chunk)
+                        self.state["updated"] += written
+                        self.state["errors"].update(result["errors"])
+                        if result["stopped"]:
+                            self.state["stopped"] = result["stopped"]
+                    if result["stopped"]:
+                        break
+        except rekordbox_mod.RekordboxRunning as exc:
+            with self._lock:
+                self.state.update(error=str(exc), sticky=True)
+        except Exception as exc:                      # noqa: BLE001
+            with self._lock:
+                self.state["error"] = str(exc) or exc.__class__.__name__
+        finally:
+            with self._lock:
+                self.state["running"] = False
+                self.state["finished"] = time.time()
+
+
+TAGS_SYNC = _RekordboxTagsSync()
+
+
+def _music_titles(path: str, title: str | None) -> list[str]:
+    """Alle Titel, unter denen Music.app einen Track kennen kann: noch nicht
+    abgeschickte Vormerkung (alter Titel), aktueller Titel, Dateiname (so
+    benennt Music.app taglose Importe). Gleiche Regel wie _post_trash()."""
+    return MUSIC_TAGS.titles(path) + [title or "", Path(path).stem]
+
+
+def _music_dates_checked(rows: list[dict], marked: set[str]) -> dict[str, float | None]:
+    """'date added' fuer die Zeilen eines "neu analysieren"-Blocks, als
+    {Pfad: Zeit} zum Schreiben (db.set_music_added(); None = Markierung
+    loeschen). Pfade, ueber die nichts sicher bekannt ist, fehlen -- ihre
+    Markierung bleibt, wie sie ist.
+
+    Frueher loeschte jeder Fehlschlag die Markierung "liegt in Music.app":
+    ein Fehler der Abfrage ebenso wie ein Track, den Music.app unter einem
+    anderen Titel fuehrt. Jetzt: (1) scheitert die Sammelabfrage, bleibt jede
+    Markierung des Blocks stehen; (2) findet die Titelsuche einen markierten
+    Track nicht, entscheidet der Pfad im Bibliotheks-Index (MUSIC_INDEX, liest
+    beim ersten Mal die ganze Bibliothek, ~22 s, danach 10 min Zwischenspeicher)
+    -- nur dort fehlend wird geloescht; (3) unmarkierte ohne Treffer bleiben
+    unmarkiert (nichts zu loeschen, kein Index-Lesen)."""
+    try:
+        hits = media.music_added_dates_for(
+            [(r["path"], _music_titles(r["path"], r["title"])) for r in rows])
+    except Exception as exc:                             # noqa: BLE001
+        errlog.log("reanalyse-music", exc)
+        return {}
+    out: dict[str, float | None] = dict(hits)
+    missing = [r["path"] for r in rows if r["path"] not in hits and r["path"] in marked]
+    if not missing:
+        return out
+    try:
+        index: dict[str, float] = {}
+        for t in MUSIC_INDEX.get():
+            if t["path"]:
+                key = db_mod.path_norm_key(t["path"])
+                index[key] = min(index.get(key, t["added"]), t["added"])
+    except Exception as exc:                             # noqa: BLE001
+        errlog.log("reanalyse-music", exc)
+        return out
+    for path in missing:
+        ts = index.get(db_mod.path_norm_key(path))
+        if ts is None:
+            out[path] = None                             # sicher nicht in Music.app
+        elif ts > 0:
+            out[path] = ts
+    return out
 
 
 def _music_remove_path(path: str, titles: list[str], in_music: bool = True) -> tuple[int, bool]:
@@ -730,7 +888,8 @@ def _music_tags_apply(items: list[dict]) -> dict[str, dict]:
         if loc is None:
             results[path] = {"status": "missing"}
             continue
-        audit_log.log("music-tags", path, ", ".join(sorted(item["fields"])))
+        audit_log.log("music-tags", path, ", ".join(
+            sorted(item["fields"]) + ([f"cover:{item['cover']['op']}"] if item.get("cover") else [])))
         loc = unicodedata.normalize("NFC", loc)
         if db_mod.path_norm_key(loc) != db_mod.path_norm_key(path) and os.path.isfile(loc):
             moves.append((path, loc))
@@ -738,6 +897,8 @@ def _music_tags_apply(items: list[dict]) -> dict[str, dict]:
         else:
             touched.append(path)
             results[path] = {"status": "ok"}
+    if moves:
+        MUSIC_INDEX.invalidate()  # Pfade in Music.app geaendert -> Index veraltet (_music_dates_checked())
     if not moves and not touched:
         return results
     moved: list[tuple[str, str]] = []
@@ -1835,6 +1996,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, **SCAN.state})
         elif route == "/api/grid-seed/status":
             self._json({"ok": True, **GRID_SEED.status()})
+        elif route == "/api/rekordbox-tags-sync/status":
+            self._json({"ok": True, **TAGS_SYNC.status()})
         elif route == "/api/stems/status":
             self._get_stems_status()
         elif route == "/api/stems/download":
@@ -3231,7 +3394,7 @@ class _Handler(BaseHTTPRequestHandler):
         Music.app noch in Rekordbox bekannt, bleibt das jeweilige Feld in
         der Antwortzeile einfach weg.
         """
-        from .analyzer import analyse_file
+        from .analyzer import MEASURE_CACHE, analyse_file
 
         try:
             payload = json.loads(self._body(1_000_000).decode("utf-8"))
@@ -3254,7 +3417,12 @@ class _Handler(BaseHTTPRequestHandler):
         for p in paths:
             try:
                 st = os.stat(p)
-                rows.append(analyse_file((p, st.st_size, st.st_mtime, cfg)))
+                # MEASURE_CACHE: haelt die Messung fuer den Import fest (Music.app
+                # legt dabei eine Kopie an, _post_add_to_library() misst sie
+                # sonst noch einmal); unveraenderter Audioinhalt wird auch hier
+                # nicht erneut dekodiert (Mixed In Key aendert nur Tags).
+                rows.append(analyse_file((p, st.st_size, st.st_mtime, cfg),
+                                         cache=MEASURE_CACHE))
             except OSError as exc:
                 rows.append({"path": p, "status": "error", "error": str(exc)})
 
@@ -3267,17 +3435,20 @@ class _Handler(BaseHTTPRequestHandler):
         rekordbox_enabled = self._rekordbox_available(cfg)
         if extra_checks:
             rekordbox_running = rekordbox_enabled and rekordbox_mod.is_running()
+            music_dates: dict[str, float] = {}
+            if music_enabled:
+                try:
+                    music_dates = media.music_added_dates_for(
+                        [(r["path"], _music_titles(r["path"], r.get("title")))
+                         for r in rows if r.get("status") != "error"])
+                except Exception:                          # noqa: BLE001
+                    music_dates = {}
             for row in rows:
                 if row.get("status") == "error":
                     continue
-                path, title = row["path"], row.get("title")
-                if music_enabled:
-                    try:
-                        added_ts = media.music_added_date_for(path, title)
-                    except Exception:                      # noqa: BLE001
-                        added_ts = None
-                    if added_ts:
-                        row["music_added_ts"] = added_ts
+                path = row["path"]
+                if music_dates.get(path):
+                    row["music_added_ts"] = music_dates[path]
                 if rekordbox_enabled and not rekordbox_running:
                     try:
                         present = rekordbox_mod.content_present(path)
@@ -3447,6 +3618,8 @@ class _Handler(BaseHTTPRequestHandler):
                 try:
                     for pid in music_ids:
                         media.music_set_location(pid, new)
+                    if music_ids:
+                        MUSIC_INDEX.invalidate()  # Pfade in Music.app geaendert -> Index veraltet (_music_dates_checked())
                 except Exception:                        # noqa: BLE001
                     os.rename(new, old)                  # kein toter Music-Track
                     raise
@@ -3536,7 +3709,7 @@ class _Handler(BaseHTTPRequestHandler):
         Voraussetzung, unter der schon die Pfadkorrektur unten (move_path)
         ueberhaupt sinnvoll ist.
         """
-        from .analyzer import analyse_file
+        from .analyzer import MEASURE_CACHE, analyse_file
 
         cfg = cfgmod.load()
         if not self._require_music(cfg):
@@ -3557,6 +3730,7 @@ class _Handler(BaseHTTPRequestHandler):
                 return
         try:
             locations = media.add_to_music_library(paths)
+            MUSIC_INDEX.invalidate()  # Pfade in Music.app geaendert -> Index veraltet (_music_dates_checked())
         except Exception as exc:                     # noqa: BLE001
             self._fail(str(exc), 500)
             return
@@ -3596,10 +3770,16 @@ class _Handler(BaseHTTPRequestHandler):
                 # und genau in die schreibt move_path(). Verschraenkt muessten
                 # sie je Eintrag neu gelesen werden -- rund 16.400 Zeilen je
                 # Stueck (siehe _mark_sets).
-                if moved:
-                    gebaut = self._compact_rows(conn, cfg, [e["new"] for e in moved])
-                    for entry, row in zip(moved, gebaut):
-                        entry["row"] = row if entry.pop("_had_row") else None
+                # Nur fuer Eintraege, die schon eine Zeile hatten -- Neuzugaenge
+                # aus der Einzelpruefung (der Normalfall) bekommen ihre Zeile
+                # erst nach der Messung unten, fuer sie lohnt der Bau hier nicht.
+                mit_zeile = [e for e in moved if e.pop("_had_row")]
+                for entry in moved:
+                    entry["row"] = None
+                if mit_zeile:
+                    gebaut = self._compact_rows(conn, cfg, [e["new"] for e in mit_zeile])
+                    for entry, row in zip(mit_zeile, gebaut):
+                        entry["row"] = row
                 # Welche Pfade noch keine Zeile haben, entscheidet sich hier;
                 # gemessen wird gleich ausserhalb des Locks.
                 zu_messen = [p for p in final if db_mod.row_for_path(conn, p) is None]
@@ -3615,13 +3795,27 @@ class _Handler(BaseHTTPRequestHandler):
         # echtem Material rund 2 Sekunden JE DATEI. Unter dem Lock stand
         # solange die gesamte Oberflaeche still -- ein Import von 20 Tracks
         # hat sie rund 40 Sekunden blockiert, auch fuer alles Lesende.
-        fresh = []
-        for path in zu_messen:
+        #
+        # MEASURE_CACHE: die Einzelpruefung hat denselben Audioinhalt gerade
+        # erst gemessen (/api/analyse-path). Music.apps Kopie hat dieselben
+        # Audio-Pakete, also wird nur Probe/Tags/Pruefsummen frisch gelesen
+        # (~0,2 s statt ~2-3 s je Datei). Was der Cache nicht kennt (Server
+        # neu gestartet, Messparameter geaendert), wird parallel gemessen --
+        # analyse_file() wartet fast nur auf ffmpeg/ffprobe, Threads genuegen.
+        def _measure(path: str):
             try:
                 st = os.stat(path)
             except OSError:
-                continue
-            fresh.append(analyse_file((path, st.st_size, st.st_mtime, cfg)))
+                return None
+            return analyse_file((path, st.st_size, st.st_mtime, cfg), cache=MEASURE_CACHE)
+
+        if len(zu_messen) > 1:
+            from concurrent.futures import ThreadPoolExecutor
+            workers = min(len(zu_messen), cfgmod.worker_count())
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                fresh = [r for r in pool.map(_measure, zu_messen) if r is not None]
+        else:
+            fresh = [r for r in map(_measure, zu_messen) if r is not None]
 
         with self.lock:
             conn = db_mod.connect(cfg)
@@ -3783,6 +3977,7 @@ class _Handler(BaseHTTPRequestHandler):
         if cfg.get("external_music"):
             try:
                 loc = media.add_to_music_library([final])
+                MUSIC_INDEX.invalidate()  # Pfade in Music.app geaendert -> Index veraltet (_music_dates_checked())
                 music = True
                 new_path = loc[0] if loc else ""
                 if new_path and new_path != final and os.path.isfile(new_path):
@@ -4518,41 +4713,17 @@ class _Handler(BaseHTTPRequestHandler):
                     "imported": imported, "changed": changed})
 
     def _post_rekordbox_tags_sync(self) -> None:
-        """Abgleich-Schalter "Metadaten nach Rekordbox": TrackTabs Metadaten fuer alle
-        Tracks der Sammlung schreiben, deren Metadaten abweichen (rekordbox.tag_diff_map(),
-        dieselbe Pruefung wie die Spalte Rekordbox). NUR Metadaten -- Beatgrid, Phrasen
-        und Cues bleiben dem Knopf "Rekordbox Update" vorbehalten (Nutzervorgabe).
-        Halbes/doppeltes Tempo schreibt _write_tags() nie, es bleibt als Hinweis stehen.
-        Eine Sicherung fuer den ganzen Lauf (backup_session), _rekordbox_lock je
-        Abschnitt, damit andere Rekordbox-Schreibwege zwischendurch drankommen."""
-        cfg = cfgmod.load()
-        rows = _tag_rows(cfg)
-        todo = [p for p, fields in rekordbox_mod.tag_diff_map(rows).items() if _tag_update_needed(fields)]
-        done, errors, stopped = [], {}, ""
-        session = f"tags-sync-{time.time():.0f}"
+        """Abgleich-Schalter "Metadaten nach Rekordbox": startet TAGS_SYNC (siehe
+        _RekordboxTagsSync), der Client fragt den Stand ueber
+        /api/rekordbox-tags-sync/status ab. Laeuft Rekordbox, sofort 409 statt
+        eines Laufs, der beim ersten Track aufgibt."""
         try:
-            with rekordbox_mod.backup_session(session):
-                for i in range(0, len(todo), 50):
-                    items = [{"path": p, "cues": None, "beats": None, "phrases": None,
-                              "audio_start_ms": 0, "tags": rows[p]} for p in todo[i:i + 50]]
-                    with self._rekordbox_lock:
-                        result = rekordbox_mod.update_tracks(items)
-                    for p, res in result["results"].items():
-                        if res.get("written"):
-                            done.append(p)
-                            audit_log.log("rekordbox-tags-sync", p, ",".join(res["written"]))
-                    errors.update(result["errors"])
-                    if result["stopped"]:
-                        stopped = result["stopped"]
-                        break
+            rekordbox_mod._check_writable()
         except rekordbox_mod.RekordboxRunning as exc:
             self._json({"ok": False, "error": str(exc), "sticky": True}, 409)
             return
-        except Exception as exc:                      # noqa: BLE001
-            self._fail(str(exc), 500)
-            return
-        self._json({"ok": True, "checked": len(todo), "updated": len(done),
-                    "errors": errors, "stopped": stopped})
+        started = TAGS_SYNC.start(cfgmod.load(), self._rekordbox_lock)
+        self._json({"ok": True, "started": started, **TAGS_SYNC.status()})
 
     def _post_rekordbox_pending_apply(self) -> None:
         """Schreibt alle vorgemerkten Aenderungen in EINEM Durchlauf nach
@@ -4748,14 +4919,29 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _post_music_added_sync(self) -> None:
         """Voller Abgleich gegen Music.app -- wie _post_rekordbox_sync darf
-        ein Fehlschlag den zuletzt bekannten Stand nicht loeschen."""
+        ein Fehlschlag den zuletzt bekannten Stand nicht loeschen. Liest ueber
+        die Sammelabfrage MUSIC_INDEX (media.music_file_tracks(), ~22 s an
+        ~11.000 Tracks) statt frueher eines Apple Events je Track
+        (Minuten). reuse_index: der Client hat direkt davor geprueft und
+        aufgeraeumt (/api/music-check, /api/music-cleanup) -- der Index ist dann
+        frisch und wird nicht ein zweites Mal gelesen."""
         if not self._require_music(cfgmod.load()):
             return
         try:
-            dates = media.music_added_dates()
+            payload = json.loads(self._body(10_000).decode("utf-8") or "{}")
+        except ValueError:
+            payload = {}
+        try:
+            tracks = MUSIC_INDEX.get(max_age=120 if payload.get("reuse_index") else 0)
         except Exception as exc:                     # noqa: BLE001
             self._fail(str(exc), 500)
             return
+        # Mehrere Eintraege derselben Datei: das frueheste Datum gilt.
+        dates: dict[str, float] = {}
+        for t in tracks:
+            if t["path"] and t["added"] > 0:
+                p = t["path"]
+                dates[p] = min(dates.get(p, t["added"]), t["added"])
         with self.lock:
             conn = db_mod.connect(cfgmod.load())
             try:
@@ -5328,6 +5514,7 @@ class _Handler(BaseHTTPRequestHandler):
                     if trash_original and was_music_added:
                         media.remove_from_music_library(path, title)
                     locations = media.add_to_music_library([new_path])
+                    MUSIC_INDEX.invalidate()  # Pfade in Music.app geaendert -> Index veraltet (_music_dates_checked())
                     final_path = locations[0] if locations and locations[0] else new_path
                     if final_path != new_path and os.path.isfile(final_path):
                         with self.lock:
@@ -7010,6 +7197,8 @@ class _Handler(BaseHTTPRequestHandler):
         (scanner.find_moved()) -- vorher standen diese Zeilen als "Datei fehlt", bis
         jemand den Knopf drueckte. Zieht DB und Rekordbox nach, liefert die Zeilen im
         Format von /api/relink ({"old", "new", "row"})."""
+        if moves:
+            MUSIC_INDEX.invalidate()  # Pfade in Music.app geaendert -> Index veraltet (_music_dates_checked())
         by_key = {db_mod.path_norm_key(p): p for p in synced}
         pairs: dict[str, str] = {}
         for old, new in moves:
@@ -7258,24 +7447,14 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
 
-        # Best-effort wie _post_trash()'s Music.app-Abgleich: schlaegt das
-        # Setzen in Music.app fehl, bleibt die bereits geschriebene Datei
-        # trotzdem gueltig -- nur ein weicher Hinweis statt eines Fehlers.
-        music_cover_synced = None
-        music_cover_error = None
+        # Music.app nur vormerken (MUSIC_TAGS), abgeschickt wird gesammelt mit den
+        # Tags -- vorher wartete jedes Speichern auf einen eigenen osascript-Lauf.
+        # Die Datei ist schon geschrieben; scheitert Music.app spaeter, meldet das
+        # der Flush (/api/music-tags-flush) als weichen Hinweis.
+        music_queued = False
         if in_library:
-            title = row["title"] or Path(path).stem
-            try:
-                matched = media.set_track_artwork(path, title, data, mime)
-                if matched:
-                    music_cover_synced = True
-                    audit_log.log("music-cover", path)
-                else:
-                    music_cover_synced = False
-                    music_cover_error = "Kein passender Track in der Music.app-Bibliothek gefunden."
-            except Exception as exc:                     # noqa: BLE001
-                music_cover_synced = False
-                music_cover_error = str(exc)
+            music_queued = MUSIC_TAGS.add_cover(
+                path, row["title"] or Path(path).stem, {"op": "set", "data": data, "mime": mime})
 
         with self.lock:
             conn = db_mod.connect(cfg)
@@ -7298,8 +7477,7 @@ class _Handler(BaseHTTPRequestHandler):
             [row], cfg, ignored, corrected, rekordbox, music_added,
             dup_dismissed, genremood)[0]
         return {"ok": True, "row": compact,
-                "music_cover_synced": music_cover_synced,
-                "music_cover_error": music_cover_error}
+                "music_queued": music_queued}
 
     def _post_cover_delete(self) -> None:
         """Entfernt das eingebettete Cover. Pfad im Query-String (wie /api/cover)."""
@@ -7332,21 +7510,14 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
 
-        music_cover_synced = None
-        music_cover_error = None
+        # Music.app nur vormerken (MUSIC_TAGS), abgeschickt wird gesammelt mit den
+        # Tags -- vorher wartete jedes Speichern auf einen eigenen osascript-Lauf.
+        # Die Datei ist schon geschrieben; scheitert Music.app spaeter, meldet das
+        # der Flush (/api/music-tags-flush) als weichen Hinweis.
+        music_queued = False
         if in_library:
-            title = row["title"] or Path(path).stem
-            try:
-                matched = media.clear_track_artwork(path, title)
-                if matched:
-                    music_cover_synced = True
-                    audit_log.log("music-cover-loeschen", path)
-                else:
-                    music_cover_synced = False
-                    music_cover_error = "Kein passender Track in der Music.app-Bibliothek gefunden."
-            except Exception as exc:                     # noqa: BLE001
-                music_cover_synced = False
-                music_cover_error = str(exc)
+            music_queued = MUSIC_TAGS.add_cover(
+                path, row["title"] or Path(path).stem, {"op": "clear"})
 
         with self.lock:
             conn = db_mod.connect(cfg)
@@ -7369,8 +7540,7 @@ class _Handler(BaseHTTPRequestHandler):
             [row], cfg, ignored, corrected, rekordbox, music_added,
             dup_dismissed, genremood)[0]
         self._json({"ok": True, "row": compact,
-                     "music_cover_synced": music_cover_synced,
-                     "music_cover_error": music_cover_error})
+                     "music_queued": music_queued})
 
     def _post_lookup(self) -> None:
         """Online-Metadatenvorschläge -- rein manuell angestossen, nichts wird
@@ -7439,21 +7609,14 @@ class _Handler(BaseHTTPRequestHandler):
             finally:
                 conn.close()
 
-        music_cover_synced = None
-        music_cover_error = None
+        # Music.app nur vormerken (MUSIC_TAGS), abgeschickt wird gesammelt mit den
+        # Tags -- vorher wartete jedes Speichern auf einen eigenen osascript-Lauf.
+        # Die Datei ist schon geschrieben; scheitert Music.app spaeter, meldet das
+        # der Flush (/api/music-tags-flush) als weichen Hinweis.
+        music_queued = False
         if in_library:
-            title = row["title"] or Path(path).stem
-            try:
-                matched = media.set_track_artwork(path, title, data, mime)
-                if matched:
-                    music_cover_synced = True
-                    audit_log.log("music-cover", path)
-                else:
-                    music_cover_synced = False
-                    music_cover_error = "Kein passender Track in der Music.app-Bibliothek gefunden."
-            except Exception as exc:                     # noqa: BLE001
-                music_cover_synced = False
-                music_cover_error = str(exc)
+            music_queued = MUSIC_TAGS.add_cover(
+                path, row["title"] or Path(path).stem, {"op": "set", "data": data, "mime": mime})
 
         with self.lock:
             conn = db_mod.connect(cfg)
@@ -7476,8 +7639,7 @@ class _Handler(BaseHTTPRequestHandler):
             [row], cfg, ignored, corrected, rekordbox, music_added,
             dup_dismissed, genremood)[0]
         self._json({"ok": True, "row": compact,
-                     "music_cover_synced": music_cover_synced,
-                     "music_cover_error": music_cover_error})
+                     "music_queued": music_queued})
 
     def _post_reanalyse(self) -> None:
         """
@@ -7489,7 +7651,7 @@ class _Handler(BaseHTTPRequestHandler):
         Gleicht ausserdem, je Datei, Cover (unabhaengig von
         cfg["cover_auto_fill"]), Music.app-"date added" und — sofern
         Rekordbox gerade nicht laeuft — die Rekordbox-Praesenz live ab
-        (media.music_added_date_for()/rekordbox.content_present(), beide
+        (_music_dates_checked() je Block in EINEM osascript/rekordbox.content_present(), beide
         schreiben nur den einen betroffenen Pfad, siehe db.set_music_added()/
         set_rekordbox_present()). Laeuft Rekordbox, wird der Rekordbox-Check
         uebersprungen und "rekordbox.running": true zurueckgegeben, damit der
@@ -7542,15 +7704,12 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 vorab = [row for row in (db_mod.row_for_path(conn, p) for p in paths)
                          if row is not None]
+                marked = {row["path"] for row in vorab
+                          if db_mod.is_music_added(conn, row["path"])}
             finally:
                 conn.close()
         if cfg.get("external_music"):
-            for row in vorab:
-                try:
-                    added_dates[row["path"]] = media.music_added_date_for(
-                        row["path"], row["title"])
-                except Exception:                      # noqa: BLE001
-                    added_dates[row["path"]] = None
+            added_dates = _music_dates_checked(vorab, marked)
         # Rekordbox: Praesenz-Check nur, wenn Rekordbox eingestellt/gefunden
         # ist (siehe _rekordbox_available()) UND nicht gerade laeuft
         # (laufendes Rekordbox riskiert eine beschaedigte master.db, siehe

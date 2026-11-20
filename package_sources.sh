@@ -8,6 +8,10 @@
 # Das gilt auch fuer mutagen (GPL), das als Python-Paket in der App steckt, und
 # fuer das Phrasenmodell aus GlideMix (GPL, vendor/models/phrases/phrases.onnx):
 # steckt es im Build, gehoert das GlideMix-Quellarchiv dazu (samt Trainingsskript).
+# Ebenso fuer libquadmath (LGPL-2.1+), die scipy (Abhaengigkeit von LightGBM) mit
+# seiner GCC-Laufzeit mitbringt: dazu gehoeren die GCC-Quellen samt dem Darwin-
+# Patch, mit dem Homebrew gcc@13 gebaut wird (scipys arm64-Wheels nehmen dessen
+# gfortran-13, siehe .github/workflows/wheels.yml im scipy-Repository).
 # Dieses Skript laedt die Quell-Archive nach dist/sources/ und packt sie samt
 # Lizenztexten in dist/TrackTab-<Version>-third-party-sources.zip -- diese eine
 # Datei gehoert an dasselbe GitHub-Release wie die .dmg.
@@ -20,6 +24,12 @@
 #   brew list --versions x264 x265        (x264/x265 tragen keine Version im Binary;
 #                                          Build-Nummer: libx264.165 / libx265.217)
 # Wurde vendor/ aus einer anderen Homebrew-Version gebaut, hier anpassen.
+#
+# GCC (libquadmath aus scipy): Die Version liest das Skript aus scipys Build-
+# Konfiguration und bricht ab, wenn sie nicht zu GCC_VERSION passt. Bei einer
+# neuen scipy-Version also pruefen, mit welchem gfortran sie gebaut ist, und
+# GCC_PATCH_COMMIT auf den homebrew-core-Stand von gcc@<Major>.rb zum
+# Upload-Datum des Wheels setzen (welche Patches die Formel damals hatte).
 
 cd "$(dirname "$0")" || exit 1
 set -e
@@ -29,6 +39,10 @@ X264_COMMIT="b35605ace3ddf7c1a5d67a2eb553f034aef41d55"   # Homebrew-Formel x264 
 X265_VERSION="4.3"
 LAME_VERSION="4.0"
 MPG123_VERSION="1.33.7"
+# scipy 1.18.1 (macosx_14_0_arm64, hochgeladen 2026-08-21): gfortran 13.4.0 aus
+# Homebrew gcc@13, Formel-Stand d17f3939 (einziger Patch: gcc-13.4.0.diff).
+GCC_VERSION="13.4.0"
+GCC_PATCH_COMMIT="d17f3939dc55c4a42a6e5833a8353d0948bbd416"
 # Aus dem .venv, damit es immer die gebuendelte Version ist.
 MUTAGEN_VERSION=$(./.venv/bin/python -c "import importlib.metadata as m; print(m.version('mutagen'))")
 # Einzige Quelle der GlideMix-Version ist fetch_models.sh (dort haengt auch die Pruefsumme).
@@ -56,6 +70,25 @@ if [ -s vendor/models/phrases/phrases.onnx ]; then
   SOURCES+=("GlideMix-${GLIDEMIX_VERSION}-source.tar.xz|https://github.com/cristitm76/glidemix-releases/releases/download/v${GLIDEMIX_VERSION}/GlideMix-${GLIDEMIX_VERSION}-source.tar.xz")
 else
   echo "Hinweis: kein Phrasenmodell in vendor/ — GlideMix-Quellcode wird nicht beigelegt."
+fi
+
+# GCC nur, wenn scipy (und damit libquadmath) im .venv steckt -- tracktab.spec
+# buendelt es dann ueber LightGBM mit.
+SCIPY_QUADMATH=$(ls ./.venv/lib/python3.*/site-packages/scipy/.dylibs/libquadmath* 2>/dev/null | head -1 || true)
+if [ -n "$SCIPY_QUADMATH" ]; then
+  SCIPY_GCC=$(./.venv/bin/python -c "import scipy.__config__ as c; print(c.CONFIG['Compilers']['fortran']['version'])")
+  if [ "$SCIPY_GCC" != "$GCC_VERSION" ]; then
+    echo "FEHLER: scipy ist mit gfortran $SCIPY_GCC gebaut, GCC_VERSION ist $GCC_VERSION — oben anpassen."
+    exit 1
+  fi
+  GCC_MAJOR="${GCC_VERSION%%.*}"
+  SOURCES+=(
+    "gcc-${GCC_VERSION}.tar.xz|https://ftp.gnu.org/gnu/gcc/gcc-${GCC_VERSION}/gcc-${GCC_VERSION}.tar.xz"
+    "gcc-${GCC_VERSION}-darwin.diff|https://raw.githubusercontent.com/Homebrew/homebrew-core/${GCC_PATCH_COMMIT}/Patches/gcc/gcc-${GCC_VERSION}.diff"
+    "gcc@${GCC_MAJOR}.rb|https://raw.githubusercontent.com/Homebrew/homebrew-core/${GCC_PATCH_COMMIT}/Formula/g/gcc@${GCC_MAJOR}.rb"
+  )
+else
+  echo "Hinweis: kein scipy im .venv — GCC-Quellcode (libquadmath) wird nicht beigelegt."
 fi
 
 for entry in "${SOURCES[@]}"; do
@@ -91,10 +124,18 @@ done
     echo "  im Quellarchiv: src/mixhouse/models/glidemix_phrases.onnx, Training: tools/trainer/"
     echo
   fi
+  if [ -n "$SCIPY_QUADMATH" ]; then
+    echo "GCC-Laufzeit aus scipy (libquadmath LGPL-2.1+, libgfortran/libgcc_s GPL-3.0 mit"
+    echo "GCC-Runtime-Ausnahme), gebaut mit gfortran ${GCC_VERSION} (Homebrew gcc@${GCC_MAJOR}):"
+    echo "  gcc-${GCC_VERSION}.tar.xz        GNU-Quellen (libquadmath/, libgfortran/, libgcc/)"
+    echo "  gcc-${GCC_VERSION}-darwin.diff   Patch fuer Apple Silicon (https://github.com/iains/gcc-${GCC_MAJOR}-branch)"
+    echo "  gcc@${GCC_MAJOR}.rb              Homebrew-Bauanleitung, Stand ${GCC_PATCH_COMMIT:0:12}"
+    echo
+  fi
   echo "Lizenzen: siehe LICENSE, NOTICE.md und THIRD_PARTY_LICENSES.md."
 } > "$DEST/BUILD-INFO.txt"
 cp LICENSE NOTICE.md THIRD_PARTY_LICENSES.md "$DEST/"
-( cd "$DEST" && shasum -a 256 *.tar.* > SHA256SUMS )
+( cd "$DEST" && shasum -a 256 *.tar.* $(ls *.diff *.rb 2>/dev/null) > SHA256SUMS )
 
 ZIP="TrackTab-${TRACKTAB_VERSION}-third-party-sources.zip"
 rm -f "dist/$ZIP"

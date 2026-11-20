@@ -1029,8 +1029,11 @@ def add_to_music_library(paths: list[str]) -> list[str]:
         '  return theLocations as text\n'
         'end run'
     )
+    # Zeitlimit mit der Menge wachsen lassen: Music.app kopiert jede Datei in
+    # seinen Medienordner, ein fester Wert brach grosse Importe mittendrin ab
+    # (Tracks schon in Music.app, aber ohne DB-Zeile in TrackTab).
     result = subprocess.run(["osascript", "-e", script, *[str(p) for p in paths]],
-                            capture_output=True, timeout=120)
+                            capture_output=True, timeout=120 + 5 * len(paths))
     if result.returncode != 0:
         raise MediaToolMissing(
             result.stderr.decode("utf-8", "replace").strip()[:300]
@@ -1111,32 +1114,6 @@ def music_track_ids(path: str, title: str | None) -> list[str]:
             or "Music.app konnte den Track nicht suchen")
     out = result.stdout.decode("utf-8", "replace").strip()
     return [i for i in out.split(",") if i]
-
-
-def music_set_location(persistent_id: str, new_path: str) -> None:
-    """
-    Zeigt einen Music.app-Track auf eine andere Datei (die umbenannte) --
-    Playlisten, Wiedergabezaehler und Bewertung bleiben erhalten. Die Datei
-    muss unter 'new_path' schon existieren. Die alias-Koerzierung steht
-    ausserhalb des tell-Blocks (sonst -1700, siehe add_to_music_library()).
-    Wirft MediaToolMissing, wenn Music.app die Aenderung ablehnt.
-    """
-    script = (
-        'on run argv\n'
-        '  set theId to item 1 of argv\n'
-        '  set theAlias to POSIX file (item 2 of argv) as alias\n'
-        '  tell application "Music"\n'
-        '    set t to first track of library playlist 1 whose persistent ID is theId\n'
-        '    set location of t to theAlias\n'
-        '  end tell\n'
-        'end run'
-    )
-    result = subprocess.run(["osascript", "-e", script, str(persistent_id), str(new_path)],
-                            capture_output=True, timeout=30)
-    if result.returncode != 0:
-        raise MediaToolMissing(
-            result.stderr.decode("utf-8", "replace").strip()[:250]
-            or "Music.app konnte den Ort nicht ändern")
 
 
 def remove_from_music_library(path: str, title: str | list[str] | None = None) -> tuple[int, bool]:
@@ -1228,14 +1205,34 @@ def music_file_tracks() -> list[dict]:
     {"pid", "path" ('' = Datei fehlt, in Music.app das Ausrufezeichen), "name",
     "artist", "added" (Unix-Zeit), "plays"}.
 
-    Anders als music_added_dates() (ein Apple Event je Track, an ~11.000 Tracks
-    rund 6 Minuten) geht das hier als Sammelabfrage ueber 'every FILE track':
-    der Fehler -1728, an dem 'location of every track' scheitert, kommt von den
-    Cloud-Eintraegen ('shared track' ohne Eigenschaft 'location') -- die sind
-    keine 'file track' und fallen so heraus. Ein Track mit verschwundener Datei
-    liefert in der Liste 'missing value'. Gemessen an 10.857 Tracks: ~22 s.
-    Pfad- und Datumsumwandlung ausserhalb des tell-Blocks (siehe
-    add_to_music_library()/music_added_dates()).
+    Einziger Weg, die ganze Bibliothek zu lesen ("Music.app abgleichen",
+    Duplikat-Pruefung, Papierkorb-Rueckfall ueber server.MUSIC_INDEX). Vorher gab
+    es dafuer music_added_dates() mit einem Apple Event je Track (an ~11.000
+    Tracks Minuten statt Sekunden), entfernt. Die Fallen von damals, alle an
+    echtem Material bestaetigt und hier weiter gueltig:
+
+    1. 'location of every track' und ein 'whose location is not missing
+       value'-Filter brechen mit Fehler -1728 fuer die GESAMTE Liste ab, sobald
+       ein Eintrag keine lokale Datei hat. Der Fehler kommt von den
+       Cloud-Eintraegen ('shared track' ohne Eigenschaft 'location') -- die
+       sind keine 'file track' und fallen ueber 'every FILE track' heraus. Ein
+       Track mit verschwundener Datei liefert in der Liste 'missing value'.
+    2. Die Epoch-Konstruktion ('set year/month/day/time of epoch to ...') MUSS
+       ausserhalb jedes 'tell application "Music"' passieren -- drinnen geht
+       sie als Apple Event an Music.app, das diese Eigenschaften eines
+       AppleScript-Datums nicht kennt: Fehler -1731. Ebenso 'POSIX path of'
+       (siehe add_to_music_library()). Datumsdifferenz statt Datumstext, weil
+       'date added as string' lokalisiert ist.
+    3. Wer Track fuer Track auf Music-Objekte zugreift, muss das in einem
+       eigenen 'tell application "Music"' tun -- ausserhalb verliert
+       'item i of trackList' den Bezug (-10001). Hier nicht noetig, die Listen
+       sind schon gelesen.
+    4. osascript gibt die Sekundenzahl lokalisiert zurueck (Komma als
+       Dezimaltrenner, ab einer gewissen Groesse Exponentialschreibweise wie
+       "1,566064242E+9") -- das Komma wird vor float() durch einen Punkt
+       ersetzt.
+
+    Gemessen an 10.857 Tracks: ~22 s.
     """
     script = (
         'tell application "Music"\n'
@@ -1392,9 +1389,17 @@ def music_track_location(pid: str) -> str | None:
 
 
 def music_set_location(pid: str, path: str) -> None:
-    """Ort eines Bibliothekseintrags fest auf diese Datei setzen (nach dem
-    Entfernen eines Duplikats, siehe server._post_music_cleanup()).
-    Koerzierung ausserhalb des tell-Blocks."""
+    """Ort eines Bibliothekseintrags fest auf diese Datei setzen -- Playlisten,
+    Wiedergabezaehler und Bewertung bleiben erhalten. Die Datei muss unter
+    'path' schon existieren. Aufgerufen nach dem Umbenennen einer
+    Bibliotheksdatei (server._post_rename_library(), Vorstufe
+    music_track_ids()) und nach dem Entfernen eines Duplikats
+    (server._music_drop_duplicates()). Die alias-Koerzierung steht ausserhalb
+    des tell-Blocks (sonst -1700, siehe add_to_music_library()). Wirft
+    MediaToolMissing, wenn Music.app die Aenderung ablehnt.
+
+    Stand frueher zweimal in dieser Datei; die erste Fassung war durch die
+    zweite ueberdeckt und nie aktiv."""
     script = (
         'on run argv\n'
         '  set f to (POSIX file (item 2 of argv)) as alias\n'
@@ -1410,165 +1415,101 @@ def music_set_location(pid: str, path: str) -> None:
                                or "Ort in Music.app konnte nicht gesetzt werden")
 
 
-def music_added_date_for(path: str, title: str | None) -> float | None:
+def music_added_dates_for(items: list[tuple[str, list[str]]]) -> dict[str, float]:
     """
-    Live-Check von 'date added' fuer EINEN Track -- Gegenstueck zu
-    music_added_dates() (liest die GESAMTE Bibliothek, 30 Minuten Timeout,
-    fuer einen einzelnen Klick zu langsam). Aufgerufen vom manuellen
-    "neu analysieren"-Knopf, siehe server._post_reanalyse()/_post_analyse_path().
+    'date added' fuer einige Tracks in EINEM osascript -- fuer "neu analysieren"
+    (server._post_reanalyse(), Bloecke zu 25) und die Einzelpruefung
+    (server._post_analyse_path()). Frueher music_added_date_for(): ein osascript
+    je Track. Fuer die ganze Bibliothek gibt es music_file_tracks().
 
-    Folgt demselben Titel-Vorfilter + Pfad-Abgleich wie
-    remove_from_music_library() (siehe dort fuer die ausfuehrliche
-    Begruendung: ein Bulk-/whose-Filter auf 'location' bricht mit Fehler
-    -1728 fuer die GESAMTE Abfrage ab, sobald irgendein Bibliothekstrack
-    keine lokale Datei hat). Die Epoch-Konstruktion (year/month/day/time of
-    epoch) MUSS wie in music_added_dates() ausserhalb jedes
-    'tell application "Music"' passieren, sonst Fehler -1731 (dort
-    ausfuehrlich dokumentiert).
+    items: (Pfad, Titel) -- alle Titel, unter denen Music.app den Track kennen
+    kann (aktueller Titel, Dateiname, noch nicht abgeschickter alter Titel).
+    Gesucht wird je Titel ('whose name is', schnell und ohne den -1728-Abbruch,
+    siehe music_file_tracks()), der Pfadvergleich passiert in Python ueber
+    db.path_norm_key() -- AppleScripts 'is' unterscheidet NFC/NFD, ein Umlaut im
+    Dateinamen fand den Track sonst nicht.
 
-    Liefert None, wenn 'title' leer ist oder kein Treffer am exakten Pfad
-    gefunden wurde -- der Aufrufer behandelt das als 'nicht in Music.app'.
+    Liefert {Pfad: Unix-Zeit} nur fuer Treffer. Kein Treffer heisst NICHT
+    sicher "nicht in Music.app" (Music.app kann den Track unter einem weiteren
+    Titel fuehren) -- der Aufrufer entscheidet. Wirft MediaToolMissing, wenn
+    der Lauf scheitert; dann ist ueber KEINEN Track etwas bekannt.
     """
-    if not title:
-        return None
+    def path_norm_key(p: str) -> str:              # wie db.path_norm_key()
+        return unicodedata.normalize("NFC", p).casefold()
+
+    titles: list[str] = []
+    seen: set[str] = set()
+    for _path, names in items:
+        for name in names:
+            if name and name.casefold() not in seen:   # AppleScript vergleicht ohne Gross/Klein
+                seen.add(name.casefold())
+                titles.append(name)
+    if not titles:
+        return {}
+    # Datumsrechnung und POSIX path ausserhalb des tell-Blocks (siehe
+    # music_file_tracks(), Fallen 2 und 3).
     script = (
         'on run argv\n'
-        '  set thePath to item 1 of argv\n'
-        '  set theTitle to item 2 of argv\n'
-        '  set candidates to {}\n'
-        '  tell application "Music"\n'
-        '    try\n'
-        '      set candidates to (every track of library playlist 1 whose name is theTitle)\n'
-        '    end try\n'
-        '  end tell\n'
         '  set epoch to (current date)\n'
         '  set year of epoch to 1970\n'
         '  set month of epoch to 1\n'
         '  set day of epoch to 1\n'
         '  set time of epoch to 0\n'
-        '  set resultSecs to ""\n'
-        '  repeat with c in candidates\n'
-        '    set theLoc to missing value\n'
+        '  set out to {}\n'
+        '  repeat with i from 1 to (count of argv)\n'
+        '    set theTitle to item i of argv\n'
+        '    set cands to {}\n'
         '    tell application "Music"\n'
         '      try\n'
-        '        set theLoc to location of c\n'
+        '        set cands to (every file track of library playlist 1 whose name is theTitle)\n'
         '      end try\n'
         '    end tell\n'
-        '    if theLoc is not missing value then\n'
-        '      try\n'
-        '        set locPath to POSIX path of theLoc\n'
-        '        if locPath is thePath then\n'
-        '          tell application "Music"\n'
-        '            set theAdded to date added of c\n'
-        '            set secs to theAdded - epoch\n'
-        '          end tell\n'
-        '          set resultSecs to (secs as text)\n'
-        '        end if\n'
-        '      end try\n'
-        '    end if\n'
+        '    repeat with c in cands\n'
+        '      set theLoc to missing value\n'
+        '      set theAdded to missing value\n'
+        '      tell application "Music"\n'
+        '        try\n'
+        '          set theLoc to location of c\n'
+        '          set theAdded to date added of c\n'
+        '        end try\n'
+        '      end tell\n'
+        '      if theLoc is not missing value and theAdded is not missing value then\n'
+        '        try\n'
+        '          set thePath to POSIX path of theLoc\n'
+        '          set secs to (theAdded - epoch) div 1\n'
+        '          set end of out to thePath & tab & (secs as text)\n'
+        '        end try\n'
+        '      end if\n'
+        '    end repeat\n'
         '  end repeat\n'
-        '  return resultSecs\n'
+        '  set AppleScript\'s text item delimiters to linefeed\n'
+        '  return out as text\n'
         'end run'
     )
-    try:
-        result = subprocess.run(["osascript", "-e", script, str(path), str(title)],
-                                capture_output=True, timeout=30)
-    except Exception:                                      # noqa: BLE001
-        return None
-    if result.returncode != 0:
-        return None
-    out = result.stdout.decode("utf-8", "replace").strip()
-    if not out:
-        return None
-    try:
-        return float(out.replace(",", "."))
-    except ValueError:
-        return None
-
-
-def music_added_dates() -> dict[str, float]:
-    """
-    Fragt 'date added' aus Music.app fuer die ganze Bibliothek ab -- eigene
-    Sync-Aktion, unabhaengig vom Rekordbox-Abgleich (siehe db.sync_music_added).
-
-    'date added' kommt als Bulk-Abfrage ueber 'of every track' (ein Apple
-    Event fuer die ganze Liste). 'location' dagegen MUSS Track fuer Track
-    gelesen werden: sowohl der Bulk-Getter als auch ein 'whose location is
-    not missing value'-Filter brechen mit Fehler -1728 fuer die GESAMTE Liste
-    ab, sobald auch nur ein Track keine lokale Datei hat (z.B. nur per
-    Apple-Music-Abgleich in der Cloud, an echter iCloud-Musikmediathek
-    bestaetigt) -- offenbar wirft das Lesen der Eigenschaft dort schon
-    waehrend der Filterauswertung. Der Einzelzugriff mit 'try' pro Track ist
-    deshalb der einzige zuverlaessige Weg, kostet dafuer ein Apple Event pro
-    Track (bei zehntausenden Tracks entsprechend spuerbar langsamer). Die
-    Schleife MUSS dabei innerhalb eines eigenen 'tell application "Music"'
-    laufen -- ausserhalb geht der Bezug von 'item i of trackList' auf ein
-    Music.app-Objekt verloren, 'location of (...)' scheitert dann fuer JEDEN
-    Track mit Deskriptor-Fehler -10001 (an echtem Material bestaetigt). Die
-    Epoch-Konstruktion wiederum MUSS ausserhalb jedes 'tell application
-    "Music"' passieren -- 'set year/month/day/time of epoch to ...' innerhalb
-    des Blocks wird als Apple-Event an Music.app geschickt (wie die
-    'as alias'-Koerzierung in add_to_music_library() oben, nur umgekehrt
-    riskiert), und Music.app kennt diese Eigenschaften eines gewoehnlichen
-    AppleScript-Datumsobjekts nicht -- Fehler -1731 (ebenfalls bestaetigt).
-    Deshalb zwei getrennte 'tell'-Bloecke um die epoch-Konstruktion herum.
-
-    Datumsdifferenz statt AppleScript-Datumstext: 'date added as string' ist
-    lokalisiert und liesse sich in Python nicht zuverlaessig zurueckparsen.
-    Stattdessen wird pro Track die Differenz zu einer lokal konstruierten
-    Epoch (1.1.1970) in Sekunden berechnet -- ein Unix-Timestamp. osascript
-    gibt diese Zahl trotzdem lokalisiert zurueck (Komma als Dezimaltrenner,
-    ab einer gewissen Groesse in Exponentialschreibweise, z.B.
-    "1,566064242E+9") -- das Komma wird deshalb vor dem float()-Parsing in
-    Python durch einen Punkt ersetzt, den Rest übernimmt float() von selbst.
-
-    Liefert {POSIX-Pfad: Unix-Timestamp}. Tracks ohne lokale 'location'
-    (z.B. nur per Apple-Music-Abgleich verknuepft, kein lokales File) fehlen
-    im Ergebnis.
-    """
-    script = (
-        'tell application "Music"\n'
-        '  set dateList to date added of every track of library playlist 1\n'
-        '  set trackList to every track of library playlist 1\n'
-        'end tell\n'
-        'set epoch to (current date)\n'
-        'set year of epoch to 1970\n'
-        'set month of epoch to 1\n'
-        'set day of epoch to 1\n'
-        'set time of epoch to 0\n'
-        'set outList to {}\n'
-        'tell application "Music"\n'
-        '  repeat with i from 1 to (count of trackList)\n'
-        '    try\n'
-        '      set loc to location of (item i of trackList)\n'
-        '      if loc is not missing value then\n'
-        '        set p to POSIX path of loc\n'
-        '        set secs to (item i of dateList) - epoch\n'
-        '        set end of outList to (p & tab & (secs as text))\n'
-        '      end if\n'
-        '    end try\n'
-        '  end repeat\n'
-        'end tell\n'
-        'set AppleScript\'s text item delimiters to linefeed\n'
-        'return outList as text\n'
-    )
-    result = subprocess.run(["osascript", "-e", script],
-                            capture_output=True, timeout=1800)
+    result = subprocess.run(["osascript", "-e", script, *titles],
+                            capture_output=True, timeout=120)
     if result.returncode != 0:
         raise MediaToolMissing(
             result.stderr.decode("utf-8", "replace").strip()[:300]
-            or "Music.app-Bibliothek konnte nicht gelesen werden")
-    out = result.stdout.decode("utf-8", "replace").strip()
-    mapping: dict[str, float] = {}
-    for line in out.splitlines():
-        path, _, secs = line.partition("\t")
-        if not path or not secs:
+            or "Music.app konnte nicht befragt werden")
+    found: dict[str, float] = {}
+    for line in result.stdout.decode("utf-8", "replace").split("\n"):
+        loc, _, secs = line.partition("\t")
+        if not loc or not secs:
             continue
         try:
-            mapping[path] = float(secs.replace(",", "."))
+            ts = float(secs.replace(",", "."))
         except ValueError:
             continue
-    return mapping
+        if ts > 0:
+            key = path_norm_key(loc)
+            found[key] = min(found.get(key, ts), ts)
+    out: dict[str, float] = {}
+    for path, _names in items:
+        ts = found.get(path_norm_key(path))
+        if ts is not None:
+            out[path] = ts
+    return out
 
 
 def music_playlists() -> list[dict]:
@@ -1996,7 +1937,7 @@ def track_artwork(items: list[tuple[str, str]]) -> dict[str, tuple[bytes, str] |
     Track gefunden oder kein Artwork vorhanden).
 
     Matching in zwei Schritten, beide aus denselben Gruenden wie in
-    add_to_music_library()/music_added_dates() dokumentiert:
+    add_to_music_library()/music_file_tracks() dokumentiert:
       1. Vorfilter ueber den Titel ('whose name is theTitle') -- ein
          Bulk-Filter auf 'location' waere hier NICHT sicher: er bricht mit
          Fehler -1728 fuer die GESAMTE Abfrage ab, sobald irgendein Track der
@@ -2122,116 +2063,6 @@ def track_artwork(items: list[tuple[str, str]]) -> dict[str, tuple[bytes, str] |
     return out
 
 
-def set_track_artwork(path: str, title: str, data: bytes, mime: str) -> int:
-    """
-    Setzt das Artwork eines bereits in Music.app importierten Tracks direkt --
-    Gegenstueck zu track_artwork() (liest), aufgerufen wenn ein Cover ueber
-    /api/cover bzw. /api/lookup-cover geschrieben wird und die Datei laut
-    music_added bereits in der Bibliothek steht (server.py). Bewusst KEIN
-    Entfernen+Neu-Hinzufuegen (add_to_music_library()/remove_from_music_library()):
-    das wuerde Playlisten-Zugehoerigkeit, Bewertung und Play-Count unkontrolliert
-    verlieren, nichts im Code sichert das ab. Stattdessen die seit den
-    iTunes-AppleScript-Tagen uebliche Technik: die Artwork-Eigenschaft eines
-    bestehenden Track-Objekts direkt setzen, ohne ihn anzufassen.
-
-    Matching wie remove_from_music_library()/track_artwork(): Titel-Vorfilter
-    ('name' ist immer lesbar), dann 'location' je Kandidat einzeln mit 'try'
-    lesen und AUSSERHALB von 'tell application "Music"' zum POSIX-Pfad
-    koerzieren (dieselben Gruende wie dort -- eine Koerzierung als Apple-Event
-    an Music.app scheitert mit -1700/-1728). Erst der exakte Pfadvergleich
-    entscheidet, welche der (moeglicherweise mehreren) Namens-Treffer gemeint
-    sind -- alle davon werden geaendert, es gibt kein "mehrdeutig", nur "0
-    getroffen" oder "1+ getroffen". Ohne Titel sofort 0 statt Voll-Scan.
-
-    Bilddaten koennen aus jedem Format kommen, das der Cover-Dialog akzeptiert
-    (accept="image/*" im UI, keine weitere Pruefung) -- AppleScripts
-    'read ... as picture'-Koerzierung kennt aber nur wenige klassische
-    Bildklassen zuverlaessig, WebP/HEIC/GIF/TIFF u.ae. sind fraglich. Deshalb
-    werden die Bilddaten IMMER zuerst per sips (in macOS eingebaut) nach JPEG
-    konvertiert, danach gibt es nur noch einen deterministischen
-    Koerzierungspfad ('as JPEG picture'). Betrifft nur diese transiente
-    Kopie, nicht die in der Datei eingebetteten Original-Bytes.
-
-    Liefert die Anzahl getroffener Tracks (0 = Titel nicht mehr passend oder
-    Track nicht in der Bibliothek -- kein Fehler, server.py macht daraus
-    einen weichen Hinweis statt eines Fehlers).
-    """
-    if not title:
-        return 0
-    import mimetypes
-    import tempfile
-    ext = mimetypes.guess_extension(mime, strict=False) or ".img"
-    if ext == ".jpe":
-        ext = ".jpg"
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        src_path = Path(tmp_dir) / f"src{ext}"
-        src_path.write_bytes(data)
-        img_path = Path(tmp_dir) / "cover.jpg"
-        sips = shutil.which("sips") or "/usr/bin/sips"
-        conv = subprocess.run(
-            [sips, "-s", "format", "jpeg", str(src_path), "--out", str(img_path)],
-            capture_output=True, timeout=30)
-        if conv.returncode != 0 or not img_path.is_file():
-            raise MediaToolMissing(
-                conv.stderr.decode("utf-8", "replace").strip()[:250]
-                or "Cover konnte nicht fuer Music.app konvertiert werden")
-        script = (
-            'on run argv\n'
-            '  set thePath to item 1 of argv\n'
-            '  set theTitle to item 2 of argv\n'
-            '  set imgPath to item 3 of argv\n'
-            '  set theData to (read (POSIX file imgPath) as JPEG picture)\n'
-            '  set candidates to {}\n'
-            '  tell application "Music"\n'
-            '    try\n'
-            '      set candidates to (every track of library playlist 1 whose name is theTitle)\n'
-            '    end try\n'
-            '  end tell\n'
-            '  set theMatches to {}\n'
-            '  repeat with c in candidates\n'
-            '    set theLoc to missing value\n'
-            '    tell application "Music"\n'
-            '      try\n'
-            '        set theLoc to location of c\n'
-            '      end try\n'
-            '    end tell\n'
-            '    if theLoc is not missing value then\n'
-            '      try\n'
-            '        set locPath to POSIX path of theLoc\n'
-            '        if locPath is thePath then set end of theMatches to c\n'
-            '      end try\n'
-            '    end if\n'
-            '  end repeat\n'
-            '  set n to count of theMatches\n'
-            '  if n > 0 then\n'
-            '    tell application "Music"\n'
-            '      repeat with m in theMatches\n'
-            '        try\n'
-            '          set data of artwork 1 of m to theData\n'
-            '        on error\n'
-            '          try\n'
-            '            make new artwork at end of artworks of m with properties {data:theData}\n'
-            '          end try\n'
-            '        end try\n'
-            '      end repeat\n'
-            '    end tell\n'
-            '  end if\n'
-            '  return (n as text)\n'
-            'end run'
-        )
-        result = subprocess.run(
-            ["osascript", "-e", script, str(path), str(title), str(img_path)],
-            capture_output=True, timeout=30)
-    if result.returncode != 0:
-        raise MediaToolMissing(
-            result.stderr.decode("utf-8", "replace").strip()[:300]
-            or "Music.app-Artwork konnte nicht gesetzt werden")
-    try:
-        return int(result.stdout.decode("utf-8", "replace").strip())
-    except ValueError:
-        return 0
-
-
 def _parse_set_result(stdout: bytes, moves: list | None) -> int:
     """Ausgabe der Setz-Skripte: erste Zeile die Zahl gesetzter Tracks, danach je
     Zeile "alter Pfad<TAB>neuer Pfad" fuer Dateien, die Music.app dabei umsortiert
@@ -2316,15 +2147,15 @@ def _set_tracks_field(items: list[tuple[str, str]], value: str, prop: str,
     importierter Tracks direkt -- gemeinsame Grundlage fuer
     set_tracks_genre()/set_tracks_album()/set_tracks_artist(), aufgerufen von
     server._rename_tag_value() fuer alle Pfade, die laut music_added bereits
-    in der Bibliothek stehen. Gleiches Titel-dann-Pfad-Matching wie
-    set_track_artwork()/clear_track_artwork(), aber fuer BELIEBIG VIELE
+    in der Bibliothek stehen. Titel-dann-Pfad-Matching (Titel als Vorfilter, 'name' ist immer lesbar,
+    dann 'location' je Kandidat einzeln mit 'try'), aber fuer BELIEBIG VIELE
     Tracks in einem einzigen osascript-Aufruf statt eines Prozesses je Track
     (ein Umbenennen kann hunderte Tracks treffen) -- Pfade und Titel werden
     dafuer analog zum Rueckgabemuster von add_to_music_library() mit
     Zeilenumbruch verbunden uebergeben statt als einzelne argv-Eintraege.
 
-    Tracks ohne Titel werden uebersprungen (kein Vorfilter moeglich, wie bei
-    set_track_artwork() -- "ohne Titel sofort 0 statt Voll-Scan").
+    Tracks ohne Titel werden uebersprungen (kein Vorfilter moeglich -- ohne
+    Titel sofort 0 statt Voll-Scan).
 
     Liefert die Gesamtzahl getroffener Tracks ueber alle Paare. moves (optional):
     Liste, an die (alter Pfad, neuer Pfad) der dabei von Music.app umsortierten
@@ -2419,7 +2250,8 @@ def set_tracks_artist(items: list[tuple[str, str]], artist: str,
 
 
 # Tag-Feld (wie /api/tags) -> (Music.app-Eigenschaft, Art). Tonart, Stimmung
-# und Cover kennt Music.app hier nicht (Cover laeuft ueber set_track_artwork()).
+# kennt Music.app hier nicht; das Cover laeuft als eigener Eintrag "cover" im
+# selben Lauf (music_update_tracks()).
 MUSIC_TAG_PROPS = {
     "title": ("name", "text"), "artist": ("artist", "text"), "album": ("album", "text"),
     "album_artist": ("album artist", "text"), "composer": ("composer", "text"),
@@ -2557,9 +2389,53 @@ def music_update_tracks(items: list[dict]) -> list[str | None]:
     Album um, der Pfad kann sich also aendern), oder None = nicht gefunden.
     Eigenschaftsnamen stehen fest im Skript (nur aus MUSIC_TAG_PROPS), alle
     Werte kommen als argv -- nie in den Skripttext.
+
+    Optional je Eintrag "cover": {"op": "set", "data", "mime"} oder {"op":
+    "clear"} -- das Cover kommt so im selben Lauf mit (frueher
+    set_track_artwork()/clear_track_artwork(), ein osascript je Datei und
+    Speichern). Bewusst das Artwork des bestehenden Tracks setzen statt
+    Entfernen + Neu-Hinzufuegen (Playlisten, Bewertung, Wiedergaben blieben
+    sonst nicht erhalten). Die Bilddaten gehen immer erst per sips nach JPEG:
+    AppleScripts 'read ... as picture' kennt nur wenige Bildklassen
+    zuverlaessig (WebP/HEIC/GIF/TIFF fraglich), danach gibt es genau einen
+    Weg ('as JPEG picture', ausserhalb des tell-Blocks gelesen). Scheitert die
+    Umwandlung eines Bildes, faellt nur dessen Cover weg (errlog), der Rest
+    des Laufs nicht.
     """
     if not items:
         return []
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        images = _cover_jpegs(items, Path(tmp_dir))
+        return _music_update_tracks(items, images)
+
+
+def _cover_jpegs(items: list[dict], tmp: Path) -> dict[int, str]:
+    """JPEG-Kopien der zu setzenden Cover fuer music_update_tracks(): {Index: Pfad}."""
+    import mimetypes
+    from . import errlog
+    images: dict[int, str] = {}
+    sips = shutil.which("sips") or "/usr/bin/sips"
+    for i, it in enumerate(items):
+        cover = it.get("cover") or {}
+        if cover.get("op") != "set" or not cover.get("data"):
+            continue
+        ext = mimetypes.guess_extension(cover.get("mime") or "", strict=False) or ".img"
+        src = tmp / f"src{i}{'.jpg' if ext == '.jpe' else ext}"
+        src.write_bytes(cover["data"])
+        dst = tmp / f"cover{i}.jpg"
+        conv = subprocess.run([sips, "-s", "format", "jpeg", str(src), "--out", str(dst)],
+                              capture_output=True, timeout=30)
+        if conv.returncode != 0 or not dst.is_file():
+            errlog.log("music-cover", MediaToolMissing(
+                f"{it['path']}: " + (conv.stderr.decode("utf-8", "replace").strip()[:200]
+                                     or "Cover konnte nicht fuer Music.app konvertiert werden")))
+            continue
+        images[i] = str(dst)
+    return images
+
+
+def _music_update_tracks(items: list[dict], images: dict[int, str]) -> list[str | None]:
     found = music_find_tracks(items)
     argv: list[str] = []
     blocks: list[str] = []
@@ -2568,11 +2444,12 @@ def music_update_tracks(items: list[dict]) -> list[str | None]:
         argv.append(str(value))
         return len(argv)
 
-    for it, hits in zip(items, found):
+    for idx, (it, hits) in enumerate(zip(items, found)):
         if not hits:
             blocks.append('  set out to out & "-" & linefeed\n')
             continue
         sets = []
+        read_cover = ""
         for key, value in it["fields"].items():
             prop, kind = MUSIC_TAG_PROPS[key]
             if kind == "int":
@@ -2585,9 +2462,24 @@ def music_update_tracks(items: list[dict]) -> list[str | None]:
                 n = arg(value or "")
                 expr = f"(item {n} of argv)"
             sets.append(f'        try\n          set {prop} of m to {expr}\n        end try\n')
+        cover_op = (it.get("cover") or {}).get("op")
+        if cover_op == "set" and idx in images:
+            n = arg(images[idx])
+            # Lesen ausserhalb des tell-Blocks (Koerzierung, siehe add_to_music_library()).
+            read_cover = (f'  set theData to missing value\n'
+                          f'  try\n    set theData to (read (POSIX file (item {n} of argv)) as JPEG picture)\n'
+                          f'  end try\n')
+            sets.append('        if theData is not missing value then\n'
+                        '          try\n            set data of artwork 1 of m to theData\n'
+                        '          on error\n            try\n'
+                        '              make new artwork at end of artworks of m with properties {data:theData}\n'
+                        '            end try\n          end try\n        end if\n')
+        elif cover_op == "clear":
+            sets.append('        try\n          delete every artwork of m\n        end try\n')
         pids = [arg(pid) for pid, _ in hits]
         pid_list = "{" + ", ".join(f"item {n} of argv" for n in pids) + "}"
         blocks.append(
+            read_cover +
             f'  set found to {{}}\n'
             f'  repeat with thePid in {pid_list}\n'
             '    tell application "Music"\n'
@@ -2636,70 +2528,6 @@ def music_update_tracks(items: list[dict]) -> list[str | None]:
         fallback = hits[0][1] if hits else it["path"]
         out.append(None if not line.startswith("+") else (line[1:] or fallback))
     return out
-
-
-def clear_track_artwork(path: str, title: str) -> int:
-    """
-    Loescht das Artwork eines bereits in Music.app importierten Tracks direkt
-    -- Gegenstueck zu set_track_artwork(), aufgerufen von
-    server._post_cover_delete() wenn die Datei laut music_added bereits in
-    der Bibliothek steht. Gleiches Titel-dann-Pfad-Matching, aber ohne
-    Bildkonvertierung/-koerzierung: reines 'delete every artwork of m', in
-    'try' gekapselt (kein Fehler, falls ohnehin schon leer).
-
-    Liefert die Anzahl getroffener Tracks (0 = kein passender Track
-    gefunden -- kein Fehler, siehe set_track_artwork()).
-    """
-    if not title:
-        return 0
-    script = (
-        'on run argv\n'
-        '  set thePath to item 1 of argv\n'
-        '  set theTitle to item 2 of argv\n'
-        '  set candidates to {}\n'
-        '  tell application "Music"\n'
-        '    try\n'
-        '      set candidates to (every track of library playlist 1 whose name is theTitle)\n'
-        '    end try\n'
-        '  end tell\n'
-        '  set theMatches to {}\n'
-        '  repeat with c in candidates\n'
-        '    set theLoc to missing value\n'
-        '    tell application "Music"\n'
-        '      try\n'
-        '        set theLoc to location of c\n'
-        '      end try\n'
-        '    end tell\n'
-        '    if theLoc is not missing value then\n'
-        '      try\n'
-        '        set locPath to POSIX path of theLoc\n'
-        '        if locPath is thePath then set end of theMatches to c\n'
-        '      end try\n'
-        '    end if\n'
-        '  end repeat\n'
-        '  set n to count of theMatches\n'
-        '  if n > 0 then\n'
-        '    tell application "Music"\n'
-        '      repeat with m in theMatches\n'
-        '        try\n'
-        '          delete every artwork of m\n'
-        '        end try\n'
-        '      end repeat\n'
-        '    end tell\n'
-        '  end if\n'
-        '  return (n as text)\n'
-        'end run'
-    )
-    result = subprocess.run(["osascript", "-e", script, str(path), str(title)],
-                            capture_output=True, timeout=30)
-    if result.returncode != 0:
-        raise MediaToolMissing(
-            result.stderr.decode("utf-8", "replace").strip()[:300]
-            or "Music.app-Artwork konnte nicht geloescht werden")
-    try:
-        return int(result.stdout.decode("utf-8", "replace").strip())
-    except ValueError:
-        return 0
 
 
 def _icns_of(app_path: str) -> Path | None:

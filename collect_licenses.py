@@ -25,15 +25,19 @@ ROOT = Path(__file__).resolve().parent
 OUT = ROOT / "licenses"
 
 # Reine Build-/Entwicklungswerkzeuge, nicht Teil der App.
+# packaging gehoert NICHT hierher: pyrekordbox importiert es zur Laufzeit
+# (pyrekordbox/config.py), es steckt also im Bundle.
 SKIP = {"pip", "setuptools", "wheel", "pyinstaller", "pyinstaller-hooks-contrib",
-        "altgraph", "macholib", "packaging"}
-LICENSE_NAME = re.compile(r"(licen[cs]e|copying|notice|authors)", re.I)
+        "altgraph", "macholib"}
+LICENSE_NAME = re.compile(r"(licen[cs]e|copying|copyright|notice|authors)", re.I)
 
 # Homebrew-Formeln der Bibliotheken in vendor/libs.
 BREW = ["ffmpeg", "x264", "x265", "lame", "mpg123", "opus", "libvpx", "dav1d",
         "svt-av1", "libvmaf", "openssl@4", "xz"]
-# Weitere Homebrew-Bibliotheken im Bundle, die nicht zu FFmpeg gehoeren.
-NATIVE = ["libomp"]
+# Weitere Homebrew-Bibliotheken im Bundle, die nicht zu FFmpeg gehoeren:
+# libomp (LightGBM), mpdecimal und zstd (CPython aus Homebrew: _decimal, _zstd).
+# sqlite (_sqlite3) ist gemeinfrei und bringt keinen Lizenztext mit.
+NATIVE = ["libomp", "mpdecimal", "zstd"]
 
 # Pakete, deren Wheel den Lizenztext nicht im dist-info-Ordner fuehrt.
 # Wert = Quelle des Textes: ("dist", <anderes Paket desselben Projekts>) oder
@@ -136,8 +140,9 @@ def main():
             files = [prefix / "LICENSE.md"]
         copy_files([f for f in files if f.exists()], OUT / "ffmpeg-libs" / formula)
 
-    # libomp (OpenMP fuer LightGBM, Auto-Cue-Training): kommt ueber den rpath von
-    # lib_lightgbm.dylib aus Homebrew ins Bundle (tracktab.spec).
+    # libomp (OpenMP fuer LightGBM, Auto-Cue-Training) kommt ueber den rpath von
+    # lib_lightgbm.dylib aus Homebrew ins Bundle (tracktab.spec), mpdecimal und
+    # zstd ueber die Erweiterungsmodule des Homebrew-Pythons.
     for formula in NATIVE:
         prefix = brew_prefix(formula)
         if not prefix:
@@ -153,7 +158,8 @@ def main():
         "- `gnu/` — GPL-2.0, GPL-3.0, LGPL-2.1, LGPL-3.0\n"
         "- `python/` — Python-Pakete (je Paket ein Ordner)\n"
         "- `ffmpeg-libs/` — FFmpeg und seine Bibliotheken in `vendor/libs`\n"
-        "- `native/` — weitere native Bibliotheken (libomp fuer das Auto-Cue-Training)\n"
+        "- `native/` — weitere native Bibliotheken (libomp fuer das Auto-Cue-Training, "
+        "mpdecimal und zstd fuer Python)\n"
         "- `ui/` — Bestandteile der Oberflaeche (von Hand gepflegt)\n"
         "- `other/` — Texte, die kein Paket mitbringt (von Hand gepflegt): SQLCipher "
         "(in sqlcipher3-wheels eingebettet), flatbuffers\n",

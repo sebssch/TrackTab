@@ -58,15 +58,15 @@ Mitgelieferte Bibliotheken in `vendor/libs/` (Lizenzen laut Projektangaben):
 | OpenSSL (libssl, libcrypto) 4.x | Apache-2.0 | <https://www.openssl.org> |
 | liblzma (xz) | 0BSD / gemeinfrei | <https://tukaani.org/xz/> |
 
-**Quellcode-Zugang (GPL/LGPL):** Zu jeder `.dmg` gehört der Quellcode der darin enthaltenen GPL-/LGPL-Komponenten genau dieser Versionen. Er liegt als Download am **selben GitHub-Release** wie die `.dmg`, zusammengefasst in `TrackTab-<Version>-third-party-sources.zip` (darin `ffmpeg-<Version>.tar.xz`, `x264-<Commit>.tar.bz2`, `x265_<Version>.tar.gz`, `lame-<Version>.tar.gz`, `mpg123-<Version>.tar.bz2`, `mutagen-<Version>.tar.gz`, `GlideMix-<Version>-source.tar.xz` (nur wenn das Phrasenmodell im Build steckt), dazu `BUILD-INFO.txt` mit der FFmpeg-Konfiguration, `SHA256SUMS` und die Lizenztexte). Die Datei erstellt `package_sources.sh`. Der Quellcode von TrackTab selbst liegt im Repository. Die Adressen der Originalprojekte in der Tabelle sind nur zusätzliche Information. Die übrigen Bibliotheken stehen unter freizügigen Lizenzen ohne Pflicht zur Quellcode-Herausgabe.
+**Quellcode-Zugang (GPL/LGPL):** Zu jeder `.dmg` gehört der Quellcode der darin enthaltenen GPL-/LGPL-Komponenten genau dieser Versionen. Er liegt als Download am **selben GitHub-Release** wie die `.dmg`, zusammengefasst in `TrackTab-<Version>-third-party-sources.zip` (darin `ffmpeg-<Version>.tar.xz`, `x264-<Commit>.tar.bz2`, `x265_<Version>.tar.gz`, `lame-<Version>.tar.gz`, `mpg123-<Version>.tar.bz2`, `mutagen-<Version>.tar.gz`, `GlideMix-<Version>-source.tar.xz` (nur wenn das Phrasenmodell im Build steckt), für `libquadmath` aus scipy `gcc-<Version>.tar.xz` samt dem Apple-Silicon-Patch und der Homebrew-Bauanleitung, mit der dessen gfortran gebaut ist (`gcc-<Version>-darwin.diff`, `gcc@<Major>.rb`), dazu `BUILD-INFO.txt` mit der FFmpeg-Konfiguration, `SHA256SUMS` und die Lizenztexte). Die Datei erstellt `package_sources.sh`. Der Quellcode von TrackTab selbst liegt im Repository. Die Adressen der Originalprojekte in der Tabelle sind nur zusätzliche Information. Die übrigen Bibliotheken stehen unter freizügigen Lizenzen ohne Pflicht zur Quellcode-Herausgabe.
 
 ## 3. Python-Pakete (in der App gebündelt)
 
 | Paket | Version | Lizenz | Verwendung |
 |---|---|---|---|
 | mutagen | 1.48.1 | **GPL-2.0-oder-später** | Tags und Cover lesen/schreiben, MP3-Details — Quellcode: am Release (siehe oben), Original <https://github.com/quodlibet/mutagen> · <https://pypi.org/project/mutagen/1.48.1/> |
-| numpy | 2.5.4 | BSD-3-Clause (u. a. 0BSD, MIT, Zlib, CC0 für Teile) | FFT, Stem-Trennung |
-| onnxruntime | 1.31.1 | MIT | Ausführung der Modelle |
+| numpy | 2.5.5 | BSD-3-Clause (u. a. 0BSD, MIT, Zlib, CC0 für Teile) | FFT, Stem-Trennung |
+| onnxruntime | 1.32.0 | MIT | Ausführung der Modelle |
 | libsonare | 1.10.0 | Apache-2.0 | BPM- und Tonart-Messung |
 | pyrekordbox | 0.5.0 | MIT | Rekordbox-Datenbank |
 | Pillow | 13.0.0 | MIT-CMU | Cover-Prüfung |
@@ -74,20 +74,21 @@ Mitgelieferte Bibliotheken in `vendor/libs/` (Lizenzen laut Projektangaben):
 | rich | 15.0.0 | MIT | Terminal-Ausgabe |
 | PyObjC (Cocoa, Core) | 13.0 | MIT | macOS-App-Hülle |
 | LightGBM | 4.7.0 | MIT | Auto-Cue-Training in der App (nur beim Training geladen; Auto Cue selbst wertet die Bäume ohne LightGBM aus, `app/autocue/trees.py`) |
-| SciPy (nur `scipy.sparse` und Grundmodule) | 1.18.1 | BSD-3-Clause (gebündelte Fortran-Laufzeit: GPL-3.0 mit GCC-Runtime-Ausnahme) | Abhängigkeit von LightGBM |
-| narwhals | 2.28.0 | MIT | Abhängigkeit von LightGBM |
+| SciPy (nur `scipy.sparse` und Grundmodule) | 1.18.1 | BSD-3-Clause; BLAS/LAPACK über Apples Accelerate (Teil von macOS, nicht gebündelt). Gebündelt ist die GCC-Laufzeit aus gfortran 13.4.0: `libgfortran`/`libgcc_s` (GPL-3.0 mit GCC-Runtime-Ausnahme) und **`libquadmath` (LGPL-2.1-oder-später)** — Quellcode: am Release (siehe Abschnitt 2), Texte in `licenses/python/scipy-<Version>/LICENSE.txt` | Abhängigkeit von LightGBM |
+| narwhals | 2.29.0 | MIT | Abhängigkeit von LightGBM |
 
 LightGBM braucht die OpenMP-Laufzeit **libomp** (LLVM-Projekt, Homebrew-Formel `libomp`), die über den Ladepfad von `lib_lightgbm.dylib` mit ins Bundle kommt: Apache-2.0 mit LLVM-Ausnahme, Text in [licenses/native/libomp/](licenses/native/libomp/), Quelle <https://openmp.llvm.org>. Sie wird nur beim Training geladen; ist das macOS älter als das, für das diese Bibliothek gebaut ist, bietet die App kein Training an.
 
-Dazu kommen mitgebündelte Abhängigkeiten dieser Pakete (u. a. SQLAlchemy, sqlcipher3-wheels, construct, bidict, protobuf, flatbuffers, psutil, Pygments, markdown-it-py, python-dateutil, six, typing_extensions, tzdata) mit ihren Lizenztexten in [licenses/python/](licenses/python/). Drei davon verdienen einen eigenen Hinweis:
+Dazu kommen mitgebündelte Abhängigkeiten dieser Pakete (u. a. SQLAlchemy, sqlcipher3-wheels, construct, bidict, packaging, protobuf, flatbuffers, psutil, Pygments, markdown-it-py, mdurl, python-dateutil, six, typing_extensions, tzdata) mit ihren Lizenztexten in [licenses/python/](licenses/python/). Vier davon verdienen einen eigenen Hinweis:
 
 - **bidict** steht unter der **MPL-2.0** (schwaches Copyleft, mit der GPL-3.0 vereinbar). TrackTab nutzt es unverändert; Quellcode: <https://github.com/jab/bidict>.
 - **sqlcipher3-wheels** (zlib-Lizenz) enthält fest eingebunden **SQLCipher** (Zetetic LLC, BSD-3-Clause, Text in [licenses/other/](licenses/other/sqlcipher-LICENSE.md)) und **OpenSSL 3.x** (Apache-2.0, derselbe Text wie in `licenses/ffmpeg-libs/openssl@4/`).
 - **onnxruntime** bringt die Hinweise zu seinen eigenen Bestandteilen in `ThirdPartyNotices.txt` mit (liegt neben der Lizenz in `licenses/python/`).
+- **Pillow** bringt eigene native Bibliotheken mit (u. a. libjpeg, libpng, libtiff, libwebp, libavif, FreeType, HarfBuzz, Little CMS, OpenJPEG, Brotli, zlib-ng, zstd, libxcb); deren Lizenztexte stehen gesammelt in `licenses/python/pillow-<Version>/LICENSE`.
 
 Texte, die ein Paket nicht selbst mitbringt (flatbuffers, SQLCipher), liegen von Hand gepflegt in [licenses/other/](licenses/other/); `collect_licenses.py` legt sie zum jeweiligen Paket.
 
-Die Laufzeit des Pakets (CPython) steht unter der PSF-Lizenz 2.0 (Text samt Copyright-Vermerken in `licenses/python/CPython-<Version>/`); zum Bündeln dient **PyInstaller** (GPL-2.0-oder-später mit Ausnahme, die die Weitergabe der damit gebauten Programme erlaubt; reines Build-Werkzeug, nicht Teil der App).
+Die Laufzeit des Pakets (CPython) steht unter der PSF-Lizenz 2.0 (Text samt Copyright-Vermerken in `licenses/python/CPython-<Version>/`). Sie stammt aus Homebrew (`python@3.14`) und bringt drei Bibliotheken mit, die nicht in CPythons eigenem Lizenztext stehen: **mpdecimal** (BSD-2-Clause, Modul `decimal`, Text in [licenses/native/mpdecimal/](licenses/native/mpdecimal/)), **zstd** (BSD-3-Clause, wahlweise GPL-2.0, Modul `compression.zstd`, Text in [licenses/native/zstd/](licenses/native/zstd/)) und **SQLite** (gemeinfrei, Modul `sqlite3`, <https://sqlite.org/copyright.html>). Zum Bündeln dient **PyInstaller** (GPL-2.0-oder-später mit Ausnahme, die die Weitergabe der damit gebauten Programme erlaubt; reines Build-Werkzeug, nicht Teil der App).
 
 ## 4. Oberfläche und übernommener Code
 

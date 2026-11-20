@@ -626,10 +626,10 @@ function rpSetCheck(btn, state) {
   btn.setAttribute("aria-pressed", state === "mixed" ? "mixed" : String(state === "on"));
   btn.innerHTML = state === "on" ? ICONS.dupKeep : state === "mixed" ? ICONS.checkMixed : ICONS.dupKeepOff;
 }
-// Gerendert werden hoechstens 300 Tracks, gezaehlt und uebernommen alle.
+// Gerendert werden alle Tracks (Pruefliste: nichts darf unsichtbar mit uebernommen werden); .rpgroup nutzt content-visibility.
 function renderReplaceList() {
   const list = document.getElementById("replaceList");
-  const shown = RP.groups.slice(0, 300);
+  const shown = RP.groups;
   list.innerHTML = shown.length ? shown.map(g => {
     const ok = g.status === "ok";
     const head = ok ? rpCheckHtml(`data-rpgroup="${g.key}"`, "on")
@@ -655,8 +655,7 @@ function renderReplaceList() {
         <span class="rpbadge">${esc(t("replace.n_changes", {count: g.items.length}))}</span></div>
       <div class="rpchanges">${changes}</div>
     </div>`;
-  }).join("") + (RP.groups.length > shown.length
-      ? `<div class="rpmore">${esc(t("replace.more", {count: (RP.groups.length - shown.length).toLocaleString("de-DE")}))}</div>` : "")
+  }).join("")
     : `<div class="rpempty">${esc(t(RP.mode === "fix" ? (RP.plans ? "fixprev.empty" : "fixprev.loading")
         : RP.mode === "rules" ? "replace.empty_rules"
         : !RP.fields.length ? "replace.empty_fields"

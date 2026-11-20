@@ -207,7 +207,7 @@ CREATE TABLE IF NOT EXISTS rekordbox_remove_pending (
 
 -- Datum, an dem ein Track laut Music.app zur Bibliothek hinzugefuegt wurde.
 -- Eigener Cache wie 'rekordbox', bewusst getrennt davon (kein gemeinsamer
--- Abgleich): music_added_dates() liest die ganze Music.app-Bibliothek in
+-- Abgleich): media.music_file_tracks() liest die ganze Music.app-Bibliothek in
 -- einem Bulk-Aufruf, sync_music_added() ersetzt den Inhalt komplett bei
 -- jedem Abgleich. added_ts ist ein Unix-Timestamp, ts das Abgleichsdatum.
 CREATE TABLE IF NOT EXISTS music_added (
@@ -2052,7 +2052,14 @@ def sync_music_added(conn: sqlite3.Connection, dates: dict[str, float]) -> int:
     sync_rekordbox_presence(), aber mit einem Datumswert statt nur Anwesenheit.
     """
     known = {r["path"] for r in conn.execute("SELECT path FROM files")}
-    matched = {p: ts for p, ts in dates.items() if p in known}
+    # Music.app-Pfade kommen NFC (server.MUSIC_INDEX), die DB fuehrt den Pfad so,
+    # wie der Scan ihn fand -- Rueckfall ueber path_norm_key(), frueheres Datum gewinnt.
+    by_key = {path_norm_key(p): p for p in known}
+    matched: dict[str, float] = {}
+    for p, ts in dates.items():
+        hit = p if p in known else by_key.get(path_norm_key(p))
+        if hit is not None:
+            matched[hit] = min(matched.get(hit, ts), ts)
     now = time.time()
     conn.execute("DELETE FROM music_added")
     conn.executemany(
@@ -2068,8 +2075,8 @@ def mark_music_added(conn: sqlite3.Connection, paths: list[str]) -> None:
     (siehe media.add_to_music_library) -- Gegenstueck zu
     mark_rekordbox_present(). added_ts ist bewusst der Zeitpunkt des Imports
     und nicht das von Music.app gefuehrte 'date added': das laesst sich nur
-    ueber einen vollen Bibliotheks-Abgleich lesen (music_added_dates(), ein
-    Apple Event ueber alle Tracks). Beides liegt hoechstens Sekunden
+    ueber einen vollen Bibliotheks-Abgleich lesen (media.music_file_tracks(),
+    eine Sammelabfrage ueber alle Tracks). Beides liegt hoechstens Sekunden
     auseinander; der naechste 'Music.app abgleichen' ersetzt den Wert
     ohnehin durch den echten.
 

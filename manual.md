@@ -259,7 +259,7 @@ For the most reliable playback of all supported formats, **Safari** is therefore
    **“Sync Rekordbox”** checks which tracks are already in Rekordbox’s collection and optionally searches your own library paths for Rekordbox entries whose file is missing (with a preview before writing).
    Genre, artist and album changes from **merging** are not written to Rekordbox immediately but queued; the number appears as a counter on the button. In the sync dialog, the option **“Transfer queued tags”** transfers them all in one run (Rekordbox must be closed for this; only one backup of the Rekordbox database is created).
    **“Transfer metadata to Rekordbox”** writes title, artist, album, genre, year, composer, comment, BPM and key from TrackTab for all tracks where they differ from Rekordbox (the red Rekordbox column with “Metadata”). The sync never touches beat grid, phrases or hot and memory cues; you transfer those by hand with **Rekordbox update** in the DJ view. Half or double tempo (e.g. 80 instead of 160) stays marked orange and is not written.
-   When the dialog opens, all switches are off; with each sync you choose yourself what should run.
+   When the dialog opens, all switches are off; with each sync you choose yourself what should run. While the sync runs, the line below the title shows which step is in progress (e.g. “Step 2 of 3: Metadata to Rekordbox”). When writing metadata and when loading beat grid, phrases and cues, the bar shows how many tracks are already done.
 
    > [!tip]
 >For this button to be shown, “Rekordbox” must be selected as a program in the settings. Until then the other Rekordbox settings (playlist, quality check, My Tag, stems) are greyed out as well; they become available as soon as you select a Rekordbox above.

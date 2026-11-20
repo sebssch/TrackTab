@@ -4,7 +4,11 @@ Laeuft im Worker-Prozess, muss deshalb auf Modulebene importierbar bleiben.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
+import json
+import threading
+from collections import OrderedDict
 
 from . import classify as classify_mod
 from . import loudness as loudness_mod
@@ -42,6 +46,80 @@ def _hash_file(path: str) -> str:
 SPECTRAL_SKIPPED_REASON = "Cutoff-Scan übersprungen"
 
 
+# Einstellungen, von denen das ERGEBNIS der beiden Dekodierdurchgaenge
+# (spectral.analyse(), loudness.analyse()) abhaengt. Daraus bildet
+# MeasureCache seinen Schluessel -- ein neuer Messparameter in spectral.py
+# oder loudness.py gehoert hier eingetragen, sonst uebernimmt der Cache nach
+# einer Parameteraenderung eine alte Messung. Die Einordnung (classify)
+# laeuft immer frisch mit den aktuellen Einstellungen und steht hier nicht.
+MEASURE_CONFIG_KEYS = (
+    "_skip_spectral", "_skip_loudness", "block_percentile", "cliff_min_db",
+    "cliff_span_hz", "edge_segment_s", "fft_size", "gate_abs_dbfs",
+    "gate_rms_percentile", "loudness_clip_dbtp", "loudness_ref_high_lufs",
+    "loudness_ref_low_lufs", "max_analysis_s", "min_gated_blocks",
+    "noise_band_rel", "plateau_ceiling_hz", "plateau_min_ratio", "ref_band_hz",
+    "search_floor_hz", "skip_head_pct", "skip_tail_pct", "smooth_hz",
+    "spectrum_points", "steep_brickwall_db",
+)
+
+
+class MeasureCache:
+    """Haelt die teuren Messungen (Spektrum + Lautheit, zusammen rund 2-3 s
+    je Datei) fuer bereits gemessenen Audioinhalt fest.
+
+    Schluessel = files.audio_hash (Pruefsumme der Audio-Pakete ohne Tags,
+    media.audio_fingerprint()) + die Messparameter (MEASURE_CONFIG_KEYS).
+    Gleiche Pakete -> gleiche Dekodierung -> gleiche Messung, unabhaengig von
+    Pfad, Dateiname und Tags. Anlass ist der Import einer Einzelpruefung in
+    die Music-Bibliothek: Music.app legt eine Kopie in seinem Medienordner an
+    (neuer Pfad, ggf. andere Tags), die dort bisher noch einmal vollstaendig
+    gemessen wurde, obwohl die Einzelpruefung dieselbe Messung gerade erst
+    gemacht hatte.
+
+    Nur im Serverprozess benutzen (die Worker eines Scans bekommen keinen
+    Cache, siehe analyse_file()). Probe, Tags, Auffaelligkeiten, Pruefsummen
+    und die Einordnung werden auch bei einem Treffer frisch gebildet -- die
+    kosten zusammen rund 0,1-0,2 s.
+    """
+
+    LIMIT = 300            # Eintraege; je Eintrag ein paar KB (Spektrum-Stuetzpunkte)
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._items: OrderedDict = OrderedDict()
+
+    @staticmethod
+    def key(audio_hash: str, cfg: dict, pr) -> str | None:
+        if not audio_hash:
+            return None              # ffmpeg scheiterte: Inhalt unbekannt, nie wiederverwenden
+        # Stream-Angaben aus der Probe gehen als Argumente in die Messung ein
+        # (Samplerate, Kanaele, Dauer) -- sicherheitshalber mit in den Schluessel.
+        params = json.dumps([cfg.get(k) for k in MEASURE_CONFIG_KEYS]
+                            + [pr.sample_rate, pr.channels, round(pr.duration_s, 2)],
+                            default=str)
+        return audio_hash + "|" + hashlib.sha1(params.encode("utf-8")).hexdigest()
+
+    def get(self, key: str | None):
+        if key is None:
+            return None
+        with self._lock:
+            hit = self._items.get(key)
+            if hit is None:
+                return None
+            self._items.move_to_end(key)
+        # Kopie: die Listen (Spektrum, Abschnittskanten) wandern in die Zeile.
+        return copy.deepcopy(hit)
+
+    def put(self, key: str | None, value) -> None:
+        if key is None:
+            return
+        with self._lock:
+            self._items[key] = value
+            self._items.move_to_end(key)
+            while len(self._items) > self.LIMIT:
+                self._items.popitem(last=False)
+
+
 def blank_row(path: str, size: int, mtime: float) -> dict:
     """Grundzeile mit status 'error' und allen Spalten auf ihrer Vorgabe.
 
@@ -72,7 +150,10 @@ def blank_row(path: str, size: int, mtime: float) -> dict:
     }
 
 
-def analyse_file(job: tuple) -> dict:
+def analyse_file(job: tuple, cache: MeasureCache | None = None) -> dict:
+    """Eine Datei vollstaendig messen. 'cache' (optional, nur im
+    Serverprozess): bereits gemessenen Audioinhalt nicht erneut dekodieren,
+    siehe MeasureCache. Ohne Cache (Scan-Worker) wie bisher."""
     path, size, mtime, cfg = job
     row = blank_row(path, size, mtime)
 
@@ -117,6 +198,10 @@ def analyse_file(job: tuple) -> dict:
         row["reasons"] = [f"Zu kurz für eine Beurteilung ({pr.duration_s:.0f} s)"]
         return row
 
+    cache_key = MeasureCache.key(row["audio_hash"], cfg, pr) if cache is not None else None
+    cached = cache.get(cache_key) if cache is not None else None
+    sr = lr = None
+
     if cfg.get("_skip_spectral"):
         # Cutoff Scan abgewaehlt -- nur Metadaten, kein ffmpeg-Dekodierdurchgang.
         # verdict bleibt beim Default VERDICT_UNKNOWN aus der row-Vorlage oben.
@@ -124,13 +209,16 @@ def analyse_file(job: tuple) -> dict:
         row["error"] = ""
         row["reasons"] = [SPECTRAL_SKIPPED_REASON]
     else:
-        try:
-            sr = spectral_mod.analyse(path, pr.sample_rate, pr.duration_s, cfg,
-                                       pr.channels or 2)
-        except Exception as exc:                       # noqa: BLE001
-            row["error"] = f"spectral: {exc}"
-            row["reasons"] = [row["error"]]
-            return row
+        if cached is not None:
+            sr, lr = cached
+        else:
+            try:
+                sr = spectral_mod.analyse(path, pr.sample_rate, pr.duration_s, cfg,
+                                           pr.channels or 2)
+            except Exception as exc:                       # noqa: BLE001
+                row["error"] = f"spectral: {exc}"
+                row["reasons"] = [row["error"]]
+                return row
 
         row.update({
             "cutoff_hz": sr.cutoff_hz,
@@ -164,10 +252,11 @@ def analyse_file(job: tuple) -> dict:
     # Eigener Dekodierdurchgang, unabhaengig vom Tiefpass-Verdikt oben --
     # ein Fehlschlag hier darf den Rest der Zeile nicht entwerten.
     if not cfg.get("_skip_loudness"):
-        try:
-            lr = loudness_mod.analyse(path, pr.duration_s, cfg)
-        except Exception:                              # noqa: BLE001
-            lr = None
+        if cached is None:
+            try:
+                lr = loudness_mod.analyse(path, pr.duration_s, cfg)
+            except Exception:                              # noqa: BLE001
+                lr = None
         if lr is not None and lr.ok:
             row.update({
                 "integrated_lufs": lr.integrated_lufs,
@@ -175,4 +264,12 @@ def analyse_file(job: tuple) -> dict:
                 "lra_lu": lr.lra_lu,
             })
 
+    if cached is None and cache is not None and sr is not None:
+        cache.put(cache_key, copy.deepcopy((sr, lr)))
+
     return row
+
+
+# Cache des Serverprozesses (siehe MeasureCache). Scan-Worker legen beim
+# Import zwar ein eigenes leeres Exemplar an, benutzen es aber nie.
+MEASURE_CACHE = MeasureCache()

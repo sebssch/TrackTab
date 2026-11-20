@@ -412,6 +412,7 @@
   /* Fortschritts-Toast (progressToast()) -- Balken am unteren Rand statt der
      frueheren Statuszeile ueber der Einzelprüfungen-Tabelle. */
   .toast.progress { padding-bottom:10px; }
+  .toast.progress.closable { padding-right:40px; position:relative; }
   .toast-bar { margin-top:9px; height:4px; border-radius:2px;
                background:rgba(255,255,255,.3); overflow:hidden; }
   .toast-bar i { display:block; height:100%; width:0%; background:#3ecf6e;
@@ -3352,7 +3353,7 @@ body.listloading #tb { display:none; }
 .replaceruletools select { font-size:13px; padding-top:0; padding-bottom:0; max-width:260px; }
 .replacecount { color:var(--dim); font-size:13px; margin-left:8px; font-variant-numeric:tabular-nums; }
 .replacelist { max-height:46vh; overflow-y:auto; border:1px solid var(--line); border-radius:8px; }
-.rpgroup { border-bottom:1px solid var(--line); }
+.rpgroup { border-bottom:1px solid var(--line); content-visibility:auto; contain-intrinsic-size:auto 90px; }
 .rpgroup:last-child { border-bottom:none; }
 .rphead { display:flex; align-items:center; gap:10px; padding:8px 12px; cursor:pointer; font-size:13px; position:sticky; top:0; z-index:1;
   background:color-mix(in srgb, var(--fg) 6%, var(--card)); border-bottom:1px solid var(--line); }
